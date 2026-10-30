@@ -2,15 +2,243 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum PlanType {
+  FREE_TIER
+  PAY_AS_YOU_GO
+  PRO_MONTHLY
+  AGENCY_SCALE
+}
+
+enum PostStatus {
+  DRAFT
+  ANALYZING_AI
+  READY_FOR_REVIEW
+  APPROVED
+  SCHEDULED
+  PARTIALLY_PUBLISHED
+  PUBLISHED
+  FAILED
+}
+
+enum TransactionType {
+  USAGE
+  REFUND
+  PURCHASE
+  SUBSCRIPTION_GRANT
+  AI_GENERATION
+  PUBLICATION_FEE
+}
+
+enum SocialProvider {
+  FACEBOOK
+  INSTAGRAM
+}
+
+enum AccountStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  createdAt DateTime @default(now())
+  id                    String              @id @default(uuid())
+  email                 String              @unique
+  supabaseAuthId        String              @unique
+  name                  String?
+  avatarUrl             String?
+  planType              PlanType            @default(FREE_TIER)
+  creditsBalance        Int                 @default(10)
+  stripeCustomerId      String?             @unique
+  subscriptionExpiresAt DateTime?
+  
+  connectedAccounts     ConnectedAccount[]
+  socialAccounts        SocialAccount[]
+  publications          Publication[]
+  posts                 Post[]
+  creditTransactions    CreditTransaction[]
+  contentVaults         ContentVault[]
+
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@index([supabaseAuthId])
 }
+
+model CreditTransaction {
+  id              String          @id @default(uuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  amount          Int
+  balanceAfter    Int
+  type            TransactionType
+  description     String
+  
+  postId          String?
+  post            Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime        @default(now())
+
+  @@index([userId, createdAt])
+  @@index([type])
+}
+
+model Post {
+  id                  String              @id @default(uuid())
+  userId              String
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  rawMediaUrl         String
+  rawMediaType        String
+  rawPromptText       String?             @db.Text
+  rawAudioUrl         String?
+  
+  generatedCopies     Json?
+  approvedCopy        Json?
+  
+  status              PostStatus          @default(DRAFT)
+  scheduledFor        DateTime?
+  publishedAt         DateTime?
+  
+  creditTransactions  CreditTransaction[]
+
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@index([userId, status])
+  @@index([scheduledFor, status])
+}
+
+model ConnectedAccount {
+  id                String           @id @default(uuid())
+  userId            String
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          SocialProvider
+  providerId        String           // ID de la Fan Page o de la cuenta de Instagram Business
+  accountName       String?          // Nombre visible de la página/cuenta
+  accessToken       String           // Token cifrado (AES-256-GCM)
+  pageAccessToken   String?          // Token de página permanente cifrado (AES-256-GCM)
+  expiresAt         DateTime?        // Expiración para Long-Lived User Tokens
+  status            AccountStatus    @default(ACTIVE)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  publications      PublicationLog[]
+
+  @@unique([userId, provider, providerId])
+  @@index([userId])
+}
+
+model PublicationLog {
+  id                 String           @id @default(uuid())
+  connectedAccountId String
+  account            ConnectedAccount @relation(fields: [connectedAccountId], references: [id], onDelete: Cascade)
+  contentUrl         String?          // URL del recurso multimedia si aplica
+  caption            String           // Texto del copy/guion publicado
+  externalId         String?          // ID devuelto por Meta tras la publicación
+  status             String           // SUCCESS, FAILED, RETRYING
+  errorMessage       String?          // Detalle si la API de Meta rebotó el post
+  metrics            Json?            // Métricas de alcance o interacción futuras
+  createdAt          DateTime         @default(now())
+
+  @@index([connectedAccountId])
+}
+
+model ContentVault {
+  id                      String   @id @default(uuid())
+  userId                  String
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic                   String
+  tone                    String
+  instagramCopy           String   @db.Text
+  tiktokScript            String   @db.Text
+  imageUrl                String?
+  visualPrompt            String?  @db.Text
+  bannerUrl               String?
+  targetAudience          String?  @db.Text
+  targetAudienceReasoning String?  @db.Text
+  postingTips             String?  @db.Text
+  postingTipsReasoning    String?  @db.Text
+  photoAdvice             String?  @db.Text
+  photoAdviceReasoning    String?  @db.Text
+  salesAngle              String?  @db.Text
+  salesAngleReasoning     String?  @db.Text
+  whatsappFicha           String?  @db.Text
+  whatsappPrecio          String?  @db.Text
+  whatsappConfianza       String?  @db.Text
+  createdAt               DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+model SocialAccount {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider        String    // "FACEBOOK", "INSTAGRAM" o "TIKTOK"
+  platformId      String    // ID de la página, cuenta de IG u open_id de TikTok
+  accountName     String?   // Nombre de la página, usuario (@ejemplo) o perfil de TikTok
+  accessToken     String    @db.Text
+  refreshToken    String?   @db.Text
+  tokenExpires    DateTime?
+  refreshExpires  DateTime?
+  scope           String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([userId, provider, platformId])
+  @@index([userId])
+}
+
+enum PublishStatus {
+  PENDING
+  PROCESSING
+  PUBLISHED
+  FAILED
+}
+
+enum SocialPlatform {
+  TIKTOK
+  INSTAGRAM
+  FACEBOOK
+}
+
+enum MediaType {
+  VIDEO
+  IMAGE
+  CAROUSEL
+}
+
+model Publication {
+  id              String           @id @default(uuid())
+  userId          String
+  title           String?
+  caption         String?          @db.Text
+  mediaType       MediaType        @default(VIDEO)
+  storagePath     String           // Ruta exacta en blitzr-vault: "userId/filename.mp4"
+  publicUrl       String           @db.Text
+  fileSize        Int?             // Tamaño en bytes para auditar storage
+  platforms       SocialPlatform[]
+  status          PublishStatus    @default(PENDING)
+  tiktokPublishId String?
+  metaContainerId String?
+  errorMessage    String?          @db.Text
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+
