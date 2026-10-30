@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { uploadVideoToVault } from '@/lib/storage/upload-service'
+import { QuickShareModal } from '@/components/share/QuickShareModal'
 
 export default function TestLoginPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -11,10 +12,18 @@ export default function TestLoginPage() {
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null)
   const [result, setResult] = useState<any>(null)
   const [errorStatus, setErrorStatus] = useState<string | null>(null)
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false)
+  const [uploadedMediaUrl, setUploadedMediaUrl] = useState<string | null>(null)
+  const [uploadedFileName, setUploadedFileName] = useState<string>('blitzr-post.mp4')
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0])
+      const file = e.target.files[0]
+      setSelectedFile(file)
+      setUploadedFileName(file.name)
+      // Optimización UX inmediata: URL temporal para probar WhatsApp de inmediato
+      const localUrl = URL.createObjectURL(file)
+      setUploadedMediaUrl(localUrl)
       setErrorStatus(null)
       setResult(null)
       setUploadedUrl(null)
@@ -38,6 +47,8 @@ export default function TestLoginPage() {
       setUploadStep('Subiendo video a Supabase Storage (blitzr-vault)...')
       const vaultRes = await uploadVideoToVault(selectedFile)
       setUploadedUrl(vaultRes.publicUrl)
+      setUploadedMediaUrl(vaultRes.publicUrl)
+      setUploadedFileName(selectedFile.name)
 
       // Estado 2: Envío de URL al Route Handler de TikTok
       setUploadStep('Inicializando y enviando borrador a TikTok API...')
@@ -115,11 +126,11 @@ export default function TestLoginPage() {
 
           <div>
             <label className="block text-xs font-semibold text-zinc-300 mb-1.5 uppercase tracking-wider">
-              Archivo de Video MP4
+              Archivo de Video MP4 / MOV
             </label>
             <input
               type="file"
-              accept="video/mp4,video/quicktime"
+              accept="video/mp4,video/quicktime,video/webm"
               onChange={handleFileChange}
               className="w-full text-xs text-zinc-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-zinc-800 file:text-zinc-200 hover:file:bg-zinc-700 cursor-pointer"
             />
@@ -181,6 +192,36 @@ export default function TestLoginPage() {
           </div>
         )}
       </div>
+
+      {/* 3. CANAL FRICCIÓN CERO: COMPARTIR ASISTIDO */}
+      <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-8 shadow-2xl text-left space-y-4">
+        <div>
+          <h2 className="text-lg font-bold tracking-tight flex items-center gap-2">
+            <span>🌐</span> Canal Fricción Cero (WhatsApp & Redes Personales)
+          </h2>
+          <p className="text-xs text-zinc-400 mt-1">
+            Distribución asistida directa para estados de WhatsApp y redes personales usando la Web Share API sin intermediarios.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setIsShareModalOpen(true)}
+          className="w-full py-3.5 px-6 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-black font-bold rounded-xl text-xs transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer"
+        >
+          <span>📲</span> Probar Compartir en WhatsApp
+        </button>
+      </div>
+
+      {/* MODAL DE COMPARTIR ASISTIDO */}
+      <QuickShareModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        title={videoTitle || "Contenido Blitzr Studio"}
+        caption={videoTitle ? `🔥 ${videoTitle} - ¡Pide informes por mensaje directo!` : "🔥 ¡Nuevos productos disponibles! Escríbenos para más detalles."}
+        mediaUrl={uploadedMediaUrl || undefined}
+        fileName={uploadedFileName}
+      />
     </main>
   )
 }

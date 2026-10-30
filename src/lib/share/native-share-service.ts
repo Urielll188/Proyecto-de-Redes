@@ -5,51 +5,66 @@ export interface SharePayload {
   fileUrl?: string
 }
 
-const MAX_BLOB_SIZE = 15 * 1024 * 1024 // 15 MB límite estricto para RAM móvil
+const MAX_BLOB_SIZE = 40 * 1024 * 1024 // 40 MB límite de seguridad
 
-/**
- * Pre-descarga remota para tener el File listo en memoria antes del clic del usuario
- * evitando que Safari cancele navigator.share por pérdida de 'user gesture'.
- */
 export async function prepareShareableFile(fileUrl: string, fileName?: string): Promise<File | null> {
   if (typeof window === 'undefined') return null
   try {
     const res = await fetch(fileUrl, { mode: 'cors' })
     if (!res.ok) return null
     const blob = await res.blob()
-
+    
     if (blob.size > MAX_BLOB_SIZE) {
-      console.warn('El archivo excede los 15MB. Se compartirá como enlace de texto.')
+      console.warn('Archivo > 40MB. Se compartirá como enlace.')
       return null
     }
 
-    const ext = fileName?.split('.').pop() || 'jpg'
-    const mimeType = blob.type || (ext.match(/jpg|jpeg|png/) ? `image/${ext}` : 'video/mp4')
+    const cleanUrl = fileUrl.split('?')[0].toLowerCase()
+    const ext = fileName?.split('.').pop()?.toLowerCase() || cleanUrl.split('.').pop() || 'mp4'
+
+    let mimeType = blob.type
+    if (!mimeType || mimeType === 'application/octet-stream') {
+      if (ext.match(/mov|quicktime/)) {
+        mimeType = 'video/quicktime'
+      } else if (ext.match(/mp4/)) {
+        mimeType = 'video/mp4'
+      } else if (ext.match(/webm/)) {
+        mimeType = 'video/webm'
+      } else if (ext.match(/jpe?g/)) {
+        mimeType = 'image/jpeg'
+      } else if (ext.match(/png/)) {
+        mimeType = 'image/png'
+      } else if (ext.match(/webp/)) {
+        mimeType = 'image/webp'
+      } else {
+        mimeType = 'video/mp4'
+      }
+    } else if (ext.match(/mov|quicktime/) && !mimeType.includes('quicktime') && !mimeType.includes('mp4')) {
+      mimeType = 'video/quicktime'
+    }
+
     return new File([blob], fileName || `blitzr-post.${ext}`, { type: mimeType })
   } catch (error) {
-    console.warn('No se pudo precargar el archivo para compartir:', error)
+    console.warn('Error precargando archivo:', error)
     return null
   }
 }
 
-/**
- * Ejecuta el compartir nativo de forma síncrona al evento clic
- */
 export async function triggerNativeShare(payload: SharePayload): Promise<{
   success: boolean
   mode: 'native-file' | 'native-link' | 'clipboard-fallback'
   message: string
 }> {
-  // 1. Asegurar el texto en el portapapeles primero
+  // 1. Asegurar texto en portapapeles
   if (typeof navigator !== 'undefined' && navigator.clipboard) {
     try {
       await navigator.clipboard.writeText(payload.text)
     } catch (e) {
-      console.warn('Acceso al portapapeles denegado o no disponible:', e)
+      console.warn('Portapapeles no accesible:', e)
     }
   }
 
-  // 2. Intento de Web Share API con Archivo adjunto (móvil compatible)
+  // 2. Web Share API con archivo binario (Móvil nativo)
   if (
     typeof navigator !== 'undefined' &&
     navigator.share &&
@@ -66,11 +81,11 @@ export async function triggerNativeShare(payload: SharePayload): Promise<{
       return {
         success: true,
         mode: 'native-file',
-        message: '¡Abierto en tu app! Recuerda pegar el texto del portapapeles si tu teléfono no lo adjuntó automáticamente.',
+        message: '¡Abierto en WhatsApp/Redes! Recuerda pegar el texto copiado si tu teléfono no lo insertó automáticamente.',
       }
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
-        console.error('Error en navigator.share (files):', err)
+        console.error('Share API Error:', err)
       }
     }
   }
@@ -78,26 +93,23 @@ export async function triggerNativeShare(payload: SharePayload): Promise<{
   // 3. Fallback Web Share API: Solo texto y enlace
   if (typeof navigator !== 'undefined' && navigator.share) {
     try {
-      const shareText = payload.fileUrl
+      const shareText = payload.fileUrl 
         ? `${payload.text}\n\nDescarga el contenido aquí: ${payload.fileUrl}`
         : payload.text
-      await navigator.share({
-        title: payload.title,
-        text: shareText,
-      })
+      await navigator.share({ title: payload.title, text: shareText })
       return {
         success: true,
         mode: 'native-link',
-        message: 'Enlace y texto enviados al menú de compartir.',
+        message: 'Enlace enviado al menú de compartir nativo.',
       }
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
-        console.error('Error en navigator.share (text):', err)
+        console.error('Share API Error (text):', err)
       }
     }
   }
 
-  // 4. Fallback Desktop Total: Forzar descarga y notificar
+  // 4. Fallback Desktop: Descarga forzada del archivo
   if (payload.fileUrl && typeof document !== 'undefined') {
     const a = document.createElement('a')
     a.href = payload.fileUrl
