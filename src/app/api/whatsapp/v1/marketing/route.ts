@@ -432,10 +432,18 @@ export async function POST(req: NextRequest) {
         aislarFondo: body.aislarFondo !== false,
       })
 
-      const publicUrl = await subirBufferASupabase(
-        fotoProcesada,
-        `whatsapp-studio/banner-${Date.now()}.jpg`
-      )
+      const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://blitzr-studio.vercel.app'
+      const fallbackOgUrl = `${appBaseUrl}/api/og/banner?title=${encodeURIComponent(
+        (texto || copies.headline).slice(0, 36)
+      )}&hook=${encodeURIComponent(
+        subtitulo || 'Calidad garantizada • Envío inmediato'
+      )}&badge=${encodeURIComponent(precio || 'OFERTA DIRECTA')}`
+
+      const publicUrl =
+        (await subirBufferASupabase(
+          fotoProcesada,
+          `whatsapp-studio/banner-${Date.now()}.jpg`
+        )) || fallbackOgUrl
 
       const base64Resultado = `data:image/jpeg;base64,${fotoProcesada.toString('base64')}`
 
@@ -480,8 +488,15 @@ export async function POST(req: NextRequest) {
         precio || latest?.precio
       )
 
+      const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://blitzr-studio.vercel.app'
+      const defaultOgUrl = `${appBaseUrl}/api/og/banner?title=${encodeURIComponent(
+        (texto || latest?.titulo || copies.headline).slice(0, 36)
+      )}&hook=${encodeURIComponent(
+        'Calidad directa de fábrica • Envíos inmediatos'
+      )}&badge=${encodeURIComponent(precio || latest?.precio || '$1,713 MXN')}`
+
       const newDraftId = `pub_${Date.now()}`
-      const imageUrl = inputImageUrl || latest?.imageUrl || null
+      const imageUrl = inputImageUrl || latest?.imageUrl || defaultOgUrl
       const base64Image = base64 || latest?.base64Image || null
 
       const pending: PendingDraft = {
