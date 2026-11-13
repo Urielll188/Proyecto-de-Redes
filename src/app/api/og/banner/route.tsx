@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 export const runtime = 'edge'
 
 let bebasFontPromise: Promise<ArrayBuffer> | null = null
+let montserratBoldPromise: Promise<ArrayBuffer> | null = null
 
 function loadBebasFont(): Promise<ArrayBuffer> {
   if (!bebasFontPromise) {
@@ -17,20 +18,102 @@ function loadBebasFont(): Promise<ArrayBuffer> {
   return bebasFontPromise
 }
 
+function loadMontserratFont(): Promise<ArrayBuffer> {
+  if (!montserratBoldPromise) {
+    montserratBoldPromise = fetch(
+      'https://cdn.jsdelivr.net/fontsource/fonts/montserrat@latest/latin-700-normal.ttf'
+    ).then((res) => {
+      if (!res.ok) throw new Error('No se pudo descargar Montserrat')
+      return res.arrayBuffer()
+    })
+  }
+  return montserratBoldPromise
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
     const title = searchParams.get('title') || 'PAQUETE COMPLETO DE MANTENIMIENTO'
     const hook =
       searchParams.get('hook') ||
-      'Malla Testalera + Transportadora Calibre 14 + Balero 7210B Alemán • Pago al recibir'
+      'Malla Testalera + Transportadora Calibre 14 + Balero 7210B Aleman con Envio Gratis'
     const imageUrl = searchParams.get('imageUrl')
-    const badgeText = searchParams.get('badge') || 'ENVÍO GRATIS CDMX Y EDOMEX'
+    const badgeText = searchParams.get('badge') || 'ENVIO GRATIS CDMX Y EDOMEX'
     const brandName = searchParams.get('brand') || 'MALLAS TLAXCALLI'
     const priceText = searchParams.get('price') || '$1,713 MXN'
     const oldPriceText = searchParams.get('oldPrice') || '$2,700 MXN'
+    const theme = (searchParams.get('theme') || 'industrial').toLowerCase()
+    const ratio = (searchParams.get('ratio') || 'feed').toLowerCase()
 
-    const fontData = await loadBebasFont()
+    const isReel = ratio === 'reel' || ratio === '9:16'
+    const width = 1080
+    const height = isReel ? 1920 : 1350
+
+    const [bebasData, montserratData] = await Promise.all([
+      loadBebasFont(),
+      loadMontserratFont(),
+    ])
+
+    // Configuración de las 3 plantillas de agencia
+    const palettes: Record<
+      string,
+      {
+        bgGradient: string
+        glowTop: string
+        glowBottom: string
+        accent: string
+        accentText: string
+        subBrand: string
+        cardBg: string
+        borderAccent: string
+        ctaBg: string
+        ctaText: string
+        ctaLabel: string
+      }
+    > = {
+      industrial: {
+        bgGradient: 'linear-gradient(160deg, #09090b 0%, #18181b 50%, #09090b 100%)',
+        glowTop: 'radial-gradient(circle, rgba(245, 158, 11, 0.28) 0%, transparent 70%)',
+        glowBottom: 'radial-gradient(circle, rgba(16, 185, 129, 0.20) 0%, transparent 70%)',
+        accent: '#f59e0b',
+        accentText: '#09090b',
+        subBrand: 'CALIDAD INDUSTRIAL DIRECTA DE FABRICA',
+        cardBg: 'rgba(18, 18, 22, 0.96)',
+        borderAccent: 'rgba(245, 158, 11, 0.45)',
+        ctaBg: '#10b981',
+        ctaText: '#052e16',
+        ctaLabel: 'PEDIR POR WHATSAPP >>',
+      },
+      promo: {
+        bgGradient: 'linear-gradient(155deg, #1f0808 0%, #09090b 55%, #180606 100%)',
+        glowTop: 'radial-gradient(circle, rgba(239, 68, 68, 0.32) 0%, transparent 70%)',
+        glowBottom: 'radial-gradient(circle, rgba(250, 204, 21, 0.22) 0%, transparent 70%)',
+        accent: '#facc15',
+        accentText: '#09090b',
+        subBrand: 'OFERTA ESPECIAL DE FABRICA • AHORRA $1,000 MXN',
+        cardBg: 'rgba(24, 10, 10, 0.96)',
+        borderAccent: 'rgba(250, 204, 21, 0.55)',
+        ctaBg: '#facc15',
+        ctaText: '#09090b',
+        ctaLabel: 'APARTAR OFERTA HOY >>',
+      },
+      catalogo: {
+        bgGradient: 'linear-gradient(160deg, #020617 0%, #0f172a 52%, #020617 100%)',
+        glowTop: 'radial-gradient(circle, rgba(56, 189, 248, 0.28) 0%, transparent 70%)',
+        glowBottom: 'radial-gradient(circle, rgba(37, 99, 235, 0.24) 0%, transparent 70%)',
+        accent: '#38bdf8',
+        accentText: '#020617',
+        subBrand: 'INGENIERIA EN ACERO CALIBRE 14 Y BALEROS ALEMANES',
+        cardBg: 'rgba(15, 23, 42, 0.96)',
+        borderAccent: 'rgba(56, 189, 248, 0.50)',
+        ctaBg: '#38bdf8',
+        ctaText: '#020617',
+        ctaLabel: 'COTIZAR EN 1 MINUTO >>',
+      },
+    }
+
+    const p = palettes[theme] || palettes.industrial
+    const imageBoxHeight = isReel ? '1160px' : '740px'
 
     return new ImageResponse(
       (
@@ -41,24 +124,23 @@ export async function GET(req: NextRequest) {
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'space-between',
-            background: 'linear-gradient(160deg, #09090b 0%, #18181b 50%, #09090b 100%)',
-            padding: '44px 52px',
+            background: p.bgGradient,
+            padding: isReel ? '70px 56px 80px 56px' : '44px 52px',
             position: 'relative',
             overflow: 'hidden',
-            fontFamily: 'sans-serif',
+            fontFamily: 'Montserrat',
           }}
         >
-          {/* Iluminación radial cálida superior */}
+          {/* Iluminación radial superior */}
           <div
             style={{
               position: 'absolute',
               top: '-180px',
               right: '-120px',
-              width: '680px',
-              height: '680px',
+              width: '700px',
+              height: '700px',
               borderRadius: '50%',
-              background:
-                'radial-gradient(circle, rgba(245, 158, 11, 0.24) 0%, rgba(234, 179, 8, 0.08) 50%, transparent 72%)',
+              background: p.glowTop,
             }}
           />
 
@@ -68,11 +150,10 @@ export async function GET(req: NextRequest) {
               position: 'absolute',
               bottom: '-160px',
               left: '-120px',
-              width: '600px',
-              height: '600px',
+              width: '620px',
+              height: '620px',
               borderRadius: '50%',
-              background:
-                'radial-gradient(circle, rgba(16, 185, 129, 0.18) 0%, transparent 70%)',
+              background: p.glowBottom,
             }}
           />
 
@@ -90,7 +171,7 @@ export async function GET(req: NextRequest) {
               <span
                 style={{
                   fontFamily: 'Bebas Neue',
-                  fontSize: '54px',
+                  fontSize: isReel ? '62px' : '56px',
                   color: '#ffffff',
                   letterSpacing: '2.5px',
                   lineHeight: 1,
@@ -100,15 +181,16 @@ export async function GET(req: NextRequest) {
               </span>
               <span
                 style={{
-                  fontSize: '14px',
-                  fontWeight: '700',
-                  color: '#f59e0b',
-                  letterSpacing: '3.5px',
+                  fontFamily: 'Montserrat',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  color: p.accent,
+                  letterSpacing: '2.5px',
                   textTransform: 'uppercase',
-                  marginTop: '4px',
+                  marginTop: '6px',
                 }}
               >
-                CALIDAD INDUSTRIAL DIRECTA DE FÁBRICA
+                {p.subBrand}
               </span>
             </div>
 
@@ -116,16 +198,16 @@ export async function GET(req: NextRequest) {
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                backgroundColor: '#f59e0b',
+                backgroundColor: p.accent,
                 borderRadius: '999px',
-                padding: '10px 26px',
+                padding: '12px 28px',
               }}
             >
               <span
                 style={{
                   fontFamily: 'Bebas Neue',
-                  color: '#09090b',
-                  fontSize: '26px',
+                  color: p.accentText,
+                  fontSize: '27px',
                   letterSpacing: '1.5px',
                 }}
               >
@@ -134,21 +216,21 @@ export async function GET(req: NextRequest) {
             </div>
           </div>
 
-          {/* 2. VITRINA CENTRAL DEL PRODUCTO (Limpia, sin parches encima de la foto) */}
+          {/* 2. VITRINA CENTRAL DEL PRODUCTO */}
           <div
             style={{
               display: 'flex',
               position: 'relative',
               width: '100%',
-              height: '750px',
+              height: imageBoxHeight,
               alignItems: 'center',
               justifyContent: 'center',
               margin: '16px 0',
-              backgroundColor: 'rgba(24, 24, 27, 0.85)',
-              borderRadius: '32px',
-              border: '2px solid rgba(245, 158, 11, 0.35)',
+              backgroundColor: 'rgba(15, 15, 20, 0.88)',
+              borderRadius: '34px',
+              border: `3px solid ${p.borderAccent}`,
               overflow: 'hidden',
-              boxShadow: '0 25px 60px rgba(0, 0, 0, 0.75)',
+              boxShadow: '0 28px 65px rgba(0, 0, 0, 0.8)',
             }}
           >
             {imageUrl ? (
@@ -176,59 +258,51 @@ export async function GET(req: NextRequest) {
                   style={{
                     fontFamily: 'Bebas Neue',
                     fontSize: '72px',
-                    color: '#f59e0b',
+                    color: p.accent,
                     letterSpacing: '2px',
                   }}
                 >
-                  ACERO CALIBRE 14 + BALERO ALEMÁN
-                </span>
-                <span
-                  style={{
-                    fontSize: '26px',
-                    color: '#e4e4e7',
-                    marginTop: '12px',
-                  }}
-                >
-                  Máxima resistencia y durabilidad para tu negocio
+                  ACERO CALIBRE 14 + BALERO ALEMAN
                 </span>
               </div>
             )}
 
-            {/* Etiqueta de precio en esquina inferior derecha (discreta y elegante) */}
+            {/* Etiqueta flotante de precio en esquina inferior derecha */}
             {priceText ? (
               <div
                 style={{
                   position: 'absolute',
-                  bottom: '22px',
-                  right: '22px',
+                  bottom: '26px',
+                  right: '26px',
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'flex-end',
                   backgroundColor: 'rgba(9, 9, 11, 0.94)',
-                  border: '2px solid #f59e0b',
-                  borderRadius: '22px',
-                  padding: '14px 28px',
-                  boxShadow: '0 12px 30px rgba(0, 0, 0, 0.75)',
+                  border: `2px solid ${p.accent}`,
+                  borderRadius: '24px',
+                  padding: '14px 30px',
+                  boxShadow: '0 14px 34px rgba(0, 0, 0, 0.8)',
                 }}
               >
                 {oldPriceText ? (
                   <span
                     style={{
-                      fontFamily: 'Bebas Neue',
-                      fontSize: '22px',
+                      fontFamily: 'Montserrat',
+                      fontSize: '15px',
+                      fontWeight: 700,
                       color: '#a1a1aa',
-                      letterSpacing: '1.5px',
-                      marginBottom: '2px',
+                      letterSpacing: '1px',
+                      marginBottom: '4px',
                     }}
                   >
-                    PRECIO REFACCIONARIA: {oldPriceText}
+                    REFACCIONARIA: {oldPriceText}
                   </span>
                 ) : null}
                 <span
                   style={{
                     fontFamily: 'Bebas Neue',
-                    fontSize: '56px',
-                    color: '#fbbf24',
+                    fontSize: isReel ? '64px' : '56px',
+                    color: p.accent,
                     lineHeight: 1,
                     letterSpacing: '1.5px',
                   }}
@@ -239,15 +313,15 @@ export async function GET(req: NextRequest) {
             ) : null}
           </div>
 
-          {/* 3. TARJETA INFERIOR DE CONVERSIÓN */}
+          {/* 3. TARJETA INFERIOR DE CONVERSIÓN CON DOBLE TIPOGRAFÍA */}
           <div
             style={{
               display: 'flex',
               flexDirection: 'column',
-              backgroundColor: 'rgba(15, 15, 18, 0.96)',
-              border: '2px solid rgba(255, 255, 255, 0.14)',
-              borderRadius: '28px',
-              padding: '26px 34px',
+              backgroundColor: p.cardBg,
+              border: `2px solid ${p.borderAccent}`,
+              borderRadius: '30px',
+              padding: isReel ? '34px 38px' : '26px 34px',
               zIndex: 10,
               width: '100%',
             }}
@@ -264,13 +338,13 @@ export async function GET(req: NextRequest) {
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
-                  maxWidth: '610px',
+                  maxWidth: '590px',
                 }}
               >
                 <span
                   style={{
                     fontFamily: 'Bebas Neue',
-                    fontSize: '50px',
+                    fontSize: isReel ? '58px' : '50px',
                     color: '#ffffff',
                     lineHeight: 1.02,
                     letterSpacing: '1.5px',
@@ -280,11 +354,12 @@ export async function GET(req: NextRequest) {
                 </span>
                 <span
                   style={{
-                    fontSize: '20px',
-                    color: '#d4d4d8',
-                    marginTop: '8px',
+                    fontFamily: 'Montserrat',
+                    fontSize: isReel ? '22px' : '18px',
+                    color: '#e4e4e7',
+                    marginTop: '10px',
                     lineHeight: 1.35,
-                    fontWeight: '500',
+                    fontWeight: 700,
                   }}
                 >
                   {hook.slice(0, 110)}
@@ -295,20 +370,20 @@ export async function GET(req: NextRequest) {
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  backgroundColor: '#10b981',
+                  backgroundColor: p.ctaBg,
                   borderRadius: '20px',
-                  padding: '18px 30px',
+                  padding: isReel ? '22px 32px' : '18px 30px',
                 }}
               >
                 <span
                   style={{
                     fontFamily: 'Bebas Neue',
-                    fontSize: '34px',
-                    color: '#052e16',
+                    fontSize: isReel ? '36px' : '32px',
+                    color: p.ctaText,
                     letterSpacing: '1.5px',
                   }}
                 >
-                  PEDIR POR WHATSAPP &gt;&gt;
+                  {p.ctaLabel}
                 </span>
               </div>
             </div>
@@ -316,14 +391,20 @@ export async function GET(req: NextRequest) {
         </div>
       ),
       {
-        width: 1080,
-        height: 1350,
+        width,
+        height,
         fonts: [
           {
             name: 'Bebas Neue',
-            data: fontData,
+            data: bebasData,
             style: 'normal',
             weight: 400,
+          },
+          {
+            name: 'Montserrat',
+            data: montserratData,
+            style: 'normal',
+            weight: 700,
           },
         ],
       }

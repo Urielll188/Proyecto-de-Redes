@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { prisma } from '@/lib/prisma'
+import { getValidTikTokAccessToken } from '@/lib/tiktok/token-service'
 import sharp from 'sharp'
 
 export const dynamic = 'force-dynamic'
@@ -40,22 +41,24 @@ async function obtenerUsuarioPrincipal() {
   })
 }
 
-async function guardarImagenEnBoveda(opciones: {
+async function guardarMediaEnBoveda(opciones: {
   userId: string
-  bufferJpeg: Buffer
+  buffer: Buffer
+  mimeType: 'image/jpeg' | 'video/mp4'
   titulo: string
   igCopy: string
   tiktokScript: string
   whatsappCopy: string
   appBaseUrl: string
 }): Promise<{ id: string; publicUrl: string; base64DataUrl: string }> {
-  const base64DataUrl = `data:image/jpeg;base64,${opciones.bufferJpeg.toString('base64')}`
+  const ext = opciones.mimeType === 'video/mp4' ? 'mp4' : 'jpg'
+  const base64DataUrl = `data:${opciones.mimeType};base64,${opciones.buffer.toString('base64')}`
 
   const created = await prisma.contentVault.create({
     data: {
       userId: opciones.userId,
       topic: opciones.titulo.slice(0, 180),
-      tone: 'WhatsApp Bridge',
+      tone: opciones.mimeType === 'video/mp4' ? 'WhatsApp Video' : 'WhatsApp Bridge',
       instagramCopy: opciones.igCopy,
       tiktokScript: opciones.tiktokScript,
       whatsappFicha: opciones.whatsappCopy,
@@ -63,7 +66,7 @@ async function guardarImagenEnBoveda(opciones: {
     },
   })
 
-  const publicUrl = `${opciones.appBaseUrl}/api/whatsapp/v1/media/${created.id}.jpg`
+  const publicUrl = `${opciones.appBaseUrl}/api/whatsapp/v1/media/${created.id}.${ext}`
 
   await prisma.contentVault.update({
     where: { id: created.id },
@@ -76,6 +79,64 @@ async function guardarImagenEnBoveda(opciones: {
   return { id: created.id, publicUrl, base64DataUrl }
 }
 
+async function generarEscenaFluxOSoul(promptEn: string): Promise<Buffer | null> {
+  // 1. Si hay API Key de Open Higgsfield configurada en entorno, usar api.higgsfield.ai
+  const hfKey = process.env.HIGGSFIELD_API_KEY
+  if (hfKey) {
+    try {
+      const resHf = await fetch('https://api.higgsfield.ai/v1/images/generations', {
+        method: 'POST',
+        headers: {
+          Authorization: `Key ${hfKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'soul-v2',
+          prompt: promptEn,
+          width: 1080,
+          height: 1350,
+        }),
+      })
+      if (resHf.ok) {
+        const dHf = await resHf.json()
+        const imgUrl = dHf?.data?.[0]?.url || dHf?.image_url
+        if (imgUrl) {
+          const rImg = await fetch(imgUrl)
+          if (rImg.ok) return Buffer.from(await rImg.arrayBuffer())
+        }
+      }
+    } catch (e) {
+      console.warn('[Higgsfield API] Fallback a Flux Realism:', e)
+    }
+  }
+
+  // 2. Motor gratuito de alta definición Flux Realism (recortando 56px inferiores para cero marcas de agua)
+  try {
+    const seed = Math.floor(Math.random() * 900000) + 100000
+    const pollUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+      promptEn
+    )}?width=960&height=820&seed=${seed}&nologo=true&enhance=true&model=flux`
+    const controller = new AbortController()
+    const tId = setTimeout(() => controller.abort(), 14000)
+    const resFlux = await fetch(pollUrl, { signal: controller.signal })
+    clearTimeout(tId)
+    if (resFlux.ok) {
+      const arr = await resFlux.arrayBuffer()
+      if (arr.byteLength > 8000) {
+        return await sharp(Buffer.from(arr))
+          .extract({ left: 0, top: 0, width: 960, height: 750 })
+          .modulate({ brightness: 1.03, saturation: 1.1 })
+          .sharpen()
+          .jpeg({ quality: 92 })
+          .toBuffer()
+      }
+    }
+  } catch (err) {
+    console.warn('[Flux Realism] Timeout o error:', err)
+  }
+  return null
+}
+
 async function componerPosterAgencia(opciones: {
   fotoBuffer: Buffer
   appBaseUrl: string
@@ -85,22 +146,25 @@ async function componerPosterAgencia(opciones: {
   precio: string
   precioAnterior: string
   badge: string
+  theme?: 'industrial' | 'promo' | 'catalogo'
+  ratio?: 'feed' | 'reel'
 }): Promise<Buffer> {
-  // 1. Mejorar nitidez, contraste y color de la fotografía real sin destruir el producto
+  const isReel = opciones.ratio === 'reel'
+  const targetH = isReel ? 1160 : 740
+
   const fotoMejorada = await sharp(opciones.fotoBuffer)
     .rotate()
-    .resize(960, 750, { fit: 'cover', position: 'centre' })
+    .resize(960, targetH, { fit: 'cover', position: 'centre' })
     .modulate({ brightness: 1.04, saturation: 1.12 })
     .sharpen()
     .jpeg({ quality: 92 })
     .toBuffer()
 
-  // 2. Guardar temporalmente la foto limpia para que /api/og/banner (Satori + Bebas Neue) la incruste en alta resolución
   try {
     const tempVault = await prisma.contentVault.create({
       data: {
         userId: opciones.userId,
-        topic: ' raw_asset_studio',
+        topic: 'raw_asset_studio',
         tone: 'Asset',
         instagramCopy: '',
         tiktokScript: '',
@@ -110,55 +174,110 @@ async function componerPosterAgencia(opciones: {
     const rawMediaUrl = `${opciones.appBaseUrl}/api/whatsapp/v1/media/${tempVault.id}.jpg`
 
     const ogUrl = new URL(`${opciones.appBaseUrl}/api/og/banner`)
-    ogUrl.searchParams.set('title', opciones.titulo.slice(0, 42))
-    ogUrl.searchParams.set('hook', opciones.subtitulo.slice(0, 105))
+    ogUrl.searchParams.set('title', opciones.titulo.slice(0, 44))
+    ogUrl.searchParams.set('hook', opciones.subtitulo.slice(0, 110))
     ogUrl.searchParams.set('badge', opciones.badge.slice(0, 32))
     ogUrl.searchParams.set('price', opciones.precio)
     ogUrl.searchParams.set('oldPrice', opciones.precioAnterior)
+    ogUrl.searchParams.set('theme', opciones.theme || 'industrial')
+    ogUrl.searchParams.set('ratio', opciones.ratio || 'feed')
     ogUrl.searchParams.set('imageUrl', rawMediaUrl)
 
     const ogRes = await fetch(ogUrl.toString())
     if (ogRes.ok) {
       const pngBuffer = Buffer.from(await ogRes.arrayBuffer())
-      // Convertir el PNG 1080x1350 de Satori a JPEG optimizado para Meta y WhatsApp
       return await sharp(pngBuffer).jpeg({ quality: 93 }).toBuffer()
     }
   } catch (err) {
     console.warn('[Poster Agencia] Fallback a compositor Sharp directo:', err)
   }
 
-  // Fallback local con Sharp si no se pudo llamar a /api/og/banner
   const cWidth = 1080
-  const cHeight = 1350
+  const cHeight = isReel ? 1920 : 1350
   const tituloLimpio = escapeXml(opciones.titulo.toUpperCase().slice(0, 34))
   const subLimpio = escapeXml(opciones.subtitulo.slice(0, 65))
   const precioLimpio = escapeXml(opciones.precio || '$1,713 MXN')
 
   const marcoSvg = `
   <svg width="${cWidth}" height="${cHeight}" viewBox="0 0 ${cWidth} ${cHeight}" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#09090b"/>
-        <stop offset="50%" stop-color="#18181b"/>
-        <stop offset="100%" stop-color="#09090b"/>
-      </linearGradient>
-    </defs>
-    <rect width="${cWidth}" height="${cHeight}" fill="url(#bg)"/>
-    <rect x="54" y="164" width="972" height="762" rx="28" fill="#18181b" stroke="#f59e0b" stroke-width="3"/>
+    <rect width="${cWidth}" height="${cHeight}" fill="#09090b"/>
     <text x="60" y="95" font-family="sans-serif" font-size="42" font-weight="900" fill="#ffffff">MALLAS TLAXCALLI</text>
-    <text x="60" y="132" font-family="sans-serif" font-size="20" font-weight="700" fill="#f59e0b">CALIDAD INDUSTRIAL DIRECTA DE FÁBRICA</text>
-    <rect x="54" y="965" width="972" height="320" rx="28" fill="#121216" stroke="#27272a" stroke-width="2"/>
-    <text x="540" y="1045" font-family="sans-serif" font-size="42" font-weight="900" fill="#ffffff" text-anchor="middle">${tituloLimpio}</text>
-    <text x="540" y="1100" font-family="sans-serif" font-size="24" font-weight="600" fill="#d4d4d8" text-anchor="middle">${subLimpio}</text>
-    <rect x="240" y="1145" width="600" height="96" rx="24" fill="#f59e0b"/>
-    <text x="540" y="1206" font-family="sans-serif" font-size="38" font-weight="900" fill="#09090b" text-anchor="middle">OFERTA: ${precioLimpio} • PEDIR AHORA</text>
+    <text x="540" y="${cHeight - 180}" font-family="sans-serif" font-size="42" font-weight="900" fill="#ffffff" text-anchor="middle">${tituloLimpio}</text>
+    <text x="540" y="${cHeight - 120}" font-family="sans-serif" font-size="24" font-weight="600" fill="#d4d4d8" text-anchor="middle">${subLimpio}</text>
+    <text x="540" y="${cHeight - 60}" font-family="sans-serif" font-size="38" font-weight="900" fill="#f59e0b" text-anchor="middle">OFERTA: ${precioLimpio}</text>
   </svg>
   `
   const baseMarco = await sharp(Buffer.from(marcoSvg)).png().toBuffer()
   return sharp(baseMarco)
-    .composite([{ input: fotoMejorada, left: 60, top: 170 }])
+    .composite([{ input: fotoMejorada, left: 60, top: 150 }])
     .jpeg({ quality: 92 })
     .toBuffer()
+}
+
+async function subirVideoATikTokDirecto(
+  userId: string,
+  videoBuffer: Buffer,
+  titulo: string
+): Promise<{ ok: boolean; publishId?: string; detalle: string }> {
+  try {
+    const accessToken = await getValidTikTokAccessToken(userId)
+    const videoSize = videoBuffer.byteLength
+
+    const initRes = await fetch('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+      },
+      body: JSON.stringify({
+        source_info: {
+          source: 'FILE_UPLOAD',
+          video_size: videoSize,
+          chunk_size: videoSize,
+          total_chunk_count: 1,
+        },
+      }),
+    })
+
+    const initData = await initRes.json()
+    if (!initRes.ok || initData.error?.code !== 'ok' || !initData.data?.upload_url) {
+      return {
+        ok: false,
+        detalle: initData.error?.message || 'Error al inicializar subida en TikTok API',
+      }
+    }
+
+    const { upload_url, publish_id } = initData.data
+
+    const uploadRes = await fetch(upload_url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'video/mp4',
+        'Content-Length': videoSize.toString(),
+        'Content-Range': `bytes 0-${videoSize - 1}/${videoSize}`,
+      },
+      body: new Uint8Array(videoBuffer),
+    })
+
+    if (uploadRes.status < 200 || uploadRes.status > 204) {
+      const errText = await uploadRes.text()
+      return {
+        ok: false,
+        detalle: `Error transfiriendo bytes a TikTok (HTTP ${uploadRes.status}): ${errText.slice(0, 80)}`,
+      }
+    }
+
+    return {
+      ok: true,
+      publishId: publish_id,
+      detalle: `Video "${titulo.slice(0, 35)}" enviado a tu cuenta de TikTok (ID: ${publish_id})`,
+    }
+  } catch (err: any) {
+    return {
+      ok: false,
+      detalle: err?.message || 'Error en servicio de TikTok',
+    }
+  }
 }
 
 async function generarCopiesYPromptIA(
@@ -167,6 +286,11 @@ async function generarCopiesYPromptIA(
 ): Promise<{
   headline: string
   subtitulo: string
+  slide2Title: string
+  slide2Sub: string
+  slide3Title: string
+  slide3Sub: string
+  locucionVoz: string
   imagePromptEn: string
   igCopy: string
   tiktokScript: string
@@ -174,9 +298,15 @@ async function generarCopiesYPromptIA(
 }> {
   const fallback = {
     headline: 'PAQUETE COMPLETO DE MANTENIMIENTO',
-    subtitulo: 'Malla Testalera + Transportadora Calibre 14 + Balero 7210B Alemán',
+    subtitulo: 'Malla Testalera + Transportadora Calibre 14 + Balero 7210B Aleman',
+    slide2Title: 'ACERO CALIBRE 14 + BALERO ALEMAN',
+    slide2Sub: 'Maxima resistencia continua sin paros en tu maquina tortilladora',
+    slide3Title: 'AHORRA $1,000 MXN DIRECTO DE FABRICA',
+    slide3Sub: 'Envio gratis a domicilio en CDMX y Edomex • Pagas hasta recibir',
+    locucionVoz:
+      '¡Atención dueño de tortillería! Deja de pagar más de dos mil setecientos pesos en refaccionaria. En Mallas Tlaxcalli te llevamos el paquete completo de mantenimiento con malla testalera, malla transportadora calibre catorce y balero alemán setenta y dos diez B por solo mil setecientos trece pesos, con envío gratis hasta tu negocio y pago al recibir. ¡Escríbenos hoy por WhatsApp!',
     imagePromptEn:
-      'Professional commercial studio product photography of industrial stainless steel woven wire conveyor mesh rolls and heavy duty German ball bearing 7210B on a dark luxury slate workbench, dramatic warm golden rim lighting, ultra crisp metallic texture, commercial advertising photography, 8k',
+      'Macro commercial product photography of heavy duty industrial stainless steel woven wire conveyor mesh roll and precision German steel ball bearing on a dark slate factory table, warm amber studio lighting, hyper realistic 8k',
     igCopy:
       `🔥 ¡Equipa tu tortillería directo de fábrica con Mallas Tlaxcalli!\n\n` +
       `✅ 1 Malla Testalera (23cm x 1.40m)\n` +
@@ -213,25 +343,35 @@ async function generarCopiesYPromptIA(
 
     const prompt = `Actúa como Director Creativo de Agencia para "Mallas Tlaxcalli" (fabricantes de mallas de acero calibre 14 para máquinas tortilladoras y baleros alemanes 7210B, paquete completo en ${precio} con envío gratis).
 El usuario pidió: "${instruccionUsuario}".
-Devuelve ÚNICAMENTE un JSON válido con estas llaves exactas:
+Devuelve ÚNICAMENTE un JSON válido (sin acentos en los titulares para máxima compatibilidad tipográfica) con estas llaves exactas:
 {
-  "headline": "Titular publicitario impactante en español (máximo 5 palabras en MAYÚSCULAS)",
-  "subtitulo": "Subtítulo persuasivo corto de beneficio (máximo 12 palabras)",
-  "imagePromptEn": "Detailed English prompt for Flux AI photorealistic commercial studio photography matching the user request (NO text in image, dramatic studio lighting, 8k product photography)",
-  "igCopy": "Copy persuasivo y profesional para Instagram y Facebook con emojis, beneficios y llamado a la acción",
-  "tiktokScript": "Guion corto estructurado para TikTok/Reels",
+  "headline": "Titular Slide 1 en MAYUSCULAS sin acentos (max 5 palabras)",
+  "subtitulo": "Subtitulo Slide 1 sin acentos (max 11 palabras)",
+  "slide2Title": "Titular Slide 2 tecnico en MAYUSCULAS sin acentos (max 5 palabras)",
+  "slide2Sub": "Subtitulo Slide 2 sin acentos (max 11 palabras)",
+  "slide3Title": "Titular Slide 3 de oferta/cierre en MAYUSCULAS sin acentos (max 5 palabras)",
+  "slide3Sub": "Subtitulo Slide 3 sin acentos (max 11 palabras)",
+  "locucionVoz": "Guion de locucion comercial hablada en español natural y persuasivo de 12 segundos (aprox 45 palabras) listo para sintetizador de voz",
+  "imagePromptEn": "Detailed English prompt for Flux Realism commercial studio photography matching the request (NO text in image, dramatic studio lighting, 8k)",
+  "igCopy": "Copy persuasivo y profesional para Instagram y Facebook con emojis y llamado a la accion",
+  "tiktokScript": "Descripcion y hashtags para publicar el video en TikTok",
   "whatsappCopy": "Mensaje vendedor directo para WhatsApp"
 }`
 
     const res = await Promise.race([
       model.generateContent(prompt),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('TIMEOUT')), 7000)),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('TIMEOUT')), 7500)),
     ])
 
     const parsed = JSON.parse(res.response.text())
     return {
       headline: parsed.headline || fallback.headline,
       subtitulo: parsed.subtitulo || fallback.subtitulo,
+      slide2Title: parsed.slide2Title || fallback.slide2Title,
+      slide2Sub: parsed.slide2Sub || fallback.slide2Sub,
+      slide3Title: parsed.slide3Title || fallback.slide3Title,
+      slide3Sub: parsed.slide3Sub || fallback.slide3Sub,
+      locucionVoz: parsed.locucionVoz || fallback.locucionVoz,
       imagePromptEn: parsed.imagePromptEn || fallback.imagePromptEn,
       igCopy: parsed.igCopy || fallback.igCopy,
       tiktokScript: parsed.tiktokScript || fallback.tiktokScript,
@@ -252,12 +392,14 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    modulo: 'Blitzr Marketing Bridge v2 (Agency Studio + Persistent Vault Media)',
+    modulo: 'Blitzr Marketing Bridge v3 (3-Theme Agency Studio + Commercial Video + TikTok Live)',
     estado: 'online',
     acciones_soportadas: [
       'ping',
       'editar_foto_estudio',
       'generar_imagen_ia',
+      'preparar_video_comercial',
+      'guardar_video_comercial',
       'solicitar_publicacion_redes',
       'confirmar_publicacion_redes',
     ],
@@ -286,8 +428,11 @@ export async function POST(req: NextRequest) {
     const {
       accion,
       base64,
+      fotosBase64,
+      videoBase64,
       imageUrl: inputImageUrl,
       nombre,
+      tema,
       texto,
       subtitulo,
       precio = '$1,713 MXN',
@@ -300,12 +445,12 @@ export async function POST(req: NextRequest) {
     if (accion === 'ping') {
       return NextResponse.json({
         ok: true,
-        mensaje: 'Módulo de Marketing online y listo',
+        mensaje: 'Módulo de Marketing v3 (Imagen + Video + TikTok) online y listo',
         timestamp: new Date().toISOString(),
       })
     }
 
-    // 1. EDICIÓN DE FOTO REAL O GENERACIÓN DE IMAGEN IA + PÓSTER DE AGENCIA
+    // 1. EDICIÓN DE FOTO O GENERACIÓN HÍBRIDA DE IMÁGENES CON 3 PLANTILLAS DE AGENCIA
     if (accion === 'editar_foto_estudio' || accion === 'generar_imagen_ia') {
       const dbUser = await obtenerUsuarioPrincipal()
       if (!dbUser) {
@@ -320,43 +465,33 @@ export async function POST(req: NextRequest) {
         precio
       )
 
+      const themeChosen: 'industrial' | 'promo' | 'catalogo' =
+        tema === 'promo' || tema === 'catalogo' || tema === 'industrial'
+          ? tema
+          : accion === 'generar_imagen_ia'
+          ? (['industrial', 'promo', 'catalogo'][Math.floor(Math.random() * 3)] as any)
+          : 'industrial'
+
       let sourcePhotoBuffer: Buffer | null = null
 
-      // Priorizar siempre la fotografía real del producto si fue enviada (evita alucinaciones de IA sobre piezas industriales)
-      if (base64 && typeof base64 === 'string') {
+      // Si el usuario pidió explícitamente escena nueva IA o no envió foto base, usar Flux Realism / Higgsfield
+      const forzarEscenaIA = Boolean(body.usarEscenaIA)
+      if (forzarEscenaIA && accion === 'generar_imagen_ia') {
+        sourcePhotoBuffer = await generarEscenaFluxOSoul(iaData.imagePromptEn)
+      }
+
+      if (!sourcePhotoBuffer && base64 && typeof base64 === 'string') {
         const rawBase64 = base64.replace(/^data:image\/\w+;base64,/, '')
         sourcePhotoBuffer = Buffer.from(rawBase64, 'base64')
-      } else if (inputImageUrl && typeof inputImageUrl === 'string') {
+      } else if (!sourcePhotoBuffer && inputImageUrl && typeof inputImageUrl === 'string') {
         const resImg = await fetch(inputImageUrl)
         if (resImg.ok) {
           sourcePhotoBuffer = Buffer.from(await resImg.arrayBuffer())
         }
       }
 
-      // Si no se envió foto base y se pidió 'generar_imagen_ia', generar con Flux AI recortando borde inferior de marca de agua
       if (!sourcePhotoBuffer && accion === 'generar_imagen_ia') {
-        try {
-          const seed = Math.floor(Math.random() * 900000) + 100000
-          const pollUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-            iaData.imagePromptEn
-          )}?width=960&height=820&seed=${seed}&nologo=true&model=flux`
-          const controller = new AbortController()
-          const tId = setTimeout(() => controller.abort(), 14000)
-          const resFlux = await fetch(pollUrl, { signal: controller.signal })
-          clearTimeout(tId)
-          if (resFlux.ok) {
-            const arr = await resFlux.arrayBuffer()
-            if (arr.byteLength > 8000) {
-              // Recortar los 50px inferiores para garantizar cero marca de agua externa
-              sourcePhotoBuffer = await sharp(Buffer.from(arr))
-                .extract({ left: 0, top: 0, width: 960, height: 750 })
-                .jpeg({ quality: 92 })
-                .toBuffer()
-            }
-          }
-        } catch (fluxErr) {
-          console.warn('[Generar Imagen IA] Flux tardó:', fluxErr)
-        }
+        sourcePhotoBuffer = await generarEscenaFluxOSoul(iaData.imagePromptEn)
       }
 
       if (!sourcePhotoBuffer || sourcePhotoBuffer.length < 32) {
@@ -366,7 +501,6 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Validar que sea una imagen decodificable por Sharp
       try {
         await sharp(sourcePhotoBuffer).metadata()
       } catch {
@@ -376,7 +510,6 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Componer el póster comercial de agencia 1080x1350 (con foto nítida + tipografía Bebas Neue)
       const posterBuffer = await componerPosterAgencia({
         fotoBuffer: sourcePhotoBuffer,
         appBaseUrl,
@@ -385,13 +518,20 @@ export async function POST(req: NextRequest) {
         subtitulo: subtitulo || iaData.subtitulo,
         precio,
         precioAnterior,
-        badge: 'ENVÍO GRATIS CDMX Y EDOMEX',
+        badge:
+          themeChosen === 'promo'
+            ? 'AHORRA $1,000 MXN HOY'
+            : themeChosen === 'catalogo'
+            ? 'ACERO CAL 14 + BALERO 7210B'
+            : 'ENVIO GRATIS CDMX Y EDOMEX',
+        theme: themeChosen,
+        ratio: 'feed',
       })
 
-      // Guardar en ContentVault para que tenga URL pública real .jpg accesible por Meta Graph API
-      const saved = await guardarImagenEnBoveda({
+      const saved = await guardarMediaEnBoveda({
         userId: dbUser.id,
-        bufferJpeg: posterBuffer,
+        buffer: posterBuffer,
+        mimeType: 'image/jpeg',
         titulo: iaData.headline,
         igCopy: iaData.igCopy,
         tiktokScript: iaData.tiktokScript,
@@ -402,7 +542,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: true,
         draftId: saved.id,
-        nombre: nombre || `publicidad_${saved.id.slice(0, 8)}.jpg`,
+        tema_aplicado: themeChosen,
+        nombre: nombre || `publicidad_${themeChosen}_${saved.id.slice(0, 6)}.jpg`,
         public_url: saved.publicUrl,
         base64_resultado: saved.base64DataUrl,
         caption_sugerido: iaData.whatsappCopy,
@@ -415,7 +556,164 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // 2. PREVISUALIZACIÓN Y CONFIRMACIÓN PARA PUBLICAR EN REDES
+    // 2. PREPARAR 3 ESCENAS VERTICALES 9:16 (1080x1920) + GUION DE VOZ PARA VIDEO COMERCIAL TIKTOK/REELS
+    if (accion === 'preparar_video_comercial') {
+      const dbUser = await obtenerUsuarioPrincipal()
+      if (!dbUser) {
+        return NextResponse.json({ ok: false, error: 'Usuario no encontrado' }, { status: 500 })
+      }
+
+      const iaData = await generarCopiesYPromptIA(
+        texto || 'Video Comercial Paquete Mantenimiento Mallas Tlaxcalli',
+        precio
+      )
+
+      const listaFotosInput: Buffer[] = []
+      if (Array.isArray(fotosBase64)) {
+        for (const fB64 of fotosBase64.slice(0, 3)) {
+          if (typeof fB64 === 'string' && fB64.length > 50) {
+            listaFotosInput.push(Buffer.from(fB64.replace(/^data:image\/\w+;base64,/, ''), 'base64'))
+          }
+        }
+      } else if (base64 && typeof base64 === 'string') {
+        listaFotosInput.push(Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ''), 'base64'))
+      }
+
+      // Generar 1 escena IA con Flux Realism para enriquecer el video si faltan fotos
+      const fluxBuf = await generarEscenaFluxOSoul(iaData.imagePromptEn)
+      if (fluxBuf) {
+        listaFotosInput.push(fluxBuf)
+      }
+
+      if (listaFotosInput.length === 0) {
+        return NextResponse.json(
+          { ok: false, error: 'No se proporcionaron fotos base ni se pudo generar escena' },
+          { status: 400 }
+        )
+      }
+
+      const foto1 = listaFotosInput[0]
+      const foto2 = listaFotosInput[1] || listaFotosInput[0]
+      const foto3 = listaFotosInput[2] || listaFotosInput[0]
+
+      const [slide1, slide2, slide3, feedPoster] = await Promise.all([
+        componerPosterAgencia({
+          fotoBuffer: foto1,
+          appBaseUrl,
+          userId: dbUser.id,
+          titulo: iaData.headline,
+          subtitulo: iaData.subtitulo,
+          precio,
+          precioAnterior,
+          badge: 'OFERTA DIRECTA DE FABRICA',
+          theme: 'promo',
+          ratio: 'reel',
+        }),
+        componerPosterAgencia({
+          fotoBuffer: foto2,
+          appBaseUrl,
+          userId: dbUser.id,
+          titulo: iaData.slide2Title,
+          subtitulo: iaData.slide2Sub,
+          precio,
+          precioAnterior,
+          badge: 'ACERO CAL 14 + BALERO 7210B',
+          theme: 'catalogo',
+          ratio: 'reel',
+        }),
+        componerPosterAgencia({
+          fotoBuffer: foto3,
+          appBaseUrl,
+          userId: dbUser.id,
+          titulo: iaData.slide3Title,
+          subtitulo: iaData.slide3Sub,
+          precio,
+          precioAnterior,
+          badge: 'ENVIO GRATIS CDMX Y EDOMEX',
+          theme: 'industrial',
+          ratio: 'reel',
+        }),
+        componerPosterAgencia({
+          fotoBuffer: foto1,
+          appBaseUrl,
+          userId: dbUser.id,
+          titulo: iaData.headline,
+          subtitulo: iaData.subtitulo,
+          precio,
+          precioAnterior,
+          badge: 'ENVIO GRATIS CDMX Y EDOMEX',
+          theme: 'industrial',
+          ratio: 'feed',
+        }),
+      ])
+
+      // Guardar el póster de Feed en bóveda también para que IG/FB tengan su imagen 4:5 lista
+      const savedPoster = await guardarMediaEnBoveda({
+        userId: dbUser.id,
+        buffer: feedPoster,
+        mimeType: 'image/jpeg',
+        titulo: iaData.headline,
+        igCopy: iaData.igCopy,
+        tiktokScript: iaData.tiktokScript,
+        whatsappCopy: iaData.whatsappCopy,
+        appBaseUrl,
+      })
+
+      return NextResponse.json({
+        ok: true,
+        posterDraftId: savedPoster.id,
+        posterPublicUrl: savedPoster.publicUrl,
+        locucion_voz: iaData.locucionVoz,
+        slides_base64: [
+          slide1.toString('base64'),
+          slide2.toString('base64'),
+          slide3.toString('base64'),
+        ],
+        copies: {
+          headline: iaData.headline,
+          igCopy: iaData.igCopy,
+          tiktokScript: iaData.tiktokScript,
+          whatsappCopy: iaData.whatsappCopy,
+        },
+      })
+    }
+
+    // 2B. GUARDAR VIDEO MP4 COMPILADO EN BÓVEDA (Y OPCIONALMENTE PUBLICARLO DE INMEDIATO)
+    if (accion === 'guardar_video_comercial') {
+      const dbUser = await obtenerUsuarioPrincipal()
+      if (!dbUser || !videoBase64) {
+        return NextResponse.json(
+          { ok: false, error: 'Falta videoBase64 o usuario activo' },
+          { status: 400 }
+        )
+      }
+
+      const rawVid = videoBase64.replace(/^data:video\/\w+;base64,/, '')
+      const vidBuffer = Buffer.from(rawVid, 'base64')
+
+      const savedVideo = await guardarMediaEnBoveda({
+        userId: dbUser.id,
+        buffer: vidBuffer,
+        mimeType: 'video/mp4',
+        titulo: texto || 'Video Comercial Mallas Tlaxcalli',
+        igCopy: body.igCopy || '🔥 Paquete Completo Mallas Tlaxcalli ($1,713 MXN) con envío gratis.',
+        tiktokScript:
+          body.tiktokScript ||
+          '🔥 Paquete Completo Mallas Tlaxcalli ($1,713 MXN) con envío gratis en CDMX y Edomex. #Tortilleria #MallasTlaxcalli',
+        whatsappCopy:
+          body.whatsappCopy ||
+          '🔥 *PAQUETE COMPLETO DE MANTENIMIENTO — Mallas Tlaxcalli ($1,713 MXN)*',
+        appBaseUrl,
+      })
+
+      return NextResponse.json({
+        ok: true,
+        videoDraftId: savedVideo.id,
+        videoPublicUrl: savedVideo.publicUrl,
+      })
+    }
+
+    // 3. PREVISUALIZACIÓN Y CONFIRMACIÓN PARA PUBLICAR EN REDES
     if (accion === 'solicitar_publicacion_redes') {
       const canales = Array.isArray(body.canales)
         ? body.canales
@@ -423,7 +721,6 @@ export async function POST(req: NextRequest) {
 
       const dbUser = await obtenerUsuarioPrincipal()
 
-      // Buscar el último diseño real con imagen en ContentVault (o por draftId)
       let vaultDraft = null
       if (draftId && typeof draftId === 'string') {
         vaultDraft = await prisma.contentVault.findUnique({ where: { id: draftId } }).catch(() => null)
@@ -439,35 +736,21 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      // Si nos enviaron base64 nuevo en la solicitud de publicación y aún no había diseño en bóveda, crearlo al vuelo
-      if (!vaultDraft && base64 && dbUser) {
-        const rawBase64 = base64.replace(/^data:image\/\w+;base64,/, '')
-        const inputBuf = Buffer.from(rawBase64, 'base64')
-        const iaData = await generarCopiesYPromptIA(texto || 'Paquete Mantenimiento Mallas Tlaxcalli', precio)
-        const posterBuf = await componerPosterAgencia({
-          fotoBuffer: inputBuf,
-          appBaseUrl,
-          userId: dbUser.id,
-          titulo: iaData.headline,
-          subtitulo: iaData.subtitulo,
-          precio,
-          precioAnterior,
-          badge: 'ENVÍO GRATIS CDMX Y EDOMEX',
-        })
-        const saved = await guardarImagenEnBoveda({
-          userId: dbUser.id,
-          bufferJpeg: posterBuf,
-          titulo: iaData.headline,
-          igCopy: iaData.igCopy,
-          tiktokScript: iaData.tiktokScript,
-          whatsappCopy: iaData.whatsappCopy,
-          appBaseUrl,
-        })
-        vaultDraft = await prisma.contentVault.findUnique({ where: { id: saved.id } })
-      }
+      const lastVideoDraft = dbUser
+        ? await prisma.contentVault.findFirst({
+            where: {
+              userId: dbUser.id,
+              tone: 'WhatsApp Video',
+              visualPrompt: { startsWith: 'data:video/mp4' },
+            },
+            orderBy: { createdAt: 'desc' },
+          })
+        : null
 
       const tituloFinal = texto || vaultDraft?.topic || 'PAQUETE COMPLETO DE MANTENIMIENTO'
-      const igCopyFinal = vaultDraft?.instagramCopy || '🔥 Calidad industrial directa de fábrica en Mallas Tlaxcalli.'
+      const igCopyFinal =
+        vaultDraft?.instagramCopy ||
+        '🔥 Calidad industrial directa de fábrica en Mallas Tlaxcalli.'
       const ttScriptFinal = vaultDraft?.tiktokScript || ''
       const waCopyFinal = vaultDraft?.whatsappFicha || igCopyFinal
       const imageUrlFinal = vaultDraft?.id
@@ -487,6 +770,7 @@ export async function POST(req: NextRequest) {
         ok: true,
         requiere_confirmacion: true,
         draftId: vaultDraft?.id || null,
+        videoDraftId: lastVideoDraft?.id || null,
         base64_preview: vaultDraft?.visualPrompt || null,
         preview: {
           titulo: tituloFinal,
@@ -495,24 +779,28 @@ export async function POST(req: NextRequest) {
           precio_vigente: precio,
           precio_anterior: precioAnterior,
           imageUrl: imageUrlFinal,
+          tiene_video_tiktok: Boolean(lastVideoDraft),
           copies: {
             instagram: igCopyFinal,
             tiktok: ttScriptFinal,
             whatsapp: waCopyFinal,
           },
           mensaje_confirmacion:
-            '📢 *Previsualización de Publicación Multicanal:*\n\n' +
+            '📢 *Previsualización de Publicación Multicanal (IG + FB + TikTok + WA):*\n\n' +
             `• *Campaña:* ${tituloFinal}\n` +
             `• *Precio:* ${precio} (Antes: ${precioAnterior})\n` +
-            `• *Cuentas conectadas:* ${cuentasConectadas.join(', ')}\n\n` +
-            `📝 *Copy para Instagram y Facebook:*\n${igCopyFinal}\n\n` +
-            '¿Autorizas subir esta imagen y su texto ahora mismo a todas las redes conectadas?\n' +
+            `• *Cuentas activas:* ${cuentasConectadas.join(', ')}\n` +
+            `• *Video TikTok (9:16 con Voz IA):* ${
+              lastVideoDraft ? '✅ Listo para subir' : '⚡ Se generará automáticamente al confirmar'
+            }\n\n` +
+            `📝 *Copy para Redes:*\n${igCopyFinal.slice(0, 220)}...\n\n` +
+            '¿Autorizas subir la imagen y el video ahora mismo a todas las redes conectadas?\n' +
             '👉 Responde *#confirmar si* (o *si publica*) para disparar la publicación.',
         },
       })
     }
 
-    // 3. CONFIRMACIÓN DEFINITIVA DE PUBLICACIÓN MULTICANAL CON IMAGEN REAL
+    // 4. CONFIRMACIÓN DEFINITIVA DE PUBLICACIÓN MULTICANAL (INSTAGRAM + FACEBOOK + TIKTOK VIDEO + WHATSAPP)
     if (accion === 'confirmar_publicacion_redes') {
       const dbUser = await obtenerUsuarioPrincipal()
       if (!dbUser) {
@@ -522,10 +810,48 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Buscar el diseño en ContentVault por draftId o el último creado en WhatsApp Bridge
+      // 4A. Obtener o guardar el video MP4 para TikTok si se envió en el payload o existe en bóveda
+      let videoBufferForTikTok: Buffer | null = null
+      let videoVaultId: string | null = null
+
+      if (videoBase64 && typeof videoBase64 === 'string') {
+        const rawVid = videoBase64.replace(/^data:video\/\w+;base64,/, '')
+        videoBufferForTikTok = Buffer.from(rawVid, 'base64')
+        const savedVid = await guardarMediaEnBoveda({
+          userId: dbUser.id,
+          buffer: videoBufferForTikTok,
+          mimeType: 'video/mp4',
+          titulo: texto || 'Video Comercial Mallas Tlaxcalli',
+          igCopy: '',
+          tiktokScript: '',
+          whatsappCopy: '',
+          appBaseUrl,
+        })
+        videoVaultId = savedVid.id
+      } else {
+        const lastVideo = await prisma.contentVault.findFirst({
+          where: {
+            userId: dbUser.id,
+            tone: 'WhatsApp Video',
+            visualPrompt: { startsWith: 'data:video/mp4' },
+          },
+          orderBy: { createdAt: 'desc' },
+        })
+        if (lastVideo?.visualPrompt) {
+          const rawVid = lastVideo.visualPrompt.replace(/^data:video\/\w+;base64,/, '')
+          videoBufferForTikTok = Buffer.from(rawVid, 'base64')
+          videoVaultId = lastVideo.id
+        }
+      }
+
+      // 4B. Obtener el póster de imagen 1080x1350 para Instagram Feed, Facebook Page y WhatsApp
       let vaultDraft = null
       if (draftId && typeof draftId === 'string') {
-        vaultDraft = await prisma.contentVault.findUnique({ where: { id: draftId } }).catch(() => null)
+        vaultDraft = await prisma.contentVault
+          .findFirst({
+            where: { id: draftId, visualPrompt: { startsWith: 'data:image/' } },
+          })
+          .catch(() => null)
       }
       if (!vaultDraft) {
         vaultDraft = await prisma.contentVault.findFirst({
@@ -538,11 +864,13 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      // Si aún no había imagen en bóveda pero enviaron base64, componerla y guardarla antes de publicar
       if (!vaultDraft && base64) {
         const rawBase64 = base64.replace(/^data:image\/\w+;base64,/, '')
         const inputBuf = Buffer.from(rawBase64, 'base64')
-        const iaData = await generarCopiesYPromptIA(texto || 'Paquete Mantenimiento Mallas Tlaxcalli', precio)
+        const iaData = await generarCopiesYPromptIA(
+          texto || 'Paquete Mantenimiento Mallas Tlaxcalli',
+          precio
+        )
         const posterBuf = await componerPosterAgencia({
           fotoBuffer: inputBuf,
           appBaseUrl,
@@ -551,11 +879,14 @@ export async function POST(req: NextRequest) {
           subtitulo: iaData.subtitulo,
           precio,
           precioAnterior,
-          badge: 'ENVÍO GRATIS CDMX Y EDOMEX',
+          badge: 'ENVIO GRATIS CDMX Y EDOMEX',
+          theme: 'industrial',
+          ratio: 'feed',
         })
-        const saved = await guardarImagenEnBoveda({
+        const saved = await guardarMediaEnBoveda({
           userId: dbUser.id,
-          bufferJpeg: posterBuf,
+          buffer: posterBuf,
+          mimeType: 'image/jpeg',
           titulo: iaData.headline,
           igCopy: iaData.igCopy,
           tiktokScript: iaData.tiktokScript,
@@ -569,7 +900,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           {
             ok: false,
-            error: 'No hay ninguna imagen generada recientemente para publicar. Envía primero una foto o pide generar una imagen.',
+            error: 'No hay imagen generada recientemente para publicar.',
           },
           { status: 400 }
         )
@@ -583,134 +914,168 @@ export async function POST(req: NextRequest) {
       const resultadosCanales: Record<string, { ok: boolean; detalle: string; postId?: string }> = {
         whatsapp_estado: {
           ok: true,
-          detalle: 'Imagen y copy enviados a tu WhatsApp y Estado',
+          detalle: 'Imagen y video enviados a tu WhatsApp y Estado',
         },
       }
 
       const igAccount = dbUser.socialAccounts.find((a) => a.provider === 'INSTAGRAM')
       const fbAccount = dbUser.socialAccounts.find((a) => a.provider === 'FACEBOOK')
+      const ttAccount = dbUser.socialAccounts.find((a) => a.provider === 'TIKTOK')
 
-      // Publicar en Instagram Business con Sondeo Activo de Contenedor
+      // Ejecución en paralelo hacia Instagram, Facebook y TikTok para máxima velocidad
+      const tasks: Promise<void>[] = []
+
       if (igAccount?.accessToken && igAccount.platformId) {
-        try {
-          const containerRes = await fetch(
-            `https://graph.facebook.com/v21.0/${igAccount.platformId}/media`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({
-                image_url: mediaUrlToPublish,
-                caption: captionToPublish,
-                access_token: igAccount.accessToken,
-              }),
-            }
-          )
-          const containerData = await containerRes.json()
-          if (containerData.id) {
-            const creationId = containerData.id
-            let isReady = false
-            for (let attempt = 1; attempt <= 8; attempt++) {
-              await new Promise((r) => setTimeout(r, 1500))
-              const stRes = await fetch(
-                `https://graph.facebook.com/v21.0/${creationId}?fields=status_code,status&access_token=${igAccount.accessToken}`
-              )
-              const stData = await stRes.json()
-              if (stData.status_code === 'FINISHED' || !stData.status_code) {
-                isReady = true
-                break
-              }
-              if (stData.status_code === 'ERROR' || stData.status_code === 'EXPIRED') {
-                break
-              }
-            }
-
-            if (isReady) {
-              const pubRes = await fetch(
-                `https://graph.facebook.com/v21.0/${igAccount.platformId}/media_publish`,
+        tasks.push(
+          (async () => {
+            try {
+              const containerRes = await fetch(
+                `https://graph.facebook.com/v21.0/${igAccount.platformId}/media`,
                 {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                   body: new URLSearchParams({
-                    creation_id: creationId,
+                    image_url: mediaUrlToPublish,
+                    caption: captionToPublish,
                     access_token: igAccount.accessToken,
                   }),
                 }
               )
-              const pubData = await pubRes.json()
-              if (pubData.id) {
-                resultadosCanales.instagram = {
-                  ok: true,
-                  detalle: `Publicado en Instagram Feed (ID: ${pubData.id})`,
-                  postId: pubData.id,
+              const containerData = await containerRes.json()
+              if (containerData.id) {
+                const creationId = containerData.id
+                let isReady = false
+                for (let attempt = 1; attempt <= 7; attempt++) {
+                  await new Promise((r) => setTimeout(r, 1400))
+                  const stRes = await fetch(
+                    `https://graph.facebook.com/v21.0/${creationId}?fields=status_code,status&access_token=${igAccount.accessToken}`
+                  )
+                  const stData = await stRes.json()
+                  if (stData.status_code === 'FINISHED' || !stData.status_code) {
+                    isReady = true
+                    break
+                  }
+                  if (stData.status_code === 'ERROR' || stData.status_code === 'EXPIRED') break
+                }
+
+                if (isReady) {
+                  const pubRes = await fetch(
+                    `https://graph.facebook.com/v21.0/${igAccount.platformId}/media_publish`,
+                    {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                      body: new URLSearchParams({
+                        creation_id: creationId,
+                        access_token: igAccount.accessToken,
+                      }),
+                    }
+                  )
+                  const pubData = await pubRes.json()
+                  if (pubData.id) {
+                    resultadosCanales.instagram = {
+                      ok: true,
+                      detalle: `Publicado en Instagram Feed (ID: ${pubData.id})`,
+                      postId: pubData.id,
+                    }
+                  } else {
+                    resultadosCanales.instagram = {
+                      ok: false,
+                      detalle: pubData.error?.message || 'Error al confirmar contenedor IG',
+                    }
+                  }
+                } else {
+                  resultadosCanales.instagram = {
+                    ok: false,
+                    detalle: 'Meta demoró procesando la imagen',
+                  }
                 }
               } else {
                 resultadosCanales.instagram = {
                   ok: false,
-                  detalle: pubData.error?.message || 'Error al confirmar contenedor en IG',
+                  detalle: containerData.error?.message || 'No se pudo crear contenedor IG',
                 }
               }
-            } else {
-              resultadosCanales.instagram = {
-                ok: false,
-                detalle: 'Meta rechazó o demoró el contenedor de imagen',
+            } catch (igErr: any) {
+              resultadosCanales.instagram = { ok: false, detalle: igErr?.message || 'Error IG' }
+            }
+          })()
+        )
+      }
+
+      if (fbAccount?.accessToken && fbAccount.platformId) {
+        tasks.push(
+          (async () => {
+            try {
+              const fbRes = await fetch(
+                `https://graph.facebook.com/v21.0/${fbAccount.platformId}/photos`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                  body: new URLSearchParams({
+                    url: mediaUrlToPublish,
+                    caption: captionToPublish,
+                    access_token: fbAccount.accessToken,
+                  }),
+                }
+              )
+              const fbData = await fbRes.json()
+              if (fbData.id || fbData.post_id) {
+                const postId = fbData.id || fbData.post_id
+                resultadosCanales.facebook = {
+                  ok: true,
+                  detalle: `Publicado en Facebook Page (ID: ${postId})`,
+                  postId,
+                }
+              } else {
+                resultadosCanales.facebook = {
+                  ok: false,
+                  detalle: fbData.error?.message || 'Error publicando en Facebook Page',
+                }
               }
+            } catch (fbErr: any) {
+              resultadosCanales.facebook = { ok: false, detalle: fbErr?.message || 'Error FB' }
             }
-          } else {
-            resultadosCanales.instagram = {
-              ok: false,
-              detalle: containerData.error?.message || 'No se pudo crear contenedor IG',
+          })()
+        )
+      }
+
+      if (ttAccount && videoBufferForTikTok) {
+        tasks.push(
+          (async () => {
+            const ttRes = await subirVideoATikTokDirecto(
+              dbUser.id,
+              videoBufferForTikTok!,
+              vaultDraft.topic || 'Mallas Tlaxcalli'
+            )
+            resultadosCanales.tiktok = {
+              ok: ttRes.ok,
+              detalle: ttRes.detalle,
+              postId: ttRes.publishId,
             }
-          }
-        } catch (igErr: any) {
-          resultadosCanales.instagram = { ok: false, detalle: igErr?.message || 'Error IG' }
+          })()
+        )
+      } else if (ttAccount && !videoBufferForTikTok) {
+        resultadosCanales.tiktok = {
+          ok: false,
+          detalle: 'Se requiere video MP4 para TikTok (envía "generame un video" o publica con video)',
         }
       }
 
-      // Publicar en Página de Facebook
-      if (fbAccount?.accessToken && fbAccount.platformId) {
-        try {
-          const fbRes = await fetch(
-            `https://graph.facebook.com/v21.0/${fbAccount.platformId}/photos`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({
-                url: mediaUrlToPublish,
-                caption: captionToPublish,
-                access_token: fbAccount.accessToken,
-              }),
-            }
-          )
-          const fbData = await fbRes.json()
-          if (fbData.id || fbData.post_id) {
-            const postId = fbData.id || fbData.post_id
-            resultadosCanales.facebook = {
-              ok: true,
-              detalle: `Publicado en Facebook Page (ID: ${postId})`,
-              postId,
-            }
-          } else {
-            resultadosCanales.facebook = {
-              ok: false,
-              detalle: fbData.error?.message || 'Error publicando en Facebook Page',
-            }
-          }
-        } catch (fbErr: any) {
-          resultadosCanales.facebook = { ok: false, detalle: fbErr?.message || 'Error FB' }
-        }
-      }
+      await Promise.all(tasks)
 
       return NextResponse.json({
         ok: true,
         publicado: true,
         draftId: vaultDraft.id,
+        videoDraftId: videoVaultId,
         canales_ejecutados: Object.keys(resultadosCanales),
         resultados_canales: resultadosCanales,
         imageUrl: mediaUrlToPublish,
+        videoUrl: videoVaultId ? `${appBaseUrl}/api/whatsapp/v1/media/${videoVaultId}.mp4` : null,
         base64_resultado: vaultDraft.visualPrompt,
         caption_publicado: vaultDraft.whatsappFicha || captionToPublish,
         mensaje_resultado:
-          '✅ *¡Campaña e imagen publicadas exitosamente en tus redes sociales conectadas!*',
+          '✅ *¡Campaña (Imagen + Video TikTok) procesada y enviada a tus redes sociales conectadas!*',
       })
     }
 

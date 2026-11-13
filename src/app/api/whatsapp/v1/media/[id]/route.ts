@@ -9,7 +9,7 @@ export async function GET(
 ) {
   try {
     const { id: rawParam } = await context.params
-    const cleanId = rawParam.replace(/\.(jpg|jpeg|png|webp)$/i, '').trim()
+    const cleanId = rawParam.replace(/\.(jpg|jpeg|png|webp|mp4)$/i, '').trim()
 
     if (!cleanId) {
       return new NextResponse('ID inválido', { status: 400 })
@@ -20,25 +20,26 @@ export async function GET(
       select: { visualPrompt: true },
     })
 
-    if (!item || !item.visualPrompt || !item.visualPrompt.startsWith('data:image/')) {
-      return new NextResponse('Imagen no encontrada', { status: 404 })
+    if (!item || !item.visualPrompt || !item.visualPrompt.startsWith('data:')) {
+      return new NextResponse('Media no encontrada', { status: 404 })
     }
 
-    const mimeMatch = item.visualPrompt.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/)
+    const mimeMatch = item.visualPrompt.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9.+-]+);base64,/)
     const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
-    const base64Data = item.visualPrompt.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '')
-    const imageBuffer = Buffer.from(base64Data, 'base64')
+    const base64Data = item.visualPrompt.replace(/^data:[a-zA-Z0-9]+\/[a-zA-Z0-9.+-]+;base64,/, '')
+    const mediaBuffer = Buffer.from(base64Data, 'base64')
 
-    return new NextResponse(new Uint8Array(imageBuffer), {
+    return new NextResponse(new Uint8Array(mediaBuffer), {
       status: 200,
       headers: {
         'Content-Type': mimeType,
-        'Content-Length': String(imageBuffer.byteLength),
+        'Content-Length': String(mediaBuffer.byteLength),
+        'Accept-Ranges': 'bytes',
         'Cache-Control': 'public, max-age=31536000, immutable',
       },
     })
   } catch (err: any) {
     console.error('[Media Route Error]:', err)
-    return new NextResponse('Error interno sirviendo imagen', { status: 500 })
+    return new NextResponse('Error interno sirviendo media', { status: 500 })
   }
 }
