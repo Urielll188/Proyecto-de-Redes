@@ -126,10 +126,10 @@ export async function GET(req: NextRequest) {
                   fontFamily: 'Bebas Neue',
                   color: '#09090b',
                   fontSize: '26px',
-                  letterSpacing: '1.2px',
+                  letterSpacing: '1.5px',
                 }}
               >
-                ★ {badgeText.toUpperCase()}
+                {badgeText.toUpperCase()}
               </span>
             </div>
           </div>
@@ -204,35 +204,36 @@ export async function GET(req: NextRequest) {
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'flex-end',
-                  backgroundColor: 'rgba(9, 9, 11, 0.92)',
+                  backgroundColor: 'rgba(9, 9, 11, 0.94)',
                   border: '2px solid #f59e0b',
                   borderRadius: '22px',
-                  padding: '12px 26px',
-                  boxShadow: '0 12px 30px rgba(0, 0, 0, 0.7)',
+                  padding: '14px 28px',
+                  boxShadow: '0 12px 30px rgba(0, 0, 0, 0.75)',
                 }}
               >
                 {oldPriceText ? (
                   <span
                     style={{
-                      fontSize: '18px',
+                      fontFamily: 'Bebas Neue',
+                      fontSize: '22px',
                       color: '#a1a1aa',
-                      textDecoration: 'line-through',
-                      fontWeight: '700',
+                      letterSpacing: '1.5px',
+                      marginBottom: '2px',
                     }}
                   >
-                    Antes: {oldPriceText}
+                    PRECIO REFACCIONARIA: {oldPriceText}
                   </span>
                 ) : null}
                 <span
                   style={{
                     fontFamily: 'Bebas Neue',
-                    fontSize: '54px',
+                    fontSize: '56px',
                     color: '#fbbf24',
                     lineHeight: 1,
-                    letterSpacing: '1px',
+                    letterSpacing: '1.5px',
                   }}
                 >
-                  {priceText}
+                  OFERTA: {priceText}
                 </span>
               </div>
             ) : null}
@@ -307,7 +308,7 @@ export async function GET(req: NextRequest) {
                     letterSpacing: '1.5px',
                   }}
                 >
-                  PEDIR POR WHATSAPP ➔
+                  PEDIR POR WHATSAPP &gt;&gt;
                 </span>
               </div>
             </div>

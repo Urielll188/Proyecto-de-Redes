@@ -322,13 +322,24 @@ export async function POST(req: NextRequest) {
 
       let sourcePhotoBuffer: Buffer | null = null
 
-      // Si es 'generar_imagen_ia', primero intentamos generar escena fotográfica real con Flux AI
-      if (accion === 'generar_imagen_ia') {
+      // Priorizar siempre la fotografía real del producto si fue enviada (evita alucinaciones de IA sobre piezas industriales)
+      if (base64 && typeof base64 === 'string') {
+        const rawBase64 = base64.replace(/^data:image\/\w+;base64,/, '')
+        sourcePhotoBuffer = Buffer.from(rawBase64, 'base64')
+      } else if (inputImageUrl && typeof inputImageUrl === 'string') {
+        const resImg = await fetch(inputImageUrl)
+        if (resImg.ok) {
+          sourcePhotoBuffer = Buffer.from(await resImg.arrayBuffer())
+        }
+      }
+
+      // Si no se envió foto base y se pidió 'generar_imagen_ia', generar con Flux AI recortando borde inferior de marca de agua
+      if (!sourcePhotoBuffer && accion === 'generar_imagen_ia') {
         try {
           const seed = Math.floor(Math.random() * 900000) + 100000
           const pollUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
             iaData.imagePromptEn
-          )}?width=960&height=750&seed=${seed}&nologo=true&model=flux`
+          )}?width=960&height=820&seed=${seed}&nologo=true&model=flux`
           const controller = new AbortController()
           const tId = setTimeout(() => controller.abort(), 14000)
           const resFlux = await fetch(pollUrl, { signal: controller.signal })
@@ -336,22 +347,15 @@ export async function POST(req: NextRequest) {
           if (resFlux.ok) {
             const arr = await resFlux.arrayBuffer()
             if (arr.byteLength > 8000) {
-              sourcePhotoBuffer = Buffer.from(arr)
+              // Recortar los 50px inferiores para garantizar cero marca de agua externa
+              sourcePhotoBuffer = await sharp(Buffer.from(arr))
+                .extract({ left: 0, top: 0, width: 960, height: 750 })
+                .jpeg({ quality: 92 })
+                .toBuffer()
             }
           }
         } catch (fluxErr) {
-          console.warn('[Generar Imagen IA] Flux tardó, usando foto base:', fluxErr)
-        }
-      }
-
-      // Si nos enviaron una foto en base64 o URL (en editar_foto_estudio o como respaldo en generar_imagen_ia)
-      if (!sourcePhotoBuffer && base64 && typeof base64 === 'string') {
-        const rawBase64 = base64.replace(/^data:image\/\w+;base64,/, '')
-        sourcePhotoBuffer = Buffer.from(rawBase64, 'base64')
-      } else if (!sourcePhotoBuffer && inputImageUrl && typeof inputImageUrl === 'string') {
-        const resImg = await fetch(inputImageUrl)
-        if (resImg.ok) {
-          sourcePhotoBuffer = Buffer.from(await resImg.arrayBuffer())
+          console.warn('[Generar Imagen IA] Flux tardó:', fluxErr)
         }
       }
 
