@@ -59,24 +59,40 @@ export const handleExportBanner = async (userId?: string): Promise<string | unde
       throw new Error('No se pudo generar el archivo de imagen del anuncio.')
     }
 
-    // 3. Subida directa a Supabase Storage
+    // 3. Subida directa a Supabase Storage (con respaldo a product-images)
     const supabase = createClient()
     const safeUserId = userId || (await supabase.auth.getUser()).data.user?.id || 'public'
     const filePath = `${safeUserId}/banners/banner-${Date.now()}.png`
 
-    const { data, error: uploadError } = await supabase.storage
-      .from('blitzr-vault')
+    let targetBucket = 'blitzr-vault'
+    let { error: uploadError } = await supabase.storage
+      .from(targetBucket)
       .upload(filePath, blob, {
         contentType: 'image/png',
         upsert: true,
       })
 
     if (uploadError) {
+      targetBucket = 'product-images'
+      const fallbackRes = await supabase.storage
+        .from(targetBucket)
+        .upload(filePath, blob, {
+          contentType: 'image/png',
+          upsert: true,
+        })
+      uploadError = fallbackRes.error
+    }
+
+    if (uploadError) {
       throw new Error(`Fallo de Supabase Storage: ${uploadError.message}`)
     }
 
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from(targetBucket).getPublicUrl(filePath)
+
     toast.success('¡Pancarta guardada con éxito en tu Bóveda!', { id: toastId })
-    return filePath
+    return publicUrl || filePath
   } catch (err: any) {
     console.error('🔥 Error crítico en exportación:', err)
     toast.error(err.message || 'Error al exportar la imagen.', { id: toastId })

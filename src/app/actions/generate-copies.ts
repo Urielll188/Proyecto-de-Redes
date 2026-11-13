@@ -41,7 +41,7 @@ ENTREGABLES REQUERIDOS:
    - Objeción Confianza: Respuesta que disipa dudas sobre envíos, garantías y calidad del producto.
 Devuelve ÚNICAMENTE el JSON requerido.`
 
-    const fallbackModels = ['gemini-3.8-flash', 'gemini-3.5-flash-lite']
+    const fallbackModels = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-latest']
     let responseText: string | null = null
     let lastError: any = null
 

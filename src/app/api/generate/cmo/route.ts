@@ -1,5 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { NextResponse } from 'next/server'
+import { createClient } from '@/utils/supabase/server'
+import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -56,6 +58,16 @@ export async function POST(req: Request) {
         return true
       })
     )
+
+    const hasMeaningfulText = Object.values(sanitizedInput).some(
+      (v) => typeof v === 'string' && v.trim().length > 0
+    )
+    if (!hasMeaningfulText && !rawBase64) {
+      return NextResponse.json(
+        { success: false, error: 'Se requiere descripción del producto o imagen para generar la campaña.' },
+        { status: 400 }
+      )
+    }
 
     const modeDirective =
       generationMode === 'fast'
@@ -136,8 +148,71 @@ Responde ÚNICAMENTE con un JSON válido (sin markdown, sin bloques \`\`\`) con 
       .trim()
     const parsedData = JSON.parse(cleanJson)
 
+    // 5. Persistencia no bloqueante en ContentVault para habilitar Copiloto de Refinamiento e Historial
+    let publicationId: string | null = null
+    try {
+      let dbUserId: string | null = null
+      try {
+        const supabase = await createClient()
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        if (user) {
+          const dbUser = await prisma.user.findUnique({
+            where: { supabaseAuthId: user.id },
+            select: { id: true },
+          })
+          dbUserId = dbUser?.id || null
+        }
+      } catch {
+        // Sin sesión de cookies activa (ej. llamada API directa)
+      }
+
+      if (!dbUserId) {
+        const fallbackUser = await prisma.user.findFirst({ select: { id: true } })
+        dbUserId = fallbackUser?.id || null
+      }
+
+      if (dbUserId) {
+        const topicText =
+          parsedData.headline ||
+          (typeof inputData.prompt === 'string' && inputData.prompt) ||
+          (typeof inputData.context === 'string' && inputData.context) ||
+          'Campaña Blitzr Studio'
+
+        const savedVault = await prisma.contentVault.create({
+          data: {
+            userId: dbUserId,
+            topic: String(topicText).slice(0, 180),
+            tone:
+              typeof inputData.goal === 'string' && inputData.goal.trim()
+                ? inputData.goal
+                : generationMode === 'fast'
+                ? 'Rápido'
+                : 'Estratégico',
+            instagramCopy: parsedData.igCopy || '',
+            tiktokScript: parsedData.tiktokScript || '',
+            imageUrl:
+              typeof inputData.imageUrl === 'string' && inputData.imageUrl.startsWith('http')
+                ? inputData.imageUrl
+                : null,
+            bannerUrl: null,
+            targetAudience: parsedData.cmoAnalysis?.avatar || null,
+            salesAngle: parsedData.cmoAnalysis?.angle || null,
+            postingTips: parsedData.cmoAnalysis?.irresistibleOffer || null,
+            salesAngleReasoning: parsedData.veredicto_cmo || null,
+            whatsappFicha: parsedData.whatsappCopy || null,
+          },
+        })
+        publicationId = savedVault.id
+      }
+    } catch (dbErr: any) {
+      console.warn('[Blitzr CMO] Aviso: No se pudo guardar en ContentVault:', dbErr?.message)
+    }
+
     return NextResponse.json({
       success: true,
+      publicationId,
       data: parsedData,
       ...parsedData,
     })

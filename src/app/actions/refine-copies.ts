@@ -54,7 +54,7 @@ REGLAS ESTRICTAS:
 2. Si la instrucción se refiere solo a una red, ajusta principalmente esa red y mantén la otra coherente.
 3. Devuelve ÚNICAMENTE la estructura JSON requerida sin introducciones ni despedidas.`
 
-    const fallbackModels = ['gemini-3.8-flash', 'gemini-3.5-flash-lite']
+    const fallbackModels = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-latest']
     let responseText: string | null = null
     let lastError: any = null
 
