@@ -53,11 +53,20 @@ export function InstagramMockup({
       {/* Imagen del Post (Relación 4:5 oficial de Instagram) */}
       <div className="w-full aspect-[4/5] bg-zinc-950 relative border-b border-zinc-900 overflow-hidden flex items-center justify-center">
         {imageUrl ? (
-          <img
-            src={imageUrl}
-            alt="Vista previa del post"
-            className="w-full h-full object-cover"
-          />
+          /\.(mp4|mov|m4v|webm)(\?.*)?$/i.test(imageUrl) ? (
+            <video
+              src={imageUrl}
+              controls
+              playsInline
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <img
+              src={imageUrl}
+              alt="Vista previa del post"
+              className="w-full h-full object-cover"
+            />
+          )
         ) : (
           <div className="flex flex-col items-center justify-center text-zinc-600 space-y-2 p-4 text-center">
             <span className="text-3xl">📸</span>

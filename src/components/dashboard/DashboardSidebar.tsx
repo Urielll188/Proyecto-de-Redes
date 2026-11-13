@@ -17,7 +17,7 @@ export function DashboardSidebar({ userEmail, userName, creditsBalance, vaultCou
   const navItems = [
     { name: 'Generador AI', href: '/dashboard', icon: Sparkles },
     { name: 'Bóveda de Contenido', href: '/dashboard/history', icon: Archive },
-    { name: 'Canales Conectados', href: '/dashboard/integrations', icon: Share2 },
+    { name: 'Canales Conectados', href: '/dashboard/channels', icon: Share2 },
     { name: 'Créditos y Facturación', href: '/dashboard/billing', icon: CreditCard },
   ]
 
@@ -41,7 +41,7 @@ export function DashboardSidebar({ userEmail, userName, creditsBalance, vaultCou
         {/* 2. Navigation */}
         <nav className="space-y-1.5">
           {navItems.map((item) => {
-            const isActive = pathname === item.href
+            const isActive = pathname === item.href || (item.href === '/dashboard/channels' && pathname === '/dashboard/integrations')
             const Icon = item.icon
             return (
               <Link

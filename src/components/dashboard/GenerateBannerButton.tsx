@@ -9,9 +9,14 @@ interface GenerateBannerButtonProps {
   contentId: string
   existingBannerUrl?: string | null
   visualPrompt?: string | null
+  onShare?: (bannerUrl: string) => void
 }
 
-export function GenerateBannerButton({ contentId, existingBannerUrl }: GenerateBannerButtonProps) {
+export function GenerateBannerButton({
+  contentId,
+  existingBannerUrl,
+  onShare,
+}: GenerateBannerButtonProps) {
   const [loading, setLoading] = useState(false)
   const [bannerUrl, setBannerUrl] = useState<string | null>(existingBannerUrl || null)
 
@@ -45,22 +50,31 @@ export function GenerateBannerButton({ contentId, existingBannerUrl }: GenerateB
             </span>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <a
             href={bannerUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition border border-zinc-700/60"
+            className="flex-1 min-w-[90px] py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition border border-zinc-700/60"
           >
             <Eye className="w-3.5 h-3.5" /> Ver Completa
           </a>
           <a
             href={bannerUrl}
             download={`pancarta-${contentId}.png`}
-            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition shadow"
+            className="flex-1 min-w-[90px] py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition shadow"
           >
             <Download className="w-3.5 h-3.5" /> Descargar
           </a>
+          {onShare && (
+            <button
+              type="button"
+              onClick={() => onShare(bannerUrl)}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-black text-sm shadow-md transition-all cursor-pointer"
+            >
+              📲 WhatsApp
+            </button>
+          )}
         </div>
       </div>
     )
