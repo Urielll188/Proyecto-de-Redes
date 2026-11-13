@@ -590,13 +590,22 @@ export async function POST(req: NextRequest) {
 
       // Intentar publicar en cuentas de Meta (Instagram / Facebook) y guardar registro en ContentVault
       try {
-        const dbUser = await prisma.user.findFirst({
-          include: {
-            socialAccounts: {
-              where: { isActive: true },
+        const dbUser =
+          (await prisma.user.findFirst({
+            where: { socialAccounts: { some: { isActive: true } } },
+            include: {
+              socialAccounts: {
+                where: { isActive: true },
+              },
             },
-          },
-        })
+          })) ||
+          (await prisma.user.findFirst({
+            include: {
+              socialAccounts: {
+                where: { isActive: true },
+              },
+            },
+          }))
 
         // Si no hay imageUrl en el borrador, buscar la última imagen disponible en ContentVault
         let mediaUrlToPublish = targetDraft.imageUrl
