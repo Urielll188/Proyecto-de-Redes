@@ -117,7 +117,7 @@ async function generarEscenaFluxOSoul(promptEn: string): Promise<Buffer | null> 
       promptEn
     )}?width=960&height=820&seed=${seed}&nologo=true&enhance=true&model=flux`
     const controller = new AbortController()
-    const tId = setTimeout(() => controller.abort(), 14000)
+    const tId = setTimeout(() => controller.abort(), 5500)
     const resFlux = await fetch(pollUrl, { signal: controller.signal })
     clearTimeout(tId)
     if (resFlux.ok) {
@@ -132,9 +132,41 @@ async function generarEscenaFluxOSoul(promptEn: string): Promise<Buffer | null> 
       }
     }
   } catch (err) {
-    console.warn('[Flux Realism] Timeout o error:', err)
+    console.warn('[Flux Realism] Timeout o error, usando render estudio procedural:', err)
   }
-  return null
+
+  // 3. Respaldo determinista: Escena de estudio industrial en SVG de alta resolución
+  const studioSvg = `
+  <svg width="960" height="750" viewBox="0 0 960 750" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <radialGradient id="g1" cx="50%" cy="45%" r="60%">
+        <stop offset="0%" stop-color="#1e293b"/>
+        <stop offset="60%" stop-color="#0f172a"/>
+        <stop offset="100%" stop-color="#020617"/>
+      </radialGradient>
+      <linearGradient id="steel" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#e2e8f0"/>
+        <stop offset="50%" stop-color="#94a3b8"/>
+        <stop offset="100%" stop-color="#475569"/>
+      </linearGradient>
+      <pattern id="mesh" width="24" height="24" patternUnits="userSpaceOnUse">
+        <path d="M 0 12 Q 6 0 12 12 T 24 12 M 0 24 Q 6 12 12 24 T 24 24" fill="none" stroke="#cbd5e1" stroke-width="2.5" opacity="0.55"/>
+        <path d="M 12 0 L 12 24 M 24 0 L 24 24" fill="none" stroke="#94a3b8" stroke-width="1.8" opacity="0.45"/>
+      </pattern>
+    </defs>
+    <rect width="960" height="750" fill="url(#g1)"/>
+    <circle cx="480" cy="360" r="290" fill="#38bdf8" opacity="0.08"/>
+    <rect x="110" y="130" width="380" height="470" rx="28" fill="url(#mesh)" stroke="url(#steel)" stroke-width="6"/>
+    <circle cx="670" cy="400" r="155" fill="none" stroke="url(#steel)" stroke-width="44"/>
+    <circle cx="670" cy="400" r="88" fill="none" stroke="#38bdf8" stroke-width="10" opacity="0.7"/>
+    <circle cx="670" cy="278" r="18" fill="#e2e8f0"/>
+    <circle cx="775" cy="338" r="18" fill="#e2e8f0"/>
+    <circle cx="775" cy="462" r="18" fill="#e2e8f0"/>
+    <circle cx="670" cy="522" r="18" fill="#e2e8f0"/>
+    <circle cx="565" cy="462" r="18" fill="#e2e8f0"/>
+    <circle cx="565" cy="338" r="18" fill="#e2e8f0"/>
+  </svg>`
+  return await sharp(Buffer.from(studioSvg)).jpeg({ quality: 92 }).toBuffer()
 }
 
 async function componerPosterAgencia(opciones: {
@@ -475,7 +507,7 @@ export async function POST(req: NextRequest) {
       let sourcePhotoBuffer: Buffer | null = null
 
       // Si el usuario pidió explícitamente escena nueva IA o no envió foto base, usar Flux Realism / Higgsfield
-      const forzarEscenaIA = Boolean(body.usarEscenaIA)
+      const forzarEscenaIA = Boolean(body.usarEscenaIA || body.usarFondoIA)
       if (forzarEscenaIA && accion === 'generar_imagen_ia') {
         sourcePhotoBuffer = await generarEscenaFluxOSoul(iaData.imagePromptEn)
       }
@@ -542,9 +574,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: true,
         draftId: saved.id,
+        tema: themeChosen,
         tema_aplicado: themeChosen,
         nombre: nombre || `publicidad_${themeChosen}_${saved.id.slice(0, 6)}.jpg`,
         public_url: saved.publicUrl,
+        imagen_resultado_url: saved.publicUrl,
         base64_resultado: saved.base64DataUrl,
         caption_sugerido: iaData.whatsappCopy,
         copies: {
@@ -579,10 +613,12 @@ export async function POST(req: NextRequest) {
         listaFotosInput.push(Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ''), 'base64'))
       }
 
-      // Generar 1 escena IA con Flux Realism para enriquecer el video si faltan fotos
-      const fluxBuf = await generarEscenaFluxOSoul(iaData.imagePromptEn)
-      if (fluxBuf) {
-        listaFotosInput.push(fluxBuf)
+      // Solo generar escena IA si no se enviaron fotos de producto, para evitar bloqueos y timeouts
+      if (listaFotosInput.length === 0) {
+        const fluxBuf = await generarEscenaFluxOSoul(iaData.imagePromptEn)
+        if (fluxBuf) {
+          listaFotosInput.push(fluxBuf)
+        }
       }
 
       if (listaFotosInput.length === 0) {

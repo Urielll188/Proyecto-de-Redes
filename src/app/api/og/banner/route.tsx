@@ -267,6 +267,74 @@ export async function GET(req: NextRequest) {
               </div>
             )}
 
+            {/* Etiquetas superiores según plantilla (Promo o Catálogo Técnico) */}
+            {theme === 'promo' ? (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '24px',
+                  left: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  backgroundColor: '#dc2626',
+                  border: '2px solid #facc15',
+                  borderRadius: '18px',
+                  padding: '10px 24px',
+                  boxShadow: '0 10px 24px rgba(0, 0, 0, 0.75)',
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: 'Bebas Neue',
+                    fontSize: '34px',
+                    color: '#ffffff',
+                    letterSpacing: '1.5px',
+                  }}
+                >
+                  PRECIO DIRECTO DE FABRICA • SIN INTERMEDIARIOS
+                </span>
+              </div>
+            ) : null}
+
+            {theme === 'catalogo' ? (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '22px',
+                  left: '22px',
+                  right: '22px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                }}
+              >
+                {['MALLA TESTALERA 23CM', 'TRANSPORTADORA CAL 14', 'BALERO 7210B ALEMAN'].map(
+                  (spec) => (
+                    <div
+                      key={spec}
+                      style={{
+                        display: 'flex',
+                        backgroundColor: 'rgba(2, 6, 23, 0.90)',
+                        border: '2px solid #38bdf8',
+                        borderRadius: '14px',
+                        padding: '8px 18px',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontFamily: 'Bebas Neue',
+                          fontSize: '24px',
+                          color: '#38bdf8',
+                          letterSpacing: '1px',
+                        }}
+                      >
+                        {spec}
+                      </span>
+                    </div>
+                  )
+                )}
+              </div>
+            ) : null}
+
             {/* Etiqueta flotante de precio en esquina inferior derecha */}
             {priceText ? (
               <div
