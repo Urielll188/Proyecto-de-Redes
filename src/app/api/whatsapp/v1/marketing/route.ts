@@ -3,9 +3,34 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
 import { prisma } from '@/lib/prisma'
 import { getValidTikTokAccessToken } from '@/lib/tiktok/token-service'
 import sharp from 'sharp'
+import fs from 'fs'
+import path from 'path'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
+
+function obtenerFotoLocalVps(indice: number = 0): Buffer | null {
+  const dirs = [
+    '/config/workspace/AGENCIA_AUTOMATIZACION/MALLAS_TLAXCALLI/imagenes_negocio_pau',
+    '/config/workspace/imagenes_negocio_pau',
+  ]
+  for (const d of dirs) {
+    try {
+      if (fs.existsSync(d)) {
+        const files = fs.readdirSync(d).filter((f) => /\.(jpg|jpeg|png)$/i.test(f))
+        files.sort((a, b) =>
+          a.includes('paquete') ? -1 : b.includes('paquete') ? 1 : b.localeCompare(a)
+        )
+        if (files.length > 0) {
+          return fs.readFileSync(path.join(d, files[indice % files.length]))
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null
+}
 
 const MARKETING_API_SECRET =
   process.env.MARKETING_BRIDGE_SECRET || 'blitzr_marketing_secure_key_2026'
@@ -473,11 +498,13 @@ export async function POST(req: NextRequest) {
     } = body || {}
 
     const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://blitzr-studio.vercel.app'
+    const internalBaseUrl = req.nextUrl?.origin || appBaseUrl
 
     if (accion === 'ping') {
       return NextResponse.json({
         ok: true,
         mensaje: 'Módulo de Marketing v3 (Imagen + Video + TikTok) online y listo',
+        servidor: internalBaseUrl,
         timestamp: new Date().toISOString(),
       })
     }
@@ -522,6 +549,10 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      if (!sourcePhotoBuffer && !forzarEscenaIA) {
+        sourcePhotoBuffer = obtenerFotoLocalVps(Math.floor(Math.random() * 5))
+      }
+
       if (!sourcePhotoBuffer && accion === 'generar_imagen_ia') {
         sourcePhotoBuffer = await generarEscenaFluxOSoul(iaData.imagePromptEn)
       }
@@ -544,7 +575,7 @@ export async function POST(req: NextRequest) {
 
       const posterBuffer = await componerPosterAgencia({
         fotoBuffer: sourcePhotoBuffer,
-        appBaseUrl,
+        appBaseUrl: internalBaseUrl,
         userId: dbUser.id,
         titulo: iaData.headline,
         subtitulo: subtitulo || iaData.subtitulo,
@@ -557,7 +588,7 @@ export async function POST(req: NextRequest) {
             ? 'ACERO CAL 14 + BALERO 7210B'
             : 'ENVIO GRATIS CDMX Y EDOMEX',
         theme: themeChosen,
-        ratio: 'feed',
+        ratio: body.ratio === 'reel' ? 'reel' : 'feed',
       })
 
       const saved = await guardarMediaEnBoveda({
