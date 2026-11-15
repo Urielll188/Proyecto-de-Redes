@@ -3,7 +3,19 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Sparkles, Archive, CreditCard, Share2, Menu, X } from 'lucide-react'
+import {
+  Sparkles,
+  Archive,
+  CreditCard,
+  Share2,
+  Menu,
+  X,
+  Crosshair,
+  Bot,
+  Truck,
+  RefreshCw,
+  Camera,
+} from 'lucide-react'
 import { CinematicWarpTransition } from '@/components/transitions/CinematicWarpTransition'
 
 interface ShellProps {
@@ -41,6 +53,14 @@ export function DashboardShell({
     { name: 'Bóveda de Contenido', href: '/dashboard/history', icon: Archive },
     { name: 'Canales Conectados', href: '/dashboard/integrations', icon: Share2 },
     { name: 'Créditos y Facturación', href: '/dashboard/billing', icon: CreditCard },
+  ]
+
+  const vpsModuleItems = [
+    { name: '1. Cazador DENUE/Maps', href: '/dashboard/cazador', icon: Crosshair },
+    { name: '2. Ventas IA (Cerradora)', href: '/dashboard/ventas-ia', icon: Bot },
+    { name: '3. Logística y Comisiones', href: '/dashboard/logistica', icon: Truck },
+    { name: '4. Seguimiento VIP', href: '/dashboard/seguimiento', icon: RefreshCw },
+    { name: '5. Mkt Realista', href: '/dashboard/marketing-realista', icon: Camera },
   ]
 
   const initial = (userName || userEmail || 'B').charAt(0).toUpperCase()
@@ -81,9 +101,9 @@ export function DashboardShell({
           ${isSidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full md:translate-x-0'}
         `}
       >
-        <div>
+        <div className="flex-1 overflow-y-auto pr-1">
           {/* Header de la marca */}
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-2xl font-black text-white tracking-wider">
                 BLITZR <span className="text-blue-500">IA</span>
@@ -103,7 +123,7 @@ export function DashboardShell({
             </button>
           </div>
 
-          {/* Navegación */}
+          {/* Navegación Principal */}
           <nav className="space-y-1.5">
             {navItems.map((item) => {
               const isActive = pathname === item.href
@@ -125,6 +145,34 @@ export function DashboardShell({
               )
             })}
           </nav>
+
+          {/* Separador Módulos VPS */}
+          <div className="mt-6 pt-5 border-t border-zinc-800/80">
+            <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+              Módulos VPS Tlaxcalli
+            </p>
+            <nav className="space-y-1">
+              {vpsModuleItems.map((item) => {
+                const isActive = pathname === item.href
+                const Icon = item.icon
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setIsSidebarOpen(false)}
+                    className={`flex items-center gap-3 px-3.5 py-2 rounded-xl text-xs font-medium transition-all ${
+                      isActive
+                        ? 'bg-amber-500/15 text-amber-400 border border-amber-500/25 shadow-sm'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60'
+                    }`}
+                  >
+                    <Icon className={`w-4 h-4 ${isActive ? 'text-amber-400' : 'text-zinc-500'}`} />
+                    {item.name}
+                  </Link>
+                )
+              })}
+            </nav>
+          </div>
         </div>
 
         {/* Footer: Perfil y Contadores */}
