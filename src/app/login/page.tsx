@@ -20,6 +20,7 @@ interface Particle {
 export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [isWarpActive, setIsWarpActive] = useState(false)
+  const [flashDone, setFlashDone] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const mousePos = useRef({ x: 0, y: 0, targetX: 0, targetY: 0 })
@@ -59,7 +60,7 @@ export default function LoginPage() {
     }, 1100)
   }
 
-  // 3. Partículas en <canvas> 2D con 3 planos de profundidad y paralaje suave
+  // Partículas en <canvas> 2D con 3 planos de profundidad y paralaje suave
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -83,12 +84,11 @@ export default function LoginPage() {
     }
     window.addEventListener('mousemove', handleMouseMove)
 
-    // ~65 partículas en 3 capas de profundidad
     const numParticles = 65
     const particles: Particle[] = []
 
     for (let i = 0; i < numParticles; i++) {
-      const depth = (i % 3) + 1 // 1, 2 o 3
+      const depth = (i % 3) + 1
       const size = depth === 1 ? 1 : depth === 2 ? 1.8 : 2.6
       const opacity = depth === 1 ? 0.22 : depth === 2 ? 0.45 : 0.75
       const posX = Math.random() * w
@@ -108,7 +108,6 @@ export default function LoginPage() {
     }
 
     const render = () => {
-      // Suavizado del puntero para paralaje cinemático
       mousePos.current.x += (mousePos.current.targetX - mousePos.current.x) * 0.05
       mousePos.current.y += (mousePos.current.targetY - mousePos.current.y) * 0.05
 
@@ -125,7 +124,6 @@ export default function LoginPage() {
         if (p.baseY < 0) p.baseY = h
         if (p.baseY > h) p.baseY = 0
 
-        // Paralaje diferenciado según la profundidad (capa 3 se mueve más rápido que capa 1)
         const parallaxFactor = p.depth * 28
         p.x = p.baseX - mousePos.current.x * parallaxFactor
         p.y = p.baseY - mousePos.current.y * parallaxFactor
@@ -135,7 +133,6 @@ export default function LoginPage() {
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
 
         if (p.depth === 3) {
-          // Halo de luz en partículas cercanas
           ctx.shadowBlur = 12
           ctx.shadowColor = 'rgba(56, 189, 248, 0.65)'
           ctx.fillStyle = `rgba(255, 255, 255, ${p.opacity})`
@@ -166,12 +163,10 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-[#030305] relative overflow-hidden flex flex-col items-center justify-center px-4 select-none">
-      
       {/* Salto cinemático de hiperespacio hacia el Dashboard */}
       <CinematicWarpTransition active={isWarpActive} mode="dive" durationMs={1100} />
 
       {/* 1. ATMÓSFERA CINEMATOGRÁFICA BASE (z-0) */}
-      {/* Textura de Grano de Película SVG (Film Grain) */}
       <svg
         className="fixed inset-0 w-full h-full pointer-events-none opacity-[0.035] mix-blend-overlay z-0"
         xmlns="http://www.w3.org/2000/svg"
@@ -182,7 +177,7 @@ export default function LoginPage() {
         <rect width="100%" height="100%" filter="url(#cinematicFilmGrain)" />
       </svg>
 
-      {/* Viñeta de Lente de Cine Oscura en Bordes */}
+      {/* Viñeta radial oscura */}
       <div
         className="fixed inset-0 pointer-events-none z-0"
         style={{
@@ -190,179 +185,88 @@ export default function LoginPage() {
         }}
       />
 
-      {/* 3. Campo de Partículas con Profundidad de Campo y Paralaje (z-10) */}
+      {/* 3. Luces de Colores Envolventes alrededor del conjunto (z-0, desde 0.5s) */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.7 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 1.4, delay: 0.5, ease: 'easeOut' }}
+        className="fixed inset-0 flex items-center justify-center pointer-events-none z-0"
+      >
+        <div className="relative w-[360px] h-[360px] sm:w-[600px] sm:h-[600px] flex items-center justify-center">
+          <div className="absolute -left-10 -top-6 w-64 h-64 sm:w-80 sm:h-80 rounded-full bg-cyan-500/20 mix-blend-screen blur-[95px]" />
+          <div className="absolute inset-0 m-auto w-72 h-72 sm:w-96 sm:h-96 rounded-full bg-purple-500/25 mix-blend-screen blur-[95px]" />
+          <div className="absolute -right-10 -bottom-6 w-64 h-64 sm:w-80 sm:h-80 rounded-full bg-fuchsia-500/15 mix-blend-screen blur-[95px]" />
+        </div>
+      </motion.div>
+
+      {/* Partículas 2D reactivas al cursor (z-10) */}
       <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-10" />
 
-      {/* 2. PRISMA MONUMENTAL Y DESTELLO ANAMÓRFICO (z-10) */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-        
-        {/* Nebulosa Espectral Difuminada Respirando */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{
-            opacity: [0.18, 0.28, 0.18],
-            scale: [0.95, 1.05, 0.95],
-          }}
-          transition={{
-            duration: 8,
-            repeat: Infinity,
-            ease: 'easeInOut',
-          }}
-          className="w-[600px] h-[350px] sm:w-[900px] sm:h-[500px] rounded-full blur-[110px] mix-blend-screen bg-gradient-to-r from-cyan-600/20 via-purple-600/25 to-amber-500/15"
-        />
-
-        {/* Destello Anamórfico Central (0.0s -> 1.4s) */}
-        {/* Núcleo Blanco Suave */}
-        <motion.div
-          initial={{ scale: 0.1, opacity: 0 }}
-          animate={{
-            scale: [0.1, 1.3, 0.35],
-            opacity: [0, 0.85, 0.14],
-          }}
-          transition={{
-            duration: 1.4,
-            times: [0, 0.45, 1],
-            ease: 'easeOut',
-          }}
-          className="absolute w-32 h-32 rounded-full bg-white blur-2xl mix-blend-screen"
-        />
-
-        {/* Destello Horizontal de Lente Anamórfica */}
-        <motion.div
-          initial={{ scaleX: 0, opacity: 0 }}
-          animate={{
-            scaleX: [0, 1.1, 0.4],
-            opacity: [0, 0.9, 0],
-          }}
-          transition={{
-            duration: 1.3,
-            times: [0, 0.4, 1],
-            ease: 'easeOut',
-          }}
-          className="absolute w-[85vw] max-w-[900px] h-[2px] bg-gradient-to-r from-transparent via-cyan-200/80 to-transparent blur-[1px] mix-blend-screen"
-        />
-
-        {/* PRISMA TRIANGULAR MONUMENTAL CON ABERRACIÓN CROMÁTICA */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.88 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 1.6, ease: [0.16, 1, 0.3, 1] }}
-          className="absolute w-[340px] h-[340px] sm:w-[540px] sm:h-[540px] md:w-[680px] md:h-[680px] flex items-center justify-center"
-        >
-          <svg
-            className="w-full h-full overflow-visible"
-            viewBox="0 0 400 400"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            {/* Trazo fantasma 1: Cian (+2px aberración cromática) */}
-            <polygon
-              points="200,60 352,320 48,320"
-              stroke="rgba(56, 189, 248, 0.18)"
-              strokeWidth="1.2"
-              transform="translate(-2, -1)"
-            />
-
-            {/* Trazo fantasma 2: Magenta (-2px aberración cromática) */}
-            <polygon
-              points="200,60 352,320 48,320"
-              stroke="rgba(232, 121, 249, 0.18)"
-              strokeWidth="1.2"
-              transform="translate(2, 1)"
-            />
-
-            {/* Prisma Principal Equilátero */}
-            <polygon
-              points="200,60 352,320 48,320"
-              stroke="rgba(255, 255, 255, 0.16)"
-              strokeWidth="1.2"
-              fill="rgba(255, 255, 255, 0.012)"
-              className="backdrop-blur-[1px]"
-            />
-
-            {/* Haz de luz láser entrando al prisma desde abajo-izquierda */}
-            <path
-              d="M 20 330 L 200 190"
-              stroke="url(#laserIncidenteGrad)"
-              strokeWidth="2.2"
-              filter="url(#glowLaser)"
-            />
-            <path
-              d="M 20 330 L 200 190"
-              stroke="#ffffff"
-              strokeWidth="1"
-            />
-
-            {/* Refracción interna en el corazón del prisma */}
-            <line
-              x1="200"
-              y1="190"
-              x2="235"
-              y2="178"
-              stroke="#ffffff"
-              strokeWidth="1.4"
-              strokeDasharray="3 3"
-            />
-
-            {/* Haz de refracción espectral saliendo por la cara derecha */}
-            <path
-              d="M 235 178 L 390 120 L 400 240 Z"
-              fill="url(#espectroRefractado)"
-              opacity="0.38"
-              className="mix-blend-screen blur-[2px]"
-            />
-
-            <defs>
-              <linearGradient id="laserIncidenteGrad" x1="0%" y1="100%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor="#ffffff" stopOpacity="0" />
-                <stop offset="60%" stopColor="#ffffff" stopOpacity="0.7" />
-                <stop offset="100%" stopColor="#ffffff" stopOpacity="1" />
-              </linearGradient>
-
-              <linearGradient id="espectroRefractado" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.8" />
-                <stop offset="35%" stopColor="#818cf8" stopOpacity="0.6" />
-                <stop offset="70%" stopColor="#c084fc" stopOpacity="0.4" />
-                <stop offset="100%" stopColor="#e879f9" stopOpacity="0" />
-              </linearGradient>
-
-              <filter id="glowLaser" x="-50%" y="-50%" width="200%" height="200%">
-                <feGaussianBlur stdDeviation="3.5" result="blur" />
-                <feMerge>
-                  <feMergeNode in="blur" />
-                  <feMergeNode in="SourceGraphic" />
-                </feMerge>
-              </filter>
-            </defs>
-          </svg>
-        </motion.div>
-      </div>
-
-      {/* 4. REVELACIÓN TIPOGRÁFICA Y ACCIÓN (z-20) */}
+      {/* 4. REVELACIÓN LIMPIA DE MARCA, ESLOGAN Y ACCIÓN (z-20) */}
       <div className="relative z-20 flex flex-col items-center text-center max-w-4xl w-full my-auto">
-        
-        {/* Título BLITZR */}
-        <motion.h1
-          initial={{ opacity: 0, scale: 1.08, filter: 'blur(16px)' }}
-          animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-          transition={{ duration: 1.1, delay: 0.85, ease: [0.16, 1, 0.3, 1] }}
-          className="text-5xl sm:text-8xl md:text-9xl font-black tracking-[0.24em] uppercase text-transparent bg-clip-text bg-gradient-to-b from-white via-zinc-100 to-zinc-400 drop-shadow-[0_0_40px_rgba(255,255,255,0.28)]"
-          style={{
-            WebkitBackgroundClip: 'text',
-          }}
-        >
-          BLITZR
-        </motion.h1>
+        {/* Bloque del Título BLITZR con Prisma Emblema y Destello Efímero detrás */}
+        <div className="relative flex items-center justify-center">
+          {/* 1. Secuencia de Encendido Efímera (0.0s -> 1.1s — Desaparece por completo al terminar) */}
+          {!flashDone && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.2 }}
+              animate={{ opacity: [0, 0.95, 0], scale: [0.2, 1.15, 0.8] }}
+              transition={{ duration: 1.1, times: [0, 0.5, 1], ease: 'easeOut' }}
+              onAnimationComplete={() => setFlashDone(true)}
+              className="absolute inset-0 flex items-center justify-center pointer-events-none z-10"
+            >
+              <div className="w-24 h-24 rounded-full bg-white blur-xl mix-blend-screen" />
+              <motion.div
+                initial={{ scaleX: 0, opacity: 0 }}
+                animate={{ scaleX: [0, 1, 0], opacity: [0, 0.85, 0] }}
+                transition={{ duration: 1.0, times: [0, 0.45, 1], ease: 'easeOut' }}
+                className="absolute w-64 sm:w-96 h-[2px] bg-gradient-to-r from-transparent via-white to-transparent blur-[1px] mix-blend-screen"
+              />
+            </motion.div>
+          )}
 
-        {/* Eslogan "Tu producto para el mundo" */}
+          {/* 2. Prisma Triangular Emblema (Exclusivamente detrás de BLITZR) */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.88 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.9, delay: 0.5, ease: [0.16, 1, 0.3, 1] }}
+            className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 -translate-y-2"
+          >
+            <svg
+              className="w-52 h-52 sm:w-64 sm:h-64 drop-shadow-[0_0_25px_rgba(168,85,247,0.35)]"
+              viewBox="0 0 200 200"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <polygon
+                points="100,22 182,164 18,164"
+                stroke="rgba(255,255,255,0.28)"
+                strokeWidth="1.5"
+                fill="rgba(255,255,255,0.02)"
+              />
+            </svg>
+          </motion.div>
+
+          {/* Título BLITZR */}
+          <motion.h1
+            initial={{ opacity: 0, scale: 0.94, filter: 'blur(10px)' }}
+            animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+            transition={{ duration: 0.85, delay: 0.95, ease: [0.16, 1, 0.3, 1] }}
+            className="relative z-20 text-5xl sm:text-7xl md:text-8xl font-black tracking-[0.22em] uppercase text-transparent bg-clip-text bg-gradient-to-b from-white via-zinc-100 to-zinc-400 drop-shadow-[0_0_32px_rgba(255,255,255,0.22)]"
+            style={{
+              WebkitBackgroundClip: 'text',
+            }}
+          >
+            BLITZR
+          </motion.h1>
+        </div>
+
+        {/* Eslogan "Tu producto para el mundo" (Fuera del triángulo) */}
         <motion.p
           initial={{ opacity: 0, y: 10, filter: 'blur(8px)' }}
           animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-          transition={{ duration: 0.9, delay: 1.45, ease: 'easeOut' }}
-          className="mt-5 text-sm sm:text-xl font-light tracking-[0.28em] uppercase text-zinc-300/90 text-center"
-          style={{
-            textShadow: '0 0 16px rgba(255, 255, 255, 0.22)',
-          }}
+          transition={{ duration: 0.75, delay: 1.45, ease: 'easeOut' }}
+          className="mt-5 text-sm sm:text-lg font-light tracking-[0.26em] uppercase text-zinc-300/90 text-center"
         >
           Tu producto para el mundo
         </motion.p>
@@ -376,15 +280,15 @@ export default function LoginPage() {
 
         {/* Botón "Continuar con Google" */}
         <motion.div
-          initial={{ opacity: 0, y: 16 }}
+          initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 1.95, ease: 'easeOut' }}
-          className="mt-12"
+          transition={{ duration: 0.65, delay: 1.85, ease: 'easeOut' }}
+          className="mt-11"
         >
           <button
             onClick={handleGoogleLogin}
             disabled={isLoading}
-            className={`
+            className="
               group relative flex items-center justify-center gap-3.5 px-8 py-3.5 rounded-full
               bg-[#08080f]/90 hover:bg-[#0e0e1a] text-white text-sm sm:text-base font-semibold tracking-wide
               border border-purple-500/40 hover:border-cyan-400/60
@@ -392,9 +296,8 @@ export default function LoginPage() {
               hover:shadow-[0_0_35px_rgba(56,189,248,0.5),inset_0_0_20px_rgba(147,51,234,0.3)]
               transition-all duration-300 transform hover:scale-[1.03] active:scale-[0.98]
               disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer
-            `}
+            "
           >
-            {/* Ícono de Google oficial */}
             <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
               <path
                 d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -416,7 +319,6 @@ export default function LoginPage() {
 
             <span>{isLoading ? 'Iniciando conexión...' : 'Continuar con Google'}</span>
 
-            {/* Brillo reflectivo en el borde */}
             <span className="absolute inset-0 rounded-full bg-gradient-to-r from-transparent via-purple-500/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
           </button>
         </motion.div>
@@ -432,7 +334,6 @@ export default function LoginPage() {
           Términos
         </a>
       </footer>
-
     </div>
   )
 }
