@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Sparkles, Archive, CreditCard, Share2, Menu, X } from 'lucide-react'
+import { CinematicWarpTransition } from '@/components/transitions/CinematicWarpTransition'
 
 interface ShellProps {
   children: React.ReactNode
@@ -21,7 +22,19 @@ export function DashboardShell({
   vaultCount
 }: ShellProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [showArrivalWarp, setShowArrivalWarp] = useState(false)
   const pathname = usePathname()
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && sessionStorage.getItem('blitzr_transition_warp') === 'true') {
+        setShowArrivalWarp(true)
+        sessionStorage.removeItem('blitzr_transition_warp')
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
 
   const navItems = [
     { name: 'Generador AI', href: '/dashboard', icon: Sparkles },
@@ -141,8 +154,16 @@ export function DashboardShell({
         </div>
       </aside>
 
+      {/* Transición cinemática de llegada desacelerando del hiperespacio */}
+      <CinematicWarpTransition
+        active={showArrivalWarp}
+        mode="arrival"
+        durationMs={850}
+        onComplete={() => setShowArrivalWarp(false)}
+      />
+
       {/* 4. CONTENIDO PRINCIPAL */}
-      <main className="flex-1 overflow-y-auto bg-zinc-950 pt-20 md:pt-10 p-4 md:p-10">
+      <main className={`flex-1 overflow-y-auto bg-zinc-950 pt-20 md:pt-10 p-4 md:p-10 transition-all duration-700 ${showArrivalWarp ? 'opacity-90 scale-[0.98]' : 'opacity-100 scale-100'}`}>
         <div className="max-w-5xl mx-auto">
           {children}
         </div>

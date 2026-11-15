@@ -2,32 +2,54 @@
 
 import { useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
+import { CinematicWarpTransition } from '@/components/transitions/CinematicWarpTransition'
 
 export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
+  const [isWarpActive, setIsWarpActive] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const supabase = createClient()
 
   const handleGoogleLogin = async () => {
     setIsLoading(true)
     setErrorMessage(null)
+    setIsWarpActive(true)
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/auth/callback`,
-      },
-    })
-
-    if (error) {
-      setErrorMessage(error.message)
-      setIsLoading(false)
+    try {
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('blitzr_transition_warp', 'true')
+      }
+    } catch {
+      // ignore
     }
+
+    // Permitir que la animación de inmersión ("meterse a la pantalla") despegue antes de la redirección
+    setTimeout(async () => {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/auth/callback`,
+        },
+      })
+
+      if (error) {
+        setErrorMessage(error.message)
+        setIsLoading(false)
+        setIsWarpActive(false)
+      }
+    }, 650)
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-md space-y-8 rounded-xl bg-white p-8 shadow-sm border border-gray-200">
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 relative overflow-hidden">
+      {/* Capa de transición cinemática de inmersión 3D (Warp Dive) */}
+      <CinematicWarpTransition active={isWarpActive} mode="dive" durationMs={1100} />
+
+      <div
+        className={`w-full max-w-md space-y-8 rounded-xl bg-white p-8 shadow-sm border border-gray-200 transition-all duration-700 ease-in ${
+          isWarpActive ? 'transform scale-[3.5] opacity-0 blur-lg pointer-events-none' : ''
+        }`}
+      >
         <div className="text-center">
           <h1 className="text-2xl font-bold tracking-tight text-gray-900">Iniciar sesión</h1>
           <p className="mt-2 text-sm text-gray-500">
