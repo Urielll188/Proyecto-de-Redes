@@ -159,7 +159,7 @@ export default function VentasIaPage() {
       return;
     }
 
-    toast.success('Pedido cerrado y enviado a Módulo 3 (Logística) (+$200 MXN comisión).');
+    toast.success('Pedido cerrado y enviado a Módulo 3 (Logística).');
     setCliente('');
     setTelefono('');
     setDireccion('');
@@ -301,7 +301,7 @@ export default function VentasIaPage() {
             </div>
             <h2 className="text-lg font-bold text-white">Registrar Pedido Cerrado</h2>
             <p className="text-xs text-zinc-400 mt-1 mb-5">
-              Captura los 4 datos de entrega para enviar la orden a la Hoja de Ruta y sumar +$200 MXN de comisión.
+              Captura los 4 datos de entrega para enviar la orden a la Hoja de Ruta de entregas.
             </p>
 
             <form onSubmit={handleRegistrarPedido} className="space-y-4">
@@ -421,11 +421,6 @@ export default function VentasIaPage() {
                   : 'Cerrar Pedido ($1,713 MXN) -> Módulo 3'}
               </button>
             </form>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-zinc-800 text-xs text-zinc-500 flex items-center justify-between">
-            <span>Comisión por cierre validado:</span>
-            <span className="text-emerald-400 font-semibold">+$200.00 MXN</span>
           </div>
         </div>
       </div>
