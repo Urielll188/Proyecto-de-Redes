@@ -1,15 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { ProductImageUpload } from './ProductImageUpload'
+import { BlitzrPrismStage } from './prism/BlitzrPrismStage'
+import { NicheGoalGlassCard } from './controls/NicheGoalGlassCard'
+import { Step1ActionPanel } from './controls/Step1ActionPanel'
 import { GenerateBannerButton } from './GenerateBannerButton'
 import { ReelPublishButton } from './history/ReelPublishButton'
 import { QuickShareModal } from '@/components/share/QuickShareModal'
 import { StudioCanvasPreview, type StudioStyleTheme } from './visual/StudioCanvasPreview'
 import { refineCopyAction } from '@/app/actions/refine-copies'
 import { toast } from 'sonner'
-import { Sparkles, Send, Copy, Palette } from 'lucide-react'
+import { Sparkles, Send, Copy, Palette, Check } from 'lucide-react'
 import { InstagramMockup } from './mockups/InstagramMockup'
 import { createClient } from '@/utils/supabase/client'
 import { toBlob } from 'html-to-image'
@@ -102,6 +105,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
       : 'image'
   )
   const [storagePath, setStoragePath] = useState<string | null>(null)
+  const [imageBase64, setImageBase64] = useState<string | null>(null)
   const [productDesc, setProductDesc] = useState(initialData?.productDesc || '')
   const [bannerUrl, setBannerUrl] = useState<string | null>(initialData?.bannerUrl || null)
   const [niche, setNiche] = useState<string>('Producto Físico')
@@ -156,6 +160,41 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   const [editableWaText, setEditableWaText] = useState<string>(
     initialData?.copies?.whatsapp?.ficha || ''
   )
+
+  // Estados locales para el Estudio de Guiones y Copys (Paso 2 - R3)
+  const [activeChannelTab, setActiveChannelTab] = useState<'tiktok' | 'instagram' | 'whatsapp'>('tiktok')
+  const [isCopied, setIsCopied] = useState(false)
+  const copyTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Ajuste automático de altura para evitar scrollbars internas
+  const adjustTextareaHeight = () => {
+    if (copyTextareaRef.current) {
+      copyTextareaRef.current.style.height = 'auto'
+      copyTextareaRef.current.style.height = `${Math.max(220, copyTextareaRef.current.scrollHeight)}px`
+    }
+  }
+
+  useEffect(() => {
+    adjustTextareaHeight()
+  }, [activeChannelTab, editableTtScript, editableIgCopy, editableWaText, step])
+
+  const handleCopyCurrentTab = async () => {
+    let text = ''
+    let label = ''
+    if (activeChannelTab === 'tiktok') {
+      text = editableTtScript
+      label = 'TikTok / Reels'
+    } else if (activeChannelTab === 'instagram') {
+      text = editableIgCopy
+      label = 'Instagram Feed'
+    } else {
+      text = editableWaText
+      label = 'WhatsApp'
+    }
+    await copyToClipboard(text, label)
+    setIsCopied(true)
+    setTimeout(() => setIsCopied(false), 2000)
+  }
 
   // ===================== ESTADOS PASO 3: GENERACIÓN VISUAL DE ESTUDIO =====================
   const [sceneUrl, setSceneUrl] = useState<string | null>(
@@ -234,6 +273,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
           prompt: productDesc.trim(),
           context: productDesc.trim(),
           imageUrl,
+          imageBase64: imageBase64 || undefined,
           isVideo: isVideoMedia,
           niche,
           goal,
@@ -628,403 +668,336 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   }
 
   return (
-    <div className="w-full max-w-6xl mx-auto space-y-8 animate-in fade-in duration-300">
-      {/* HEADER DE ETAPAS CON GLOW */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
-            <span className="text-blue-500">{step}.</span>
-            {step === 1 && 'Define tu Producto y Objetivo'}
-            {step === 2 && 'Centro de Mando Estratégico'}
-            {step === 3 && 'Generación Visual de Estudio (4:5)'}
-            <span className="text-zinc-500 text-xs md:text-sm font-normal hidden sm:inline ml-2">
-              — {step === 3 ? 'Renderizado desacoplado con cero timeout' : 'Embudo de conversión asistido por IA'}
-            </span>
-          </h2>
-
-          <div className="flex items-center gap-2">
-            {step === 3 && (
-              <button
-                type="button"
-                onClick={() => setStep(generationMode === 'fast' ? 1 : 2)}
-                className="text-xs text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-lg border border-zinc-800 hover:border-zinc-700 cursor-pointer"
-              >
-                ← {generationMode === 'fast' ? 'Ajustar Ingesta' : 'Volver al Centro de Mando'}
-              </button>
-            )}
-            {step === 2 && (
-              <button
-                type="button"
-                onClick={() => setStep(1)}
-                className="text-xs text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-lg border border-zinc-800 hover:border-zinc-700 cursor-pointer"
-              >
-                ← Nueva Campaña / Ajustar Ingesta
-              </button>
-            )}
-          </div>
+    <BlitzrPrismStage attenuated={step >= 2}>
+      {/* ================= INDICADOR VERTICAL DE ETAPAS (FLANCO IZQUIERDO MEDIO - SOLO ESCRITORIO) ================= */}
+      <div
+        className="fixed left-8 top-1/2 -translate-y-1/2 z-30 hidden xl:flex flex-col items-start gap-4 select-none"
+      >
+        {/* Paso 01 */}
+        <div
+          onClick={step > 1 ? () => setStep(1) : undefined}
+          className={`flex items-center gap-3 ${
+            step > 1 ? 'cursor-pointer pointer-events-auto group' : 'pointer-events-none'
+          }`}
+        >
+          <div
+            className={`rounded-full transition-all duration-300 ${
+              step === 1
+                ? 'h-8 w-1 bg-cyan-400 shadow-[0_0_12px_#22d3ee]'
+                : 'h-4 w-1 bg-white/30 group-hover:bg-cyan-400 group-hover:h-6'
+            }`}
+          />
+          <span
+            className={`text-xs font-mono tracking-wider transition-colors ${
+              step === 1
+                ? 'font-semibold text-cyan-400'
+                : 'font-medium text-zinc-400 group-hover:text-cyan-300'
+            }`}
+          >
+            01 • IDEA
+          </span>
         </div>
 
-        {/* BARRAS DE PROGRESO CON GLOW (3 PASOS) */}
-        <div className="flex gap-2.5 w-full h-1.5">
+        {/* Paso 02 */}
+        <div
+          onClick={step === 3 ? () => setStep(2) : undefined}
+          className={`flex items-center gap-3 ${
+            step === 3 ? 'cursor-pointer pointer-events-auto group' : 'pointer-events-none'
+          }`}
+        >
           <div
-            className={`flex-1 rounded-full transition-all duration-500 ${
-              step >= 1
-                ? 'bg-blue-600 shadow-[0_0_12px_rgba(37,99,235,0.6)]'
-                : 'bg-zinc-800'
+            className={`rounded-full transition-all duration-300 ${
+              step === 2
+                ? 'h-8 w-1 bg-cyan-400 shadow-[0_0_12px_#22d3ee]'
+                : step === 3
+                ? 'h-4 w-1 bg-white/30 group-hover:bg-cyan-400 group-hover:h-6'
+                : 'h-4 w-1 bg-white/15'
             }`}
           />
-          <div
-            className={`flex-1 rounded-full transition-all duration-500 ${
-              step >= 2
-                ? 'bg-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.6)]'
-                : 'bg-zinc-800'
+          <span
+            className={`text-xs font-mono tracking-wider transition-colors ${
+              step === 2
+                ? 'font-semibold text-cyan-400'
+                : step === 3
+                ? 'font-medium text-zinc-400 group-hover:text-cyan-300'
+                : 'font-medium text-zinc-500'
             }`}
-          />
+          >
+            02 • ESTRATEGIA
+          </span>
+        </div>
+
+        {/* Paso 03 */}
+        <div className="flex items-center gap-3 pointer-events-none">
           <div
-            className={`flex-1 rounded-full transition-all duration-500 ${
+            className={`rounded-full transition-all duration-300 ${
               step === 3
-                ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.6)]'
-                : 'bg-zinc-800'
+                ? 'h-8 w-1 bg-cyan-400 shadow-[0_0_12px_#22d3ee]'
+                : 'h-4 w-1 bg-white/15'
             }`}
           />
+          <span
+            className={`text-xs font-mono tracking-wider transition-colors ${
+              step === 3 ? 'font-semibold text-cyan-400' : 'font-medium text-zinc-500'
+            }`}
+          >
+            03 • ESTUDIO
+          </span>
         </div>
       </div>
 
-      {/* ===================== PASO 1: INGESTA Y PARÁMETROS ===================== */}
+      {/* ===================== PASO 1: INGESTA E IDEA ===================== */}
       {step === 1 && (
-        <div className="space-y-6">
-          <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-6 shadow-xl space-y-6">
-            <ProductImageUpload
-              onImageUploaded={(url, type, path) => {
-                setImageUrl(url)
-                if (type) setMediaType(type)
-                if (path) setStoragePath(path)
-                setCutoutProductUrl(null)
-              }}
-              onUploadingChange={setIsUploadingToStorage}
-              userId={userId}
-            />
+        <>
+          {/* Controles Flotantes Esquina Inferior Izquierda: Nicho y Objetivo */}
+          <NicheGoalGlassCard
+            niche={niche}
+            onNicheChange={setNiche}
+            goal={goal}
+            onGoalChange={setGoal}
+            disabled={isGenerating}
+          />
 
-            <div>
-              <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">
-                Contexto del Producto o Oferta
-              </label>
-              <textarea
-                className="w-full p-4 border border-zinc-800 rounded-xl text-sm bg-zinc-950/60 text-zinc-200 placeholder-zinc-500 focus:ring-2 focus:ring-blue-500 focus:outline-none transition resize-none"
-                rows={3}
-                placeholder="Ej. Maceta artesanal de cerámica esmaltada, tono verde menta, ideal para interiores y plantas suculentas..."
-                value={productDesc}
-                onChange={(e) => setProductDesc(e.target.value)}
-              />
-            </div>
-
-            {/* PILLS EXCLUYENTES: NICHO Y OBJETIVO */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2 border-t border-zinc-800/70">
-              {/* Grupo 1: Niche */}
-              <div className="space-y-2.5">
-                <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                  Nicho de Negocio
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {NICHE_OPTIONS.map((option) => {
-                    const active = niche === option
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() => setNiche(option)}
-                        className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
-                          active
-                            ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.45)] border border-blue-400/40'
-                            : 'bg-zinc-950/80 text-zinc-400 border border-zinc-800 hover:border-zinc-700 hover:text-zinc-200'
-                        }`}
-                      >
-                        {option}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Grupo 2: Goal */}
-              <div className="space-y-2.5">
-                <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                  Objetivo de Conversión
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {GOAL_OPTIONS.map((option) => {
-                    const active = goal === option
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() => setGoal(option)}
-                        className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
-                          active
-                            ? 'bg-emerald-600 text-white shadow-[0_0_12px_rgba(16,185,129,0.45)] border border-emerald-400/40'
-                            : 'bg-zinc-950/80 text-zinc-400 border border-zinc-800 hover:border-zinc-700 hover:text-zinc-200'
-                        }`}
-                      >
-                        {option}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* BOTONES DE ACCIÓN PASO 1 */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <button
-              type="button"
-              onClick={() => handleGenerate('fast')}
-              disabled={isGenerating || isUploadingToStorage}
-              className="p-5 bg-zinc-900/80 border border-zinc-800 hover:border-blue-500/80 rounded-2xl text-left transition-all group shadow-sm disabled:opacity-50 relative cursor-pointer"
-            >
-              <div className="flex items-center gap-2 mb-1.5">
-                <span className="text-xl">⚡</span>
-                <h3 className="font-bold text-zinc-100 text-sm group-hover:text-blue-400 transition-colors">
-                  Despliegue Rápido
-                </h3>
-              </div>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Genera de inmediato los copys y titular y pasa directo al Estudio Visual en menos de 4 segundos.
-              </p>
-              {isUploadingToStorage ? (
-                <span className="absolute top-4 right-4 text-xs font-bold text-amber-400 animate-pulse">
-                  ⏳ Subiendo video a la bóveda...
-                </span>
-              ) : isGenerating && generationMode === 'fast' ? (
-                <span className="absolute top-4 right-4 text-xs font-bold text-blue-400 animate-pulse">
-                  Generando...
-                </span>
-              ) : null}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleGenerate('strategic')}
-              disabled={isGenerating || isUploadingToStorage}
-              className="p-5 bg-zinc-900/80 border border-zinc-800 hover:border-emerald-500/80 rounded-2xl text-left transition-all group shadow-sm disabled:opacity-50 relative cursor-pointer"
-            >
-              <div className="flex items-center gap-2 mb-1.5">
-                <span className="text-xl">🧠</span>
-                <h3 className="font-bold text-zinc-100 text-sm group-hover:text-emerald-400 transition-colors">
-                  Campaña Estratégica CMO
-                </h3>
-              </div>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                El CMO analiza tu avatar, ángulo mortal y oferta irresistible junto con los guiones editables.
-              </p>
-              {isUploadingToStorage ? (
-                <span className="absolute top-4 right-4 text-xs font-bold text-amber-400 animate-pulse">
-                  ⏳ Subiendo video a la bóveda...
-                </span>
-              ) : isGenerating && generationMode === 'strategic' ? (
-                <span className="absolute top-4 right-4 text-xs font-bold text-emerald-400 animate-pulse">
-                  Analizando...
-                </span>
-              ) : null}
-            </button>
-          </div>
-        </div>
+          {/* Controles Flotantes Esquina Inferior Derecha: Motor Gemini, Archivos, Idea y Disparo */}
+          <Step1ActionPanel
+            userId={userId}
+            productDesc={productDesc}
+            setProductDesc={setProductDesc}
+            imageUrl={imageUrl}
+            setImageUrl={setImageUrl}
+            mediaType={mediaType}
+            setMediaType={setMediaType}
+            storagePath={storagePath}
+            setStoragePath={setStoragePath}
+            imageBase64={imageBase64}
+            setImageBase64={setImageBase64}
+            isUploadingToStorage={isUploadingToStorage}
+            setIsUploadingToStorage={setIsUploadingToStorage}
+            isGenerating={isGenerating}
+            generationMode={generationMode}
+            onGenerate={handleGenerate}
+            onResetCutout={() => setCutoutProductUrl(null)}
+          />
+        </>
       )}
 
       {/* ===================== PASO 2: CENTRO DE MANDO (EL EMBUDO) ===================== */}
       {step === 2 && (
-        <div className="space-y-6">
-          {/* 1. HEADER: VEREDICTO DEL CMO */}
-          <div className="bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-950 border border-amber-500/30 rounded-2xl p-5 shadow-xl relative overflow-hidden">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0 text-lg">
-                🧠
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wider">
-                    🧠 Veredicto del CMO
-                  </h3>
-                  {headline && (
-                    <span className="text-xs text-zinc-400 font-medium bg-zinc-800/80 px-2.5 py-0.5 rounded-full border border-zinc-700/60">
-                      {headline}
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-zinc-200 leading-relaxed font-medium">
-                  {campaignData?.veredicto_cmo ||
-                    'Tu cliente principal duda antes de comprar; este ángulo derriba su escepticismo mostrando valor real desde los primeros 3 segundos.'}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* 2. FILA DE 3 TARJETAS COMPACTAS DE SÓLO LECTURA: AVATAR | ÁNGULO | OFERTA */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-xl p-4 shadow-md space-y-1.5">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
-                🎯 Avatar del Cliente
-              </span>
-              <p className="text-xs text-zinc-300 leading-relaxed">
-                {cmoAnalysis?.avatar || campaignData?.estrategia?.avatar_cliente || 'Audiencia calificada lista para comprar.'}
-              </p>
-            </div>
-
-            <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-xl p-4 shadow-md space-y-1.5">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
-                ⚡ Ángulo de Gancho
-              </span>
-              <p className="text-xs text-zinc-300 leading-relaxed">
-                {cmoAnalysis?.angle || campaignData?.estrategia?.angulo_gancho || 'Enfoque directo al dolor principal y solución inmediata.'}
-              </p>
-            </div>
-
-            <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-xl p-4 shadow-md space-y-1.5">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                💎 Oferta Irresistible
-              </span>
-              <p className="text-xs text-zinc-300 leading-relaxed">
-                {cmoAnalysis?.irresistibleOffer || campaignData?.estrategia?.oferta_irresistible || 'Propuesta de valor clara con llamado a la acción directo.'}
-              </p>
-            </div>
-          </div>
-
-          {/* BANNER DESTACADO PARA PASAR AL PASO 3 DE ESTUDIO VISUAL */}
-          {!isVideoMedia && (
-            <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-950/40 via-purple-950/30 to-zinc-900 border border-blue-500/30 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-lg">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-blue-400 font-bold">
-                  🎨
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-white">Generación Visual de Estudio (Paso 3)</h4>
-                  <p className="text-xs text-zinc-400">
-                    Crea pancartas 4:5 de alta definición con fondos fotográficos de estudio y tipografía comercial en vivo.
-                  </p>
-                </div>
+        <div className="w-full min-h-full lg:h-full lg:overflow-y-auto overflow-x-hidden relative select-auto">
+          <div className="max-w-6xl mx-auto pt-20 md:pt-24 pb-24 px-4 sm:px-6 md:px-10 xl:pl-28 space-y-6 animate-in fade-in duration-300">
+            {/* CABECERA MINIMALISTA PASO 2: BOTÓN AJUSTAR IDEA */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee] animate-pulse" />
+                <span className="text-xs font-mono uppercase tracking-[0.15em] text-cyan-300/90 font-semibold">
+                  Centro de Mando Estratégico
+                </span>
               </div>
               <button
                 type="button"
-                onClick={goToStep3}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition shadow-md shadow-blue-600/30 flex items-center gap-2 cursor-pointer flex-shrink-0"
+                onClick={() => setStep(1)}
+                className="bg-zinc-900/60 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-white/10 rounded-full px-3.5 py-1.5 text-xs font-medium backdrop-blur-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
               >
-                <span>Diseñar Pancartas de Estudio →</span>
+                <span>←</span>
+                <span>Ajustar Idea</span>
               </button>
             </div>
-          )}
 
-          {/* 3. GRID DE 3 COLUMNAS DE EJECUCIÓN (EDITABLES EN VIVO) */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
-            {/* COLUMNA A: TIKTOK / REELS */}
-            <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-2xl p-5 flex flex-col justify-between space-y-4 shadow-xl">
-              <div className="space-y-3 flex-1 flex flex-col">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-pink-400 block">
-                      Fase 1 • Atracción
-                    </span>
-                    <h4 className="font-bold text-zinc-100 text-sm">🎬 TikTok & Meta Reels</h4>
+            {/* ================= SÍNTESIS EJECUTIVA: BENTO GRID 12 COLS (R2) ================= */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
+              {/* Veredicto del CMO (lg:col-span-5) */}
+              <div className="lg:col-span-5 min-w-0 bg-zinc-900/50 border border-purple-500/25 rounded-2xl p-5 backdrop-blur-xl relative overflow-hidden flex flex-col justify-between shadow-lg">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/10 border border-purple-500/20">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_6px_#c084fc]" />
+                      <span className="text-[10px] font-semibold tracking-[0.15em] uppercase text-purple-300 font-mono">
+                        DIAGNÓSTICO CMO
+                      </span>
+                    </div>
+                    {headline && (
+                      <span className="text-[10px] text-zinc-400 font-mono tracking-wider bg-white/[0.04] px-2 py-0.5 rounded border border-white/[0.06] truncate max-w-[180px]">
+                        {headline}
+                      </span>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard(editableTtScript, 'TikTok / Reels')}
-                    className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2.5 py-1.5 rounded-lg border border-zinc-700/80 flex items-center gap-1 transition cursor-pointer"
-                  >
-                    <Copy className="w-3 h-3" /> Copiar
-                  </button>
+                  <p className="text-sm text-zinc-200 leading-relaxed font-normal break-words">
+                    {campaignData?.veredicto_cmo ||
+                      'Tu cliente principal duda antes de comprar; este ángulo derriba su escepticismo mostrando valor real desde los primeros 3 segundos.'}
+                  </p>
                 </div>
-
-                <textarea
-                  value={editableTtScript}
-                  onChange={(e) => setEditableTtScript(e.target.value)}
-                  rows={10}
-                  className="w-full flex-1 p-3.5 bg-zinc-950/90 border border-zinc-800 rounded-xl text-xs text-zinc-200 leading-relaxed focus:ring-2 focus:ring-pink-500/60 focus:outline-none resize-y"
-                  placeholder="Guion de video para Reels y TikTok..."
-                />
               </div>
 
-              <div className="pt-2 border-t border-zinc-800/80 flex flex-wrap items-center justify-between gap-2">
-                <ReelPublishButton item={publicationProxy} />
+              {/* Pilares Estratégicos (lg:col-span-7) */}
+              <div className="lg:col-span-7 min-w-0 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Pilar 1: Avatar del Cliente */}
+                <div className="min-w-0 bg-zinc-950/60 border border-white/[0.06] rounded-xl p-4 backdrop-blur-md flex flex-col space-y-2">
+                  <span className="text-[10px] tracking-[0.15em] uppercase text-zinc-400 font-medium">
+                    Avatar del Cliente
+                  </span>
+                  <p className="text-xs text-zinc-300 leading-relaxed break-words">
+                    {cmoAnalysis?.avatar || campaignData?.estrategia?.avatar_cliente || 'Audiencia calificada lista para comprar.'}
+                  </p>
+                </div>
 
-                {isVideoMedia && (
-                  <button
-                    type="button"
-                    onClick={handlePublishTikTok}
-                    disabled={isPublishingTikTok}
-                    className="px-3 py-1.5 bg-[#fe2c55] hover:bg-[#e0264b] text-white text-xs font-semibold rounded-lg transition flex items-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
-                  >
-                    {isPublishingTikTok ? '⏳ Enviando...' : '🎵 Borrador TikTok'}
-                  </button>
-                )}
+                {/* Pilar 2: Ángulo Gancho */}
+                <div className="min-w-0 bg-zinc-950/60 border border-white/[0.06] rounded-xl p-4 backdrop-blur-md flex flex-col space-y-2">
+                  <span className="text-[10px] tracking-[0.15em] uppercase text-zinc-400 font-medium">
+                    Ángulo Gancho
+                  </span>
+                  <p className="text-xs text-zinc-300 leading-relaxed break-words">
+                    {cmoAnalysis?.angle || campaignData?.estrategia?.angulo_gancho || 'Enfoque directo al dolor principal y solución inmediata.'}
+                  </p>
+                </div>
+
+                {/* Pilar 3: Oferta Irresistible */}
+                <div className="min-w-0 bg-zinc-950/60 border border-white/[0.06] rounded-xl p-4 backdrop-blur-md flex flex-col space-y-2">
+                  <span className="text-[10px] tracking-[0.15em] uppercase text-zinc-400 font-medium">
+                    Oferta Irresistible
+                  </span>
+                  <p className="text-xs text-zinc-300 leading-relaxed break-words">
+                    {cmoAnalysis?.irresistibleOffer || campaignData?.estrategia?.oferta_irresistible || 'Propuesta de valor clara con llamado a la acción directo.'}
+                  </p>
+                </div>
               </div>
             </div>
 
-            {/* COLUMNA B: IG FEED */}
-            <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-2xl p-5 flex flex-col justify-between space-y-4 shadow-xl">
-              <div className="space-y-3 flex-1 flex flex-col">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400 block">
-                      Fase 2 • Consideración
-                    </span>
-                    <h4 className="font-bold text-zinc-100 text-sm">📸 Instagram Feed</h4>
-                  </div>
+            {/* ================= R3: ESTUDIO DE GUIONES Y COPYS CON PESTAÑAS OBSIDIAN GLASS ================= */}
+            <div className="bg-zinc-900/40 border border-white/[0.08] rounded-2xl p-5 sm:p-6 backdrop-blur-xl shadow-2xl space-y-4">
+              {/* Barra Superior: Pestañas a la izquierda + Botón Copiar a la derecha */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/[0.06]">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => copyToClipboard(editableIgCopy, 'Instagram Feed')}
-                    className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2.5 py-1.5 rounded-lg border border-zinc-700/80 flex items-center gap-1 transition cursor-pointer"
+                    onClick={() => setActiveChannelTab('tiktok')}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all duration-200 cursor-pointer flex items-center gap-1.5 ${
+                      activeChannelTab === 'tiktok'
+                        ? 'bg-pink-500/20 text-pink-200 border border-pink-500/50 shadow-[0_0_14px_rgba(236,72,153,0.35)]'
+                        : 'bg-zinc-950/60 text-zinc-400 border border-white/5 hover:border-white/15 hover:text-zinc-200 hover:bg-zinc-900/40'
+                    }`}
                   >
-                    <Copy className="w-3 h-3" /> Copiar
+                    <span>🎬</span>
+                    <span>TikTok & Reels</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveChannelTab('instagram')}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all duration-200 cursor-pointer flex items-center gap-1.5 ${
+                      activeChannelTab === 'instagram'
+                        ? 'bg-purple-500/20 text-purple-200 border border-purple-500/50 shadow-[0_0_14px_rgba(168,85,247,0.35)]'
+                        : 'bg-zinc-950/60 text-zinc-400 border border-white/5 hover:border-white/15 hover:text-zinc-200 hover:bg-zinc-900/40'
+                    }`}
+                  >
+                    <span>📸</span>
+                    <span>Instagram Feed</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveChannelTab('whatsapp')}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all duration-200 cursor-pointer flex items-center gap-1.5 ${
+                      activeChannelTab === 'whatsapp'
+                        ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/50 shadow-[0_0_14px_rgba(16,185,129,0.35)]'
+                        : 'bg-zinc-950/60 text-zinc-400 border border-white/5 hover:border-white/15 hover:text-zinc-200 hover:bg-zinc-900/40'
+                    }`}
+                  >
+                    <span>💬</span>
+                    <span>WhatsApp Cierre</span>
                   </button>
                 </div>
 
+                {/* Botón Copiar Texto con Feedback */}
+                <button
+                  type="button"
+                  onClick={handleCopyCurrentTab}
+                  className={`self-end sm:self-auto text-xs px-3.5 py-1.5 rounded-xl border transition-all flex items-center gap-1.5 cursor-pointer ${
+                    isCopied
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
+                      : 'bg-zinc-950/60 text-zinc-300 hover:text-white border-white/10 hover:border-white/20 hover:bg-zinc-900/60'
+                  }`}
+                >
+                  {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{isCopied ? '¡Copiado!' : 'Copiar texto'}</span>
+                </button>
+              </div>
+
+              {/* Área de Lectura y Edición Amplia Sin Scroll Interno */}
+              <div className="pt-2">
                 <textarea
-                  value={editableIgCopy}
-                  onChange={(e) => setEditableIgCopy(e.target.value)}
-                  rows={10}
-                  className="w-full flex-1 p-3.5 bg-zinc-950/90 border border-zinc-800 rounded-xl text-xs text-zinc-200 leading-relaxed focus:ring-2 focus:ring-purple-500/60 focus:outline-none resize-y"
-                  placeholder="Copy principal y llamado a la acción para Feed..."
+                  ref={copyTextareaRef}
+                  value={
+                    activeChannelTab === 'tiktok'
+                      ? editableTtScript
+                      : activeChannelTab === 'instagram'
+                      ? editableIgCopy
+                      : editableWaText
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value
+                    if (activeChannelTab === 'tiktok') setEditableTtScript(val)
+                    else if (activeChannelTab === 'instagram') setEditableIgCopy(val)
+                    else setEditableWaText(val)
+                    adjustTextareaHeight()
+                  }}
+                  rows={8}
+                  className="w-full bg-transparent border-0 focus:ring-0 focus:outline-none text-sm md:text-base text-zinc-200 leading-relaxed resize-none p-0 overflow-hidden font-sans placeholder-zinc-500 selection:bg-cyan-500/30"
+                  placeholder={
+                    activeChannelTab === 'tiktok'
+                      ? 'Guion de video para Reels y TikTok...'
+                      : activeChannelTab === 'instagram'
+                      ? 'Copy principal y llamado a la acción para Feed...'
+                      : 'Texto de estado de WhatsApp y cierre por mensaje directo...'
+                  }
                 />
               </div>
 
-              <div className="pt-2 border-t border-zinc-800/80 flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={handlePublishIgFeed}
-                    disabled={isPublishingFeed || isFeedPublished || !uploadedMediaUrl || isVideoMedia}
-                    className={`w-full flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                      isFeedPublished
-                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                        : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white shadow-sm active:scale-95'
-                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                    title={
-                      isVideoMedia
-                        ? 'Para videos utiliza el botón de Meta Reels'
-                        : !uploadedMediaUrl
-                        ? 'Sube una imagen o genera una pancarta primero'
-                        : undefined
-                    }
-                  >
-                    {isPublishingFeed
-                      ? '⏳ Publicando en Feed...'
-                      : isFeedPublished
-                      ? '✅ Publicado en IG Feed'
-                      : '🚀 Publicar en IG Feed'}
-                  </button>
-                </div>
+              {/* Pie de Canal con Acciones Contextuales */}
+              <div className="pt-4 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-3">
+                {activeChannelTab === 'tiktok' && (
+                  <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                    <ReelPublishButton item={publicationProxy} />
+                    {isVideoMedia && (
+                      <button
+                        type="button"
+                        onClick={handlePublishTikTok}
+                        disabled={isPublishingTikTok}
+                        className="px-4 py-2 bg-[#fe2c55]/20 hover:bg-[#fe2c55]/30 text-[#fe2c55] border border-[#fe2c55]/40 text-xs font-semibold rounded-xl transition flex items-center gap-2 shadow-sm disabled:opacity-50 cursor-pointer"
+                      >
+                        {isPublishingTikTok ? '⏳ Enviando...' : '🎵 Borrador TikTok'}
+                      </button>
+                    )}
+                  </div>
+                )}
 
-                {!isVideoMedia && (
-                  <div className="flex items-center gap-2 pt-1">
+                {activeChannelTab === 'instagram' && (
+                  <div className="flex flex-wrap items-center gap-3 w-full">
                     <button
                       type="button"
-                      onClick={goToStep3}
-                      className="flex-1 py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-blue-400 hover:text-blue-300 font-semibold text-xs rounded-lg transition border border-zinc-700/80 flex items-center justify-center gap-1.5 cursor-pointer"
+                      onClick={handlePublishIgFeed}
+                      disabled={isPublishingFeed || isFeedPublished || !uploadedMediaUrl || isVideoMedia}
+                      className={`flex items-center justify-center gap-2 px-5 py-2.5 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
+                        isFeedPublished
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.2)]'
+                          : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white shadow-[0_0_20px_rgba(168,85,247,0.3)] active:scale-95'
+                      } disabled:opacity-40 disabled:cursor-not-allowed`}
+                      title={
+                        isVideoMedia
+                          ? 'Para videos utiliza el botón de Meta Reels'
+                          : !uploadedMediaUrl
+                          ? 'Sube una imagen o genera una pancarta primero'
+                          : undefined
+                      }
                     >
-                      <Palette className="w-3.5 h-3.5" /> Estudio Visual 4:5
+                      {isPublishingFeed
+                        ? '⏳ Publicando en Feed...'
+                        : isFeedPublished
+                        ? '✅ Publicado en IG Feed'
+                        : '🚀 Publicar en IG Feed'}
                     </button>
-                    {publicationId && (
-                      <div className="flex-1">
+
+                    {publicationId && !isVideoMedia && (
+                      <div className="sm:ml-auto">
                         <GenerateBannerButton
                           contentId={publicationId}
                           existingBannerUrl={bannerUrl}
@@ -1034,98 +1007,88 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
                     )}
                   </div>
                 )}
+
+                {activeChannelTab === 'whatsapp' && (
+                  <button
+                    type="button"
+                    onClick={() => setIsShareModalOpen(true)}
+                    className="w-full sm:w-auto px-5 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-semibold rounded-xl transition-all shadow-[0_0_15px_rgba(16,185,129,0.2)] flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
+                  >
+                    <span>📲</span>
+                    <span>Compartir en WhatsApp / Estado</span>
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* COLUMNA C: WHATSAPP */}
-            <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-2xl p-5 flex flex-col justify-between space-y-4 shadow-xl">
-              <div className="space-y-3 flex-1 flex flex-col">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 block">
-                      Fase 3 • Cierre Directo
-                    </span>
-                    <h4 className="font-bold text-zinc-100 text-sm">💬 Estados & WhatsApp</h4>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard(editableWaText, 'WhatsApp')}
-                    className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2.5 py-1.5 rounded-lg border border-zinc-700/80 flex items-center gap-1 transition cursor-pointer"
-                  >
-                    <Copy className="w-3 h-3" /> Copiar
-                  </button>
-                </div>
-
-                <textarea
-                  value={editableWaText}
-                  onChange={(e) => setEditableWaText(e.target.value)}
-                  rows={10}
-                  className="w-full flex-1 p-3.5 bg-zinc-950/90 border border-zinc-800 rounded-xl text-xs text-zinc-200 leading-relaxed focus:ring-2 focus:ring-emerald-500/60 focus:outline-none resize-y"
-                  placeholder="Texto de estado de WhatsApp y cierre por mensaje directo..."
+            {/* ================= 4. VISTA PREVIA EN VIVO + COPILOTO DE REFINAMIENTO ================= */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start pt-4 border-t border-white/[0.08]">
+              <div className="lg:col-span-5 flex flex-col items-center">
+                <InstagramMockup
+                  copy={editableIgCopy}
+                  imageUrl={uploadedMediaUrl}
+                  username="urielfgx"
                 />
-              </div>
-
-              <div className="pt-2 border-t border-zinc-800/80">
-                <button
-                  type="button"
-                  onClick={() => setIsShareModalOpen(true)}
-                  className="w-full py-2 px-3.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
-                >
-                  <span>📲</span> Compartir en WhatsApp / Estado
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* 4. VISTA PREVIA EN VIVO + COPILOTO DE REFINAMIENTO */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start pt-4 border-t border-zinc-800/80">
-            <div className="lg:col-span-5 flex flex-col items-center">
-              <InstagramMockup
-                copy={editableIgCopy}
-                imageUrl={uploadedMediaUrl}
-                username="urielfgx"
-              />
-              <p className="text-[11px] text-zinc-500 mt-2 text-center">
-                Vista previa sincronizada en tiempo real con tus ediciones.
-              </p>
-            </div>
-
-            <div className="lg:col-span-7 space-y-4">
-              <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-4 shadow-xl space-y-3">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-blue-400" />
-                  <h4 className="text-xs font-bold text-zinc-200 uppercase tracking-wider">
-                    Copiloto de Refinamiento IA
-                  </h4>
-                </div>
-                <p className="text-xs text-zinc-400">
-                  ¿Quieres ajustar el tono o agregar una promoción especial? Pídeselo al copiloto o edita directamente las cajas de arriba.
+                <p className="text-[11px] text-zinc-500 mt-2 text-center">
+                  Vista previa sincronizada en tiempo real con tus ediciones.
                 </p>
-                <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-2 flex items-end gap-2 focus-within:border-blue-500/50 transition-all">
-                  <textarea
-                    rows={2}
-                    value={refinementPrompt}
-                    onChange={(e) => setRefinementPrompt(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Ej. 'Agrega envío gratis por 24 horas y haz el tono más urgente'..."
-                    className="w-full bg-transparent border-none text-xs text-zinc-100 placeholder-zinc-500 focus:ring-0 focus:outline-none resize-none py-1.5 px-2 leading-relaxed"
-                    disabled={isRefining}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleRefineContent}
-                    disabled={!refinementPrompt.trim() || isRefining || !publicationId}
-                    className="p-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-xl transition-all flex-shrink-0 shadow-sm flex items-center justify-center cursor-pointer"
-                    title="Refinar textos con IA"
-                  >
-                    {isRefining ? (
-                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    ) : (
-                      <Send className="w-4 h-4" />
-                    )}
-                  </button>
+              </div>
+
+              <div className="lg:col-span-7 space-y-4">
+                <div className="bg-zinc-900/40 border border-white/[0.08] rounded-2xl p-4 sm:p-5 backdrop-blur-xl shadow-xl space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-cyan-400" />
+                    <h4 className="text-xs font-bold text-zinc-200 uppercase tracking-wider">
+                      Copiloto de Refinamiento IA
+                    </h4>
+                  </div>
+                  <p className="text-xs text-zinc-400">
+                    ¿Quieres ajustar el tono o agregar una promoción especial? Pídeselo al copiloto o edita directamente en la pestaña de arriba.
+                  </p>
+                  <div className="bg-zinc-950/70 border border-white/10 rounded-xl p-2 flex items-end gap-2 focus-within:border-cyan-400/50 transition-all">
+                    <textarea
+                      rows={2}
+                      value={refinementPrompt}
+                      onChange={(e) => setRefinementPrompt(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Ej. 'Agrega envío gratis por 24 horas y haz el tono más urgente'..."
+                      className="w-full bg-transparent border-none text-xs text-zinc-100 placeholder-zinc-500 focus:ring-0 focus:outline-none resize-none py-1.5 px-2 leading-relaxed"
+                      disabled={isRefining}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleRefineContent}
+                      disabled={!refinementPrompt.trim() || isRefining || !publicationId}
+                      className="p-2.5 bg-gradient-to-r from-blue-600 via-cyan-500 to-emerald-500 hover:from-blue-500 hover:to-emerald-400 disabled:bg-none disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-xl transition-all flex-shrink-0 shadow-sm flex items-center justify-center cursor-pointer active:scale-95"
+                      title="Refinar textos con IA"
+                    >
+                      {isRefining ? (
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <Send className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
+            </div>
+
+            {/* ================= R4: DOCK FLOTANTE INFERIOR DE AVANCE ================= */}
+            <div className="mt-6 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 bg-zinc-950/80 border border-white/10 rounded-2xl px-6 py-4 backdrop-blur-xl shadow-2xl">
+              <div className="flex items-center gap-3">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse flex-shrink-0" />
+                <span className="text-xs md:text-sm text-zinc-300 font-medium">
+                  Estrategia lista • Siguiente fase: Generación de creativos 4:5
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={goToStep3}
+                className="w-full sm:w-auto px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 via-cyan-500 to-emerald-500 hover:from-blue-500 hover:to-emerald-400 text-white font-bold text-xs md:text-sm shadow-[0_0_25px_rgba(6,182,212,0.3)] hover:shadow-[0_0_30px_rgba(6,182,212,0.45)] transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] flex-shrink-0"
+              >
+                <span>Ir al Estudio Visual</span>
+                <span>→</span>
+              </button>
             </div>
           </div>
         </div>
@@ -1133,9 +1096,26 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
 
       {/* ===================== PASO 3: GENERACIÓN VISUAL DE ESTUDIO (DESACOPLADA) ===================== */}
       {step === 3 && (
-        <div className="space-y-6 animate-in fade-in duration-300">
-          {/* Header Barra de Acciones */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
+        <div className="w-full min-h-full lg:h-full lg:overflow-y-auto overflow-x-hidden relative select-auto">
+          <div className="max-w-6xl mx-auto pt-20 md:pt-24 pb-24 px-4 sm:px-6 md:px-10 space-y-6 animate-in fade-in duration-300">
+            {/* Header Barra de Acciones Paso 3 */}
+            <div className="flex items-center justify-between pb-2">
+              <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
+                <span className="text-emerald-400">03.</span>
+                Generación Visual de Estudio (4:5)
+              </h2>
+              <button
+                type="button"
+                onClick={() => setStep(generationMode === 'fast' ? 1 : 2)}
+                className="bg-zinc-900/60 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-white/10 rounded-full px-3.5 py-1.5 text-xs font-medium backdrop-blur-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
+              >
+                <span>←</span>
+                <span>{generationMode === 'fast' ? 'Ajustar Ingesta' : 'Volver al Centro de Mando'}</span>
+              </button>
+            </div>
+
+            {/* Header Barra de Acciones */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
             <div>
               <h3 className="font-bold text-white text-sm flex items-center gap-2">
                 <span>🎨</span> Generación Visual de Estudio Desacoplada
@@ -1403,6 +1383,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
             </div>
           </div>
         </div>
+        </div>
       )}
 
       {/* MODAL NATIVO DE DISTRIBUCIÓN ASISTIDA (WHATSAPP / ESTADOS) */}
@@ -1414,6 +1395,6 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         mediaUrl={uploadedMediaUrl || undefined}
         fileName={`blitzr-${publicationId || 'media'}${isVideoMedia ? '.mp4' : '.jpg'}`}
       />
-    </div>
+    </BlitzrPrismStage>
   )
 }

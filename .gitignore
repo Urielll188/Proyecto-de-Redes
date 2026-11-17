@@ -48,3 +48,9 @@ next-env.d.ts
 
 .agents/
 
+
+# backups locales y datos sensibles (no subir)
+/.backups/
+*.db
+__pycache__/
+

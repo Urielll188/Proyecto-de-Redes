@@ -19,7 +19,7 @@ export default async function DashboardPage() {
   if (!dbUser) redirect('/login')
 
   return (
-    <div className="w-full">
+    <div className="w-full h-full">
       <EmpresaStepper userId={dbUser.id} />
     </div>
   )

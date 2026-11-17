@@ -1,0 +1,24 @@
+{
+  "id_cliente": "mallas_tlaxcalli",
+  "nombre_empresa": "Mallas Tlaxcalli",
+  "producto_principal": "Paquete Completo Mantenimiento",
+  "precio_paquete": 1713,
+  "precio_refaccionaria": 2700,
+  "componentes": [
+    "1 Malla Testalera (23cm x 1.40m)",
+    "1 Malla Transportadora (10 pulg x 9m Calibre 14 reforzado)",
+    "1 Balero 7210B alemán alta duración"
+  ],
+  "cobertura": [
+    "CDMX",
+    "Ecatepec",
+    "Tlalnepantla",
+    "Naucalpan",
+    "Nezahualcóyotl",
+    "Chimalhuacán",
+    "Cuautitlán Izcalli",
+    "Tultitlán",
+    "Coacalco",
+    "Los Reyes La Paz"
+  ]
+}
