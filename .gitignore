@@ -35,6 +35,7 @@ yarn-error.log*
 .env
 .env*
 .env*.local
+*.env
 !.env.example
 !**/.env.example
 
@@ -71,9 +72,18 @@ __pycache__/
 *.crt
 *.der
 *.keystore
+*.ppk
 id_rsa*
 id_ed25519*
-*secret*
+id_ecdsa*
+*client_secret*
+secret.*
+secrets.*
+!src/**/secret.ts
+!src/**/secret.tsx
+!src/**/secrets.ts
+!src/**/secrets.tsx
+*.secret
 *credentials*.json
 *service-account*.json
 
@@ -82,20 +92,30 @@ id_ed25519*
 *.db-wal
 *.db-shm
 *.db-journal
-*.sqlite
-*.sqlite3
-*.sqlite-wal
-*.sqlite-shm
+*.sqlite*
 
-# WhatsApp sessions, auth & QR artifacts
+# WhatsApp sessions, auth, secrets & QR artifacts
 vps-services/**/*auth*
 vps-services/**/*session*
+vps-services/**/*secret*
 vps-services/**/*.qr*
+vps-services/**/*qr*.png
+vps-services/**/*qr*.svg
+vps-services/**/*qr*.jpg
+vps-services/**/*qr*.jpeg
 *auth_info*
 *baileys*auth*
 *baileys*store*
 *sesion_whatsapp*
-*session*
+*wa_session*
+session.json
+session_store*
+creds.json
 *.qr
 *.qr.*
+qr.*
+qr_*.*
+qrcode*
+*qr_code*
+*qr-code*
 
