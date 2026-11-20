@@ -1,0 +1,76 @@
+{
+  "id": "KZAlvOwZ7uQFiAE3",
+  "name": "Mallas Tlaxcalli - Módulo 4: El Perseguidor (Follow-up 24h y Post-Venta 15 días Baleros $26+)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## ⏰ MÓDULO 4: EL PERSEGUIDOR (FOLLOW-UP 24H Y POST-VENTA 15 DÍAS)\nEjecuta /api/ejecutar_seguimiento_m4 en vivo contra SQLite para detectar prospectos contactados hace >24h/72h sin cierre y clientes que cumplieron 15 días de su primer paquete para ofrecerles Baleros Secundarios desde $26 MXN.",
+        "height": 170,
+        "width": 640
+      },
+      "id": "tlx-m4-sticky",
+      "name": "Documentación Módulo 4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        140,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 11 * * 1-6"
+            }
+          ]
+        }
+      },
+      "id": "tlx-m4-cron",
+      "name": "Ejecución Diaria 11:00 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        160,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8090/api/ejecutar_seguimiento_m4",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {}
+      },
+      "id": "tlx-m4-consultar",
+      "name": "Ejecutar Perseguidor 24h/72h y Post-Venta Día 15 ($26 MXN)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        340
+      ]
+    }
+  ],
+  "connections": {
+    "Ejecución Diaria 11:00 AM": {
+      "main": [
+        [
+          {
+            "node": "Ejecutar Perseguidor 24h/72h y Post-Venta Día 15 ($26 MXN)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Mexico_City"
+  }
+}

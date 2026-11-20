@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: tlaxcalli_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tlaxcalli_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tlaxcalli_secret_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-evolution_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - tlaxcalli_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-tlaxcalli_admin} -d $${POSTGRES_DB:-evolution_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: tlaxcalli_redis
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - tlaxcalli_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  evolution-api:
+    image: atendai/evolution-api:v2.1.1
+    container_name: tlaxcalli_evolution_api
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - tlaxcalli_net
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: tlaxcalli_n8n
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678/}
+      - GENERIC_TIMEZONE=America/Mexico_City
+      - TZ=America/Mexico_City
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./data:/files/data
+      - ./prompts:/files/prompts
+      - ./workflows:/files/workflows
+    networks:
+      - tlaxcalli_net
+
+volumes:
+  postgres_data:
+  redis_data:
+  evolution_instances:
+  n8n_data:
+
+networks:
+  tlaxcalli_net:
+    driver: bridge
+    name: tlaxcalli_net

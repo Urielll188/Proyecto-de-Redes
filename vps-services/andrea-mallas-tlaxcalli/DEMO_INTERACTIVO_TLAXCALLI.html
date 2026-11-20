@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mallas Tlaxcalli — Ecosistema de Automatización Comercial y Control de Comisiones</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #f59e0b;
+      --accent: #10b981;
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --wa: #25d366;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; padding-bottom: 60px; }
+    header {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 22px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .tag {
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--primary);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      display: inline-block;
+      margin-bottom: 6px;
+    }
+    h1 { font-size: 1.5rem; font-weight: 800; }
+    .sub { color: var(--muted); font-size: 0.9rem; }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      background: #111827;
+      padding: 8px;
+      margin: 20px 32px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .tab {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .tab.active { background: var(--primary); color: #000; font-weight: 700; }
+    .container { max-width: 1320px; margin: 0 auto; padding: 0 32px; }
+    .pane { display: none; }
+    .pane.active { display: block; }
+    .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .grid-2 { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 24px; }
+    .stat { background: var(--card); border: 1px solid var(--border); padding: 18px; border-radius: 12px; }
+    .stat-label { font-size: 0.75rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.04em; }
+    .stat-value { font-size: 1.7rem; font-weight: 800; margin-top: 4px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 22px; margin-bottom: 22px; }
+    .card h2 { font-size: 1.15rem; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    th { text-align: left; padding: 10px; background: rgba(0,0,0,0.25); color: var(--muted); font-size: 0.76rem; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+    td { padding: 12px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .badge { padding: 3px 9px; border-radius: 6px; font-size: 0.73rem; font-weight: 700; }
+    .b-ok { background: rgba(16,185,129,0.2); color: #34d399; }
+    .b-wait { background: rgba(245,158,11,0.2); color: #fbbf24; }
+    .b-route { background: rgba(59,130,246,0.2); color: #60a5fa; }
+    .chat-box { background: #0b141a; border: 1px solid #222d34; border-radius: 14px; height: 540px; display: flex; flex-direction: column; overflow: hidden; }
+    .chat-head { background: #202c33; padding: 12px 18px; display: flex; align-items: center; gap: 12px; }
+    .avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--primary); color: #000; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+    .chat-body { flex: 1; padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    .msg { max-width: 78%; padding: 10px 14px; border-radius: 10px; font-size: 0.88rem; line-height: 1.45; }
+    .msg.bot { background: #202c33; align-self: flex-start; color: #e9edef; }
+    .msg.user { background: #005c4b; align-self: flex-end; color: #e9edef; }
+    .chat-foot { background: #202c33; padding: 10px 14px; display: flex; gap: 8px; }
+    .chat-input { flex: 1; background: #2a3942; border: none; border-radius: 8px; padding: 10px 14px; color: #fff; outline: none; }
+    .btn { background: var(--wa); color: #000; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; font-size: 0.82rem; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .chip { background: #2a3942; color: #cbd5e1; border: 1px solid var(--border); padding: 6px 12px; border-radius: 999px; font-size: 0.76rem; cursor: pointer; }
+    .chip:hover { border-color: var(--primary); color: #fff; }
+    .audio-pill { background: rgba(37,211,102,0.15); border: 1px solid var(--wa); border-radius: 8px; padding: 8px 12px; margin-top: 6px; display: flex; align-items: center; gap: 10px; font-size: 0.8rem; color: #34d399; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <span class="tag">⚙️ Ecosistema Oficial • Mallas Tlaxcalli (Ing. Paola Almanza / Ing. Rocha)</span>
+      <h1>Sistema de Prospección, Cierre Multimodal IA y Candado de Comisiones</h1>
+      <p class="sub">Paquete Completo $1,713 MXN (Envío Gratis) • Mayoreo Mecánicos 10+ • Cobertura CDMX y 8 Municipios Edomex</p>
+    </div>
+    <div style="text-align: right;">
+      <div style="font-size: 0.8rem; color: var(--muted);">Comisión Pactada Agencia:</div>
+      <div style="font-size: 1.45rem; font-weight: 800; color: var(--accent);">$200.00 MXN / Paquete</div>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" onclick="openTab('t-cerrador', this)">🤖 M2: Simulador Cerrador "Martín" (Voz + Texto)</button>
+    <button class="tab" onclick="openTab('t-cazador', this)">🎯 M1: El Cazador (25 Tortillerías en Cobertura)</button>
+    <button class="tab" onclick="openTab('t-despacho', this)">🚚 M3: Rutas, Despacho y Candado GPT-4o ($200)</button>
+    <button class="tab" onclick="openTab('t-catalogo', this)">📦 Reglas de Negocio y Precios Oficiales</button>
+  </div>
+
+  <div class="container">
+    <!-- TAB M2: CERRADOR -->
+    <div id="t-cerrador" class="pane active">
+      <div class="grid-2">
+        <div>
+          <div class="chat-box">
+            <div class="chat-head">
+              <div class="avatar">MT</div>
+              <div>
+                <div style="font-weight: 700; font-size: 0.95rem;">Martín — Mallas Tlaxcalli (WhatsApp Business)</div>
+                <div style="font-size: 0.75rem; color: var(--accent);" id="botStatus">● En línea (Evolution API v2 + Whisper + TTS)</div>
+              </div>
+            </div>
+            <div class="chat-body" id="chatBody">
+              <div class="msg bot">
+                ¡Qué tal Jefe! Buen día. Le saluda Martín de <strong>Mallas Tlaxcalli</strong>.<br><br>
+                Andamos en ruta entregando nuestro <strong>Paquete Completo de Mantenimiento por $1,713 pesos</strong> con envío GRATIS hasta su tortillería:<br>
+                ✅ 1 Malla Testalera (23 cm x 1.40 m)<br>
+                ✅ 1 Malla Transportadora (10" x 9 m Calibre 14 reforzado)<br>
+                ✅ 1 Balero 7210B alemán (jaula de fierro)<br><br>
+                No pedimos anticipo, paga hasta recibir en sus manos. ¿Qué máquina trabaja usted, Jefe?
+              </div>
+            </div>
+            <div class="chat-foot">
+              <input type="text" id="chatInput" class="chat-input" placeholder="Prueba cualquier objeción real del tortillero..." onkeypress="if(event.key==='Enter') sendMsg()">
+              <button class="btn" onclick="sendMsg()">Enviar</button>
+            </div>
+          </div>
+          <div class="chips">
+            <span class="chip" onclick="quickMsg('Oye amigo, ¿en cuánto me vendes la pura malla transportadora suelta?')">1. Pedir pieza suelta</span>
+            <span class="chip" onclick="quickMsg('Ahorita mi máquina Celorio anda bien, no ocupo, gracias')">2. Objeción: "Mi máquina anda bien"</span>
+            <span class="chip" onclick="quickMsg('Soy mecánico de máquinas tortilladoras, ¿qué precio me das de mayoreo?')">3. Mecánico (Mayoreo 10+)</span>
+            <span class="chip" onclick="quickMsg('¿Te puedo pagar en efectivo cuando llegue el chofer?')">4. Intentar pagar en Efectivo</span>
+            <span class="chip" onclick="quickMsg('Estoy en Tepito, Cuauhtémoc, ¿sí me entregan aquí?')">5. Filtro Zona Roja</span>
+            <span class="chip" onclick="quickMsg('Soy Don Gerardo de Tortillería Nixtamal Real, Av. Canal del Castera 310 en Tultitlán, recibo de 9 a 2 y pago con transferencia')">6. Dar los 4 Datos y Cerrar Pedido</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>🧠 Reglas Activas en el Cerebro del Agente</h2>
+          <ul style="list-style: none; display: flex; flex-direction: column; gap: 12px; font-size: 0.88rem;">
+            <li>✅ <strong>Paquete Único Menudeo ($1,713 MXN):</strong> Malla Testalera 23cm x 1.40m (sin especificar galvanizada/fierro por stock) + Malla Transportadora 10" x 9m Calibre 14 + Balero 7210B alemán.</li>
+            <li>🚫 <strong>Cero piezas sueltas en menudeo:</strong> Argumenta que no costea el envío gratis y muestra el ahorro contra los <strong>$2,700–$2,737 MXN</strong> de refaccionaria.</li>
+            <li>🔧 <strong>Mayoreo Mecánicos (10+ piezas mezclables):</strong> Testalera Fierro $225, Testalera Galv $230, Transportadora $650.</li>
+            <li>💳 <strong>Prohibido Efectivo:</strong> Solo Transferencia al momento de recibir o Tarjeta en terminal física Mercado Pago del repartidor. Cero anticipos.</li>
+            <li>🗺️ <strong>Cobertura Estricta:</strong> CDMX + 8 municipios Edomex (Tultitlán, Cuautitlán, Izcalli, Tepotzotlán, Naucalpan, Tlalnepantla, Atizapán, Coacalco).</li>
+            <li>📋 <strong>Checklist de 4 Datos:</strong> Nombre/Tortillería, Dirección/GPS, Horario recepción, y Confirmación de Transferencia/Terminal.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB M1: CAZADOR -->
+    <div id="t-cazador" class="pane">
+      <div class="card">
+        <h2>
+          <span>🎯 Tabla 1: Prospectos Google Maps (Zonas Autorizadas CDMX y Edomex)</span>
+          <span class="badge b-ok">Ritmo Seguro: 1 mensaje cada 25 min</span>
+        </h2>
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Tortillería</th><th>Teléfono</th><th>Dirección</th><th>Municipio</th><th>Máquina</th><th>Estatus</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>PROS-001</td><td><strong>Tortillería La Espiga de Oro</strong></td><td>525558881011</td><td>Av. José López Portillo 142, San Francisco Chilpan</td><td>Tultitlán</td><td>Celorio BC</td><td><span class="badge b-wait">PENDIENTE_ENVIO</span></td></tr>
+            <tr><td>PROS-003</td><td><strong>Tortillería El Maizal de Fuentes</strong></td><td>525558883033</td><td>Av. Prados Sur 45, Unidad Morelos 3ra Secc</td><td>Tultitlán</td><td>Celorio BC</td><td><span class="badge b-route">CONTACTADO_EN_VISTO (24h)</span></td></tr>
+            <tr><td>PROS-005</td><td><strong>Tortillería Nixtamal Real</strong></td><td>525558885055</td><td>Av. Canal del Castera 310, San Pablo de las Salinas</td><td>Tultitlán</td><td>Tapsa</td><td><span class="badge b-ok">PEDIDO_CERRADO</span></td></tr>
+            <tr><td>PROS-006</td><td><strong>Tortillería Villa de las Flores</strong></td><td>525558791101</td><td>Blvd. Coacalco 240, Villa de las Flores</td><td>Coacalco</td><td>Celorio BC</td><td><span class="badge b-wait">PENDIENTE_ENVIO</span></td></tr>
+            <tr><td>PROS-010</td><td><strong>Tortillería Santa María</strong></td><td>525558795505</td><td>Calle Melchor Ocampo 12, San Lorenzo Tetlixtac</td><td>Coacalco</td><td>Celorio BC</td><td><span class="badge b-ok">PEDIDO_CERRADO</span></td></tr>
+            <tr><td>PROS-011</td><td><strong>Tortillería San Bartolo Centro</strong></td><td>525553581201</td><td>Av. 16 de Septiembre 78, San Bartolo</td><td>Naucalpan</td><td>Celorio BC</td><td><span class="badge b-wait">PENDIENTE_ENVIO</span></td></tr>
+            <tr><td>PROS-017</td><td><strong>Tortillería Santa Cecilia</strong></td><td>525553902020</td><td>Av. Santa Cecilia 45, Santa Cecilia Acatitlán</td><td>Tlalnepantla</td><td>Verduzco</td><td><span class="badge b-ok">PEDIDO_CERRADO</span></td></tr>
+            <tr><td>PROS-021</td><td><strong>Tortillería Cumbria Izcalli</strong></td><td>525558731111</td><td>Av. Primero de Mayo 150, Col. Cumbria</td><td>Cuautitlán Izcalli</td><td>Celorio BC</td><td><span class="badge b-wait">PENDIENTE_ENVIO</span></td></tr>
+            <tr><td>PROS-023</td><td><strong>Tortillería Las Alamedas</strong></td><td>525558223333</td><td>Blvd. Adolfo López Mateos 95, Las Alamedas</td><td>Atizapán</td><td>Verduzco</td><td><span class="badge b-wait">PENDIENTE_ENVIO</span></td></tr>
+            <tr><td>PROS-024</td><td><strong>Tortillería Virreinal</strong></td><td>525558764444</td><td>Av. Insurgentes 18, Barrio San Martín</td><td>Tepotzotlán</td><td>Celorio BC</td><td><span class="badge b-wait">PENDIENTE_ENVIO</span></td></tr>
+            <tr><td>PROS-025</td><td><strong>Tortillería Lindavista Norte</strong></td><td>525557545555</td><td>Av. Montevideo 412, Col. Lindavista, GAM</td><td>CDMX</td><td>Reto</td><td><span class="badge b-ok">PEDIDO_CERRADO (15d Post-Venta)</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB M3: DESPACHO Y COMISIONES -->
+    <div id="t-despacho" class="pane">
+      <div class="grid-4">
+        <div class="stat"><div class="stat-label">Pedidos Registrados</div><div class="stat-value">5 Folios</div></div>
+        <div class="stat"><div class="stat-label">Entregados y Validados IA</div><div class="stat-value" style="color: var(--accent);">3 Pagados</div></div>
+        <div class="stat"><div class="stat-label">En Ruta (24-48h hábiles)</div><div class="stat-value" style="color: #60a5fa;">2 En Camino</div></div>
+        <div class="stat"><div class="stat-label">Comisiones Agencia Liberadas</div><div class="stat-value" style="color: var(--primary);">$600.00 MXN</div></div>
+      </div>
+
+      <div class="card">
+        <h2>🚚 Tabla 2: Control de Pedidos, Rutas y Candado de Comisiones ($200 MXN / Paquete)</h2>
+        <table>
+          <thead>
+            <tr><th>Folio</th><th>Tortillería / Cliente</th><th>Municipio</th><th>Horario</th><th>Tipo Pedido</th><th>Método Pago</th><th>Estatus Ruta</th><th>Evidencia GPT-4o Vision</th><th>Comisión Agencia</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>#TLX-001</strong></td><td>Tortillería Lindavista Norte<br><small>Don Roberto Estrada</small></td><td>CDMX</td><td>09:00 - 15:00</td><td>Paquete $1,713</td><td>Transferencia</td>
+              <td><span class="badge b-ok">Entregado y Pagado</span></td><td>SPEI-8839201 Validado</td><td><strong>$200.00 MXN</strong></td>
+            </tr>
+            <tr>
+              <td><strong>#TLX-002</strong></td><td>Tortillería Santa Cecilia<br><small>Sr. Arturo Domínguez</small></td><td>Tlalnepantla</td><td>10:00 - 16:00</td><td>Paquete $1,713</td><td>Terminal</td>
+              <td><span class="badge b-ok">Entregado y Pagado</span></td><td>Voucher MP-44109 Validado</td><td><strong>$200.00 MXN</strong></td>
+            </tr>
+            <tr>
+              <td><strong>#TLX-003</strong></td><td>Tortillería Nixtamal Real<br><small>Don Gerardo Vázquez</small></td><td>Tultitlán</td><td>08:30 - 14:30</td><td>Paquete $1,713</td><td>Transferencia</td>
+              <td><span class="badge b-route">En Ruta</span></td><td>Esperando foto repartidor</td><td style="color: var(--muted);">$0.00 (En espera)</td>
+            </tr>
+            <tr>
+              <td><strong>#TLX-004</strong></td><td>Tortillería Santa María<br><small>Sra. Leticia Hernández</small></td><td>Coacalco</td><td>11:00 - 17:00</td><td>Paquete $1,713</td><td>Terminal</td>
+              <td><span class="badge b-route">En Ruta</span></td><td>Esperando foto repartidor</td><td style="color: var(--muted);">$0.00 (En espera)</td>
+            </tr>
+            <tr>
+              <td><strong>#TLX-005</strong></td><td>Taller Mecánico del Norte<br><small>Maestro Jorge Pineda</small></td><td>Cuautitlán Izcalli</td><td>09:00 - 18:00</td><td>Mayoreo 10+ ($4,400)</td><td>Transferencia</td>
+              <td><span class="badge b-ok">Entregado y Pagado</span></td><td>SPEI-9920144 Validado</td><td><strong>$200.00 MXN</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB CATALOGO -->
+    <div id="t-catalogo" class="pane">
+      <div class="card">
+        <h2>📦 Tabla 3: Catálogo y Reglas Oficiales de Mallas Tlaxcalli</h2>
+        <table>
+          <thead>
+            <tr><th>Modalidad</th><th>Producto</th><th>Especificaciones Exactas</th><th>Precio Tlaxcalli</th><th>Precio Refaccionaria</th><th>Regla Estricta</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Menudeo Tortillería</strong></td>
+              <td>Paquete Completo de Mantenimiento</td>
+              <td>1 Testalera (23cm x 1.40m) + 1 Transportadora (10" x 9m Cal 14) + 1 Balero 7210B alemán jaula fierro</td>
+              <td><strong style="color: var(--accent);">$1,713.00 MXN</strong><br><small>(Envío GRATIS)</small></td>
+              <td>$2,737.00 MXN</td>
+              <td>NO se venden piezas sueltas. NO especificar si testalera es galv o fierro. Cubre 85% máquinas BC.</td>
+            </tr>
+            <tr>
+              <td><strong>Mayoreo Mecánicos</strong></td>
+              <td>Malla Testalera de Fierro</td>
+              <td>23 cm ancho x 1.40 m largo</td>
+              <td><strong>$225.00 MXN c/u</strong></td>
+              <td>$795.00 MXN</td>
+              <td>Mínimo 10 piezas (mezclables con transportadoras).</td>
+            </tr>
+            <tr>
+              <td><strong>Mayoreo Mecánicos</strong></td>
+              <td>Malla Testalera Galvanizada</td>
+              <td>23 cm ancho x 1.40 m largo</td>
+              <td><strong>$230.00 MXN c/u</strong></td>
+              <td>$795.00 MXN</td>
+              <td>Mínimo 10 piezas (mezclables con transportadoras).</td>
+            </tr>
+            <tr>
+              <td><strong>Mayoreo Mecánicos</strong></td>
+              <td>Malla Transportadora Calibre 14</td>
+              <td>10 pulgadas ancho x 9 metros largo</td>
+              <td><strong>$650.00 MXN c/u</strong></td>
+              <td>$1,639.00 MXN</td>
+              <td>Mínimo 10 piezas (mezclables con testaleras).</td>
+            </tr>
+            <tr>
+              <td><strong>Post-Venta (15 días)</strong></td>
+              <td>Lista Especial de Otros Baleros</td>
+              <td>Baleros secundarios para tortilladora</td>
+              <td><strong>Desde $26.00 MXN</strong></td>
+              <td>$95.00+ MXN</td>
+              <td>Solo se desbloquea tras comprar el primer Paquete de $1,713.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function openTab(id, btn) {
+      document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      btn.classList.add('active');
+    }
+
+    function quickMsg(txt) {
+      document.getElementById('chatInput').value = txt;
+      sendMsg();
+    }
+
+    function sendMsg() {
+      const input = document.getElementById('chatInput');
+      const val = input.value.trim();
+      if (!val) return;
+      const body = document.getElementById('chatBody');
+      const status = document.getElementById('botStatus');
+
+      const uDiv = document.createElement('div');
+      uDiv.className = 'msg user';
+      uDiv.textContent = val;
+      body.appendChild(uDiv);
+      input.value = '';
+      body.scrollTop = body.scrollHeight;
+
+      status.textContent = '● Martín está escribiendo / grabando nota de voz (Wait 3s)...';
+
+      setTimeout(() => {
+        status.textContent = '● En línea (Evolution API v2 + Whisper + TTS)';
+        const t = val.toLowerCase();
+        let reply = '';
+        let addAudio = false;
+
+        if (t.includes('suelta') || t.includes('pura malla') || t.includes('solo la')) {
+          reply = 'Jefe, piezas sueltas a menudeo no las manejamos porque no nos costea mandarle al repartidor hasta su puerta con envío gratis.<br><br>Pero mire: si compra las 3 piezas sueltas en la refaccionaria gasta entre <strong>$2,700 y $2,737 pesos</strong> ($1,639 transportadora + $795 testalera + $303 balero). Con nosotros se lleva el <strong>Paquete Completo en $1,713 pesos con envío GRATIS</strong> (se ahorra casi $1,000 pesos) y no tiene que cerrar su tortillería para ir a buscarlas.';
+          addAudio = true;
+        } else if (t.includes('anda bien') || t.includes('no ocupo')) {
+          reply = '¡Qué bueno que ande al cien la máquina, Jefe! Nada más acuérdese que <strong>los fierros no avisan</strong>.<br><br>Cuando se revienta la malla o truena el balero 7210B a las 12 del día en plena venta, se para la producción, pierde la clientela del día y por la urgencia termina pagando los $2,700 en la refaccionaria.<br><br>Mejor téngalo guardado de repuesto a precio de fábrica ($1,713). No le pedimos ni un peso de anticipo, paga hasta que se lo entregamos en sus manos.';
+          addAudio = true;
+        } else if (t.includes('mecánico') || t.includes('mecanico') || t.includes('mayoreo')) {
+          reply = '¡Claro que sí, Maestro! Para mecánicos manejamos precio especial de mayoreo a partir de <strong>10 unidades</strong> (y sí puede mezclar entre testaleras y transportadoras para juntar sus 10 piezas):<br><br>• <strong>Malla Testalera de Fierro (23cm x 1.40m):</strong> $225 MXN c/u<br>• <strong>Malla Testalera Galvanizada (23cm x 1.40m):</strong> $230 MXN c/u<br>• <strong>Malla Transportadora (10" x 9m Calibre 14):</strong> $650 MXN c/u<br><br>¿Cuántas de cada una le armamos para su lote, Maestro?';
+        } else if (t.includes('efectivo') || t.includes('billete')) {
+          reply = 'Jefe, por pura seguridad de los muchachos de ruta, <strong>nuestros repartidores tienen prohibido recibir efectivo</strong>.<br><br>El pago es 100% contra entrega (al recibir el material en sus manos), pero únicamente por:<br>1️⃣ <strong>Transferencia bancaria al momento</strong>, o<br>2️⃣ <strong>Tarjeta de débito o crédito</strong> en la terminal física de Mercado Pago que lleva el repartidor.<br><br>¿Con cuál de las dos se le facilita más al recibir?';
+        } else if (t.includes('tepito') || t.includes('constitucionalista')) {
+          reply = 'Jefe, sí le surtimos con todo gusto. Nada más por protocolo del seguro de las camionetas en esa colonia, acordamos la entrega sobre la <strong>avenida principal o estación de Metro más cercana</strong> que le quede a 5 minutos. Ahí lo ve nuestro repartidor, revisa su paquete y paga al momento. ¿Le parece bien?';
+        } else if (t.includes('gerardo') || t.includes('tultitlán') || t.includes('transferencia')) {
+          reply = '¡Listo, Don Gerardo! Queda agendado su pedido con los 4 datos completos:<br>━━━━━━━━━━━━━━━━━━━━<br>🆔 <strong>Folio:</strong> #TLX-006<br>🏪 <strong>Tortillería:</strong> Tortillería Nixtamal Real<br>📍 <strong>Dirección:</strong> Av. Canal del Castera 310, Tultitlán<br>⏰ <strong>Horario:</strong> 09:00 a 14:00 hrs<br>📦 <strong>Pedido:</strong> Paquete Completo Mallas Tlaxcalli ($1,713 MXN - Envío Gratis)<br>💳 <strong>Pago al recibir:</strong> Transferencia al momento<br>━━━━━━━━━━━━━━━━━━━━<br>En 24 a 48 horas hábiles llega nuestro repartidor. ¡Ya mandé su orden al grupo de ruta!';
+        } else {
+          reply = 'Con gusto, Jefe. Nuestro <strong>Paquete Completo Mallas Tlaxcalli ($1,713 MXN con envío gratis)</strong> le queda al 85% de las máquinas sencillas tipo BC (Celorio, Verduzco, Reto, Tapsa, Lenin, Apolo, Tortimex).<br><br>Para mandarle su paquete sin anticipo (entrega en 24-48h hábiles en CDMX y zona norte del Edomex), solo regáleme estos <strong>4 datos</strong>:<br>1. Su nombre y nombre de la tortillería<br>2. Dirección completa o ubicación GPS<br>3. Horario en que recibe<br>4. Si paga al recibir con Transferencia o Tarjeta en terminal';
+        }
+
+        const bDiv = document.createElement('div');
+        bDiv.className = 'msg bot';
+        bDiv.innerHTML = reply;
+        if (addAudio) {
+          bDiv.innerHTML += `<div class="audio-pill">🎙️ <strong>Nota de Voz PTT Enviada (0:14)</strong> — Voz natural mexicana (OpenAI TTS / Evolution API)</div>`;
+        }
+        body.appendChild(bDiv);
+        body.scrollTop = body.scrollHeight;
+      }, 900);
+    }
+  </script>
+</body>
+</html>

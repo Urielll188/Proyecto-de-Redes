@@ -1,7 +1,8 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
+**/node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -34,6 +35,8 @@ yarn-error.log*
 .env
 .env*
 .env*.local
+!.env.example
+!**/.env.example
 
 # vercel
 .vercel
@@ -51,6 +54,48 @@ next-env.d.ts
 
 # backups locales y datos sensibles (no subir)
 /.backups/
-*.db
+
+# Python virtualenvs & bytecode
+venv/
+.venv/
+**/venv/
+**/.venv/
 __pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Private keys & secrets
+*.key
+*.p12
+*.pfx
+*.crt
+*.der
+*.keystore
+id_rsa*
+id_ed25519*
+*secret*
+*credentials*.json
+*service-account*.json
+
+# Local databases
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+
+# WhatsApp sessions, auth & QR artifacts
+vps-services/**/*auth*
+vps-services/**/*session*
+vps-services/**/*.qr*
+*auth_info*
+*baileys*auth*
+*baileys*store*
+*sesion_whatsapp*
+*session*
+*.qr
+*.qr.*
 

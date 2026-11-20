@@ -1,0 +1,111 @@
+{
+  "id": "g0CVGqnvlSEFq16e",
+  "name": "Mallas Tlaxcalli - Módulo 1: El Cazador (INEGI/Maps + Outbound Anti-Ban)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🎯 MÓDULO 1: EL CAZADOR (MALLAS TLAXCALLI)\n1. Busca diariamente 10 tortillerías reales vía **INEGI DENUE / Google Maps** dentro de la cobertura autorizada (**CDMX + 9 municipios Edomex**: Ecatepec, Tultitlán, Cuautitlán, Cuautitlán Izcalli, Tepotzotlán, Naucalpan, Tlalnepantla, Atizapán y Coacalco).\n2. Actualiza en vivo el Excel (`EXCEL_VIVO_MALLAS_TLAXCALLI.csv`) en el backend `127.0.0.1:8090`.\n3. Dispara prospección por WhatsApp (Baileys real) con meta de **50 diarios espaciados cada 9 minutos** para proteger el chip.",
+        "height": 220,
+        "width": 640
+      },
+      "id": "tlx-m1-sticky",
+      "name": "Documentación Módulo 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [140, 60]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-6"
+            }
+          ]
+        }
+      },
+      "id": "tlx-m1-cron",
+      "name": "Horario Laboral L-S 9:00 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [160, 360]
+    },
+    {
+      "parameters": {
+        "jsCode": "const municipios = ['Ecatepec','Tlalnepantla','Naucalpan','Tultitlán','Coacalco','Cuautitlán Izcalli','Atizapán','Cuautitlán','Tepotzotlán','CDMX'];\nconst hoy = new Date().getDate();\nconst municipio = municipios[hoy % municipios.length];\nreturn [{ json: { municipio, fuente: 'INEGI' } }];"
+      },
+      "id": "tlx-m1-rotar",
+      "name": "Rotar Municipio Autorizado (9 Edomex + CDMX)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 360]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8090/api/cazar_lote_10",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ municipio: $json.municipio, fuente: $json.fuente }) }}",
+        "options": {}
+      },
+      "id": "tlx-m1-cazar",
+      "name": "Cazar 10 Tortillerías Reales (INEGI + Excel)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 360]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:8090/excel_mallas_tlaxcalli.csv",
+        "options": {}
+      },
+      "id": "tlx-m1-excel",
+      "name": "Actualizar Hoja de Excel en Vivo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [980, 360]
+    }
+  ],
+  "connections": {
+    "Horario Laboral L-S 9:00 AM": {
+      "main": [
+        [
+          {
+            "node": "Rotar Municipio Autorizado (9 Edomex + CDMX)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rotar Municipio Autorizado (9 Edomex + CDMX)": {
+      "main": [
+        [
+          {
+            "node": "Cazar 10 Tortillerías Reales (INEGI + Excel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cazar 10 Tortillerías Reales (INEGI + Excel)": {
+      "main": [
+        [
+          {
+            "node": "Actualizar Hoja de Excel en Vivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Mexico_City"
+  }
+}

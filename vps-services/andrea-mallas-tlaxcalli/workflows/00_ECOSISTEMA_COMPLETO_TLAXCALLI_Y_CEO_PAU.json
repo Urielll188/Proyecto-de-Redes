@@ -1,0 +1,367 @@
+{
+  "id": "VaD3TI4vIxC3WYxo",
+  "name": "🌟 ECOSISTEMA COMPLETO MALLAS TLAXCALLI (5 MÓDULOS + AGENTE CDO ING. PAOLA)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-tlaxcalli-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-wa-webhook",
+      "name": "📲 1. Entrada WhatsApp Business (Clientes e Ing. Paola)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "tlaxcalli-wa-master-2026",
+      "position": [
+        160,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body?.remitente_rol || $json.remitente_rol || 'CLIENTE' }}",
+              "value2": "PAOLA_CEO"
+            }
+          ]
+        }
+      },
+      "id": "node-router-rol",
+      "name": "🔀 2. ¿Escribe la Ing. Paola (Dueña) o un Cliente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        420,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8090/api/agente_ceo_pau",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ mensaje: $json.body?.mensaje || $json.mensaje || 'Dame el informe real del día', incluir_voz: $json.body?.incluir_voz ?? true }) }}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "id": "node-agente-ceo-pau",
+      "name": "👑 3A. Agente CDO / Ejecutivo de Ing. Paola (Informes + Excel + Cazar)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "node-respond-cdo",
+      "name": "📤 Responder a WhatsApp (CDO Paola)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1020,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8090/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ session_id: $json.body?.session_id || ('wa_' + ($json.body?.telefono || 'demo_n8n')), mensaje: $json.body?.mensaje || $json.mensaje || 'Hola, ¿qué precio tiene el paquete?', incluir_voz: $json.body?.incluir_voz ?? false }) }}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "id": "node-modulo-2-ventas",
+      "name": "🤖 3B. Módulo 2: Ventas Mallas Tlaxcalli (Voz Mujer + Cero Alucinación + Fotos)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "node-respond-cliente",
+      "name": "📤 Responder a WhatsApp (Cliente)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1020,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ Boolean($json.pedido_confirmado) }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-if-pedido-confirmado",
+      "name": "🔍 ¿Confirmó los 4 Datos de Compra?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1020,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8090/api/registrar_pedido",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.datos_pedido || { cliente: 'Cliente WhatsApp', telefono: $('📲 1. Entrada WhatsApp Business (Clientes e Ing. Paola)').item.json.body?.telefono || '', direccion: 'Confirmada en chat', municipio: 'Ecatepec', horario: 'Por confirmar', metodo_pago: 'TRANSFERENCIA_CONTRA_ENTREGA' }) }}",
+        "options": {}
+      },
+      "id": "node-modulo-3-logistica",
+      "name": "💰 4. Módulo 3: Registrar Pedido Real, Ruta GPS y Comisión ($200 MXN)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-6"
+            }
+          ]
+        }
+      },
+      "id": "node-cron-cazador",
+      "name": "⏰ Disparador Diario Cazador (9:00 AM L-S)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        160,
+        780
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8090/api/cazar_lote_10",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"municipio\": \"Ecatepec\",\n  \"fuente\": \"INEGI\"\n}",
+        "options": {}
+      },
+      "id": "node-modulo-1-cazador",
+      "name": "🎯 Módulo 1: Extraer 10 Tortillerías Diarias (INEGI + Google Maps + Excel)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        780
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:8090/api/datos_seguros",
+        "options": {}
+      },
+      "id": "node-modulo-4-seguimiento",
+      "name": "🔄 Módulo 4: Seguimiento 24h/72h + Desbloqueo Baleros $26 MXN (Día 15)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        780
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8090/api/generar_marketing",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"enfoque\": \"Ahorro de $1,000 MXN vs Refaccionaria ($1,713 Paquete Completo)\",\n  \"zona\": \"Ecatepec, Tlalnepantla, Naucalpan y CDMX\"\n}",
+        "options": {}
+      },
+      "id": "node-modulo-5-marketing",
+      "name": "🎨 Módulo 5: Director de Marketing Realista (Fotos Pau + FB/IG/TikTok/WA)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        780
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:3010/api/whatsapp/v1/marketing",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer <MARKETING_BRIDGE_SECRET>"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"accion\": \"generar_imagen_ia\",\n  \"texto\": \"Paquete Completo Mallas Tlaxcalli $1,713 MXN\",\n  \"tema\": \"industrial\"\n}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "id": "node-modulo-5-blitzr-vps",
+      "name": "🚀 Módulo 5B: Blitzr Studio VPS (Póster 1080x1350 + Video TikTok + Meta)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1380,
+        780
+      ]
+    }
+  ],
+  "connections": {
+    "📲 1. Entrada WhatsApp Business (Clientes e Ing. Paola)": {
+      "main": [
+        [
+          {
+            "node": "🔀 2. ¿Escribe la Ing. Paola (Dueña) o un Cliente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 2. ¿Escribe la Ing. Paola (Dueña) o un Cliente?": {
+      "main": [
+        [
+          {
+            "node": "👑 3A. Agente CDO / Ejecutivo de Ing. Paola (Informes + Excel + Cazar)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🤖 3B. Módulo 2: Ventas Mallas Tlaxcalli (Voz Mujer + Cero Alucinación + Fotos)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "👑 3A. Agente CDO / Ejecutivo de Ing. Paola (Informes + Excel + Cazar)": {
+      "main": [
+        [
+          {
+            "node": "📤 Responder a WhatsApp (CDO Paola)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 3B. Módulo 2: Ventas Mallas Tlaxcalli (Voz Mujer + Cero Alucinación + Fotos)": {
+      "main": [
+        [
+          {
+            "node": "📤 Responder a WhatsApp (Cliente)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🔍 ¿Confirmó los 4 Datos de Compra?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 ¿Confirmó los 4 Datos de Compra?": {
+      "main": [
+        [
+          {
+            "node": "💰 4. Módulo 3: Registrar Pedido Real, Ruta GPS y Comisión ($200 MXN)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "⏰ Disparador Diario Cazador (9:00 AM L-S)": {
+      "main": [
+        [
+          {
+            "node": "🎯 Módulo 1: Extraer 10 Tortillerías Diarias (INEGI + Google Maps + Excel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎯 Módulo 1: Extraer 10 Tortillerías Diarias (INEGI + Google Maps + Excel)": {
+      "main": [
+        [
+          {
+            "node": "🔄 Módulo 4: Seguimiento 24h/72h + Desbloqueo Baleros $26 MXN (Día 15)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Módulo 4: Seguimiento 24h/72h + Desbloqueo Baleros $26 MXN (Día 15)": {
+      "main": [
+        [
+          {
+            "node": "🎨 Módulo 5: Director de Marketing Realista (Fotos Pau + FB/IG/TikTok/WA)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎨 Módulo 5: Director de Marketing Realista (Fotos Pau + FB/IG/TikTok/WA)": {
+      "main": [
+        [
+          {
+            "node": "🚀 Módulo 5B: Blitzr Studio VPS (Póster 1080x1350 + Video TikTok + Meta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Mexico_City"
+  }
+}

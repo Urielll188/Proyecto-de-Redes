@@ -1,0 +1,137 @@
+{
+  "id": "pl2xUTYc1gfPFuAD",
+  "name": "Mallas Tlaxcalli - Módulo 5: El Director de Marketing + Blitzr Studio VPS (IG/FB/TikTok/WA)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 📣 MÓDULO 5: DIRECTOR DE MARKETING + BLITZR STUDIO VPS (PUERTO 3010)\nConectado directamente al motor local de **Blitzr Marketing Studio en la VPS (http://127.0.0.1:3010/api/whatsapp/v1/marketing)**.\n1. Diseña pósters en las 3 plantillas de agencia (industrial, promo, catalogo) con doble tipografía (Bebas Neue + Montserrat).\n2. Compila el video comercial .mp4 (1080x1920) con locución IA femenina en español.\n3. Publica en **TikTok, Instagram Feed, Facebook Page y Estado de WhatsApp**.",
+        "height": 190,
+        "width": 680
+      },
+      "id": "tlx-m5-sticky",
+      "name": "Documentación Módulo 5 + Blitzr VPS",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        120,
+        40
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "tlx-m5-trigger",
+      "name": "Generar Campaña Semanal",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        140,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "marketing-blitzr-tlaxcalli",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "tlx-m5-webhook",
+      "name": "Webhook Campaña Marketing",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "tlaxcalli-mkt-blitzr-2026",
+      "position": [
+        140,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:3010/api/whatsapp/v1/marketing",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer <MARKETING_BRIDGE_SECRET>"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ accion: $json.body?.accion || 'generar_imagen_ia', texto: $json.body?.texto || 'Paquete Completo Mallas Tlaxcalli $1,713 MXN con Envío Gratis', tema: $json.body?.tema || 'industrial' }) }}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "id": "tlx-m5-blitzr-vps",
+      "name": "🎨 1. Blitzr Studio VPS (3010): Generar Póster 1080x1350 y Copys",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8090/api/generar_marketing",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ enfoque: 'Ahorro de $1,000 MXN vs Refaccionaria ($1,713 Paquete Completo con envío gratis)', zona: 'CDMX y 9 Municipios Edomex', publicar_redes: Boolean($json.body?.publicar_redes ?? false) }) }}",
+        "options": {
+          "timeout": 75000
+        }
+      },
+      "id": "tlx-m5-generator",
+      "name": "🎬 2. Video Comercial TikTok MP4 + Despacho Multicanal (IG/FB/TikTok/WA)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "Generar Campaña Semanal": {
+      "main": [
+        [
+          {
+            "node": "🎨 1. Blitzr Studio VPS (3010): Generar Póster 1080x1350 y Copys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Campaña Marketing": {
+      "main": [
+        [
+          {
+            "node": "🎨 1. Blitzr Studio VPS (3010): Generar Póster 1080x1350 y Copys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎨 1. Blitzr Studio VPS (3010): Generar Póster 1080x1350 y Copys": {
+      "main": [
+        [
+          {
+            "node": "🎬 2. Video Comercial TikTok MP4 + Despacho Multicanal (IG/FB/TikTok/WA)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Mexico_City"
+  }
+}

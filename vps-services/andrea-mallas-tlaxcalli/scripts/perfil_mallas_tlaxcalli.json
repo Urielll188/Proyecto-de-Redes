@@ -1,0 +1,89 @@
+{
+  "id_cliente": "MALLAS_TLAXCALLI",
+  "nombre_empresa": "Mallas Tlaxcalli (Ing. Paola Almanza / Ing. Rocha)",
+  "comision_agencia_mxn": 200,
+  "api_keys": {
+    "inegi_denue_token": "",
+    "apify_api_token": "",
+    "gemini_or_openai_key": ""
+  },
+  "busqueda": {
+    "giro_principal": "Tortillerías y Mecánicos de Maquinaria Tortilladora",
+    "palabras_clave_maps": [
+      "Tortilleria",
+      "Molino y Tortilleria",
+      "Reparacion de maquinas tortilladoras",
+      "Refacciones para tortilladoras"
+    ],
+    "codigo_scian_inegi": "311830",
+    "pais": "mx"
+  },
+  "cobertura_logistica": {
+    "estados_permitidos": [
+      "Ciudad de México",
+      "CDMX",
+      "Estado de México",
+      "México"
+    ],
+    "municipios_edomex_autorizados": [
+      "Ecatepec",
+      "Ecatepec de Morelos",
+      "Tultitlán",
+      "Cuautitlán",
+      "Cuautitlán Izcalli",
+      "Tepotzotlán",
+      "Naucalpan",
+      "Tlalnepantla",
+      "Atizapán",
+      "Coacalco"
+    ],
+    "alcaldias_cdmx_autorizadas": [
+      "Gustavo A. Madero",
+      "Azcapotzalco",
+      "Miguel Hidalgo",
+      "Cuauhtémoc",
+      "Venustiano Carranza",
+      "Iztacalco",
+      "Iztapalapa",
+      "Benito Juárez",
+      "Coyoacán",
+      "Álvaro Obregón",
+      "Tlalpan",
+      "Xochimilco",
+      "Tláhuac",
+      "Magdalena Contreras",
+      "Cuajimalpa",
+      "Milpa Alta"
+    ],
+    "colonias_zonas_rojas": [
+      "Tepito",
+      "Morelos",
+      "Ejército Constitucionalista",
+      "Desarrollo Urbano Quetzalcóatl",
+      "Renovación",
+      "Vicente Guerrero",
+      "San Felipe de Jesús",
+      "Cuautepec",
+      "La Cañada",
+      "San Rafael Chamapa",
+      "Ciudad Cuauhtémoc",
+      "Jardines de Morelos"
+    ]
+  },
+  "reglas_clasificacion_oferta": {
+    "palabras_clave_mayoreo": [
+      "mecanico",
+      "mecánico",
+      "taller",
+      "reparacion",
+      "reparación",
+      "maquinaria",
+      "refaccionaria",
+      "refacciones",
+      "celorio",
+      "verduzco"
+    ],
+    "oferta_menudeo": "Paquete Completo Mantenimiento $1,713 MXN (Testalera 23x140 + Transportadora 10x9m Cal 14 + Balero 7210B)",
+    "oferta_mayoreo": "Mayoreo Mecánicos 10+ piezas (Testalera Fierro $225 / Galv $230 / Transportadora $650)"
+  }
+}

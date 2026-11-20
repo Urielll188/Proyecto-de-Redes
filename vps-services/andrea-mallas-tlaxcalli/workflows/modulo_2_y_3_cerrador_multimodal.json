@@ -1,0 +1,119 @@
+{
+  "id": "g6hb9LaDUlyz5Oyx",
+  "name": "Mallas Tlaxcalli - Módulos 2 y 3: Cerradora IA (Ventas Tlaxcalli) + Logística",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🤖 MÓDULOS 2 Y 3: VENTAS MALLAS TLAXCALLI + LOGÍSTICA\n- Conectado 100% al backend real en la VPS (`http://127.0.0.1:8090/api/chat` con Pool Gemini + Voz Mujer Mexicana Aoede + Cero Alucinación + Fotos Pau).\n- Solo registra pedido en Módulo 3 (`/api/registrar_pedido`) cuando el cliente confirma los **4 datos obligatorios** (cero efectivo, solo SPEI o Terminal Mercado Pago).",
+        "height": 180,
+        "width": 660
+      },
+      "id": "tlx-m23-sticky",
+      "name": "Documentación Módulos 2 y 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [140, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-tlaxcalli-m23",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "tlx-m23-webhook",
+      "name": "Webhook Módulos 2 y 3",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "tlaxcalli-m23-inbound",
+      "position": [160, 340]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8090/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ session_id: $json.body?.session_id || 'wa_m23', mensaje: $json.body?.mensaje || 'Hola, info del paquete de $1,713', incluir_voz: true }) }}",
+        "options": {}
+      },
+      "id": "tlx-m23-agent",
+      "name": "Ventas Mallas Tlaxcalli (Gemini Pool + Voz Mujer)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 340]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ Boolean($json.pedido_confirmado) }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "tlx-m23-check",
+      "name": "¿Confirmó los 4 Datos de Cierre?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [720, 340]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8090/api/registrar_pedido",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.datos_pedido || {}) }}",
+        "options": {}
+      },
+      "id": "tlx-m23-register",
+      "name": "Registrar Pedido Real + $200 Comisión",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 280]
+    }
+  ],
+  "connections": {
+    "Webhook Módulos 2 y 3": {
+      "main": [
+        [
+          {
+            "node": "Ventas Mallas Tlaxcalli (Gemini Pool + Voz Mujer)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ventas Mallas Tlaxcalli (Gemini Pool + Voz Mujer)": {
+      "main": [
+        [
+          {
+            "node": "¿Confirmó los 4 Datos de Cierre?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Confirmó los 4 Datos de Cierre?": {
+      "main": [
+        [
+          {
+            "node": "Registrar Pedido Real + $200 Comisión",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Mexico_City"
+  }
+}
