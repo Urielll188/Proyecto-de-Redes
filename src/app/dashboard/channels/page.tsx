@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
+import { WhatsAppMultiSessionCard } from '@/components/dashboard/WhatsAppMultiSessionCard'
 
 // Forzar lectura en tiempo real desde la BD, cero caché
 export const dynamic = 'force-dynamic'
@@ -82,12 +83,15 @@ export default async function ChannelsPage({ searchParams }: PageProps) {
       <div className="flex items-center justify-between border-b border-zinc-800/80 pb-4">
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Canales Conectados</h1>
-          <p className="text-xs text-zinc-400">Vincula tus redes sociales para publicar tus campañas con un solo clic.</p>
+          <p className="text-xs text-zinc-400">Vincula tu línea de WhatsApp comercial y tus redes sociales en un solo lugar.</p>
         </div>
         <Link className="text-xs text-blue-400 hover:text-blue-300 font-medium transition" href="/dashboard">
           ← Volver al Dashboard
         </Link>
       </div>
+
+      {/* WhatsApp Multi-Session Self-Service Connection Card */}
+      <WhatsAppMultiSessionCard />
 
       <div className="grid md:grid-cols-2 gap-6">
         {/* Instagram Card */}

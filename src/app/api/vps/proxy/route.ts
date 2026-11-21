@@ -3,11 +3,15 @@ import { createClient } from '@/utils/supabase/server'
 
 export const dynamic = 'force-dynamic'
 
+const OWNER_EMAIL_MALLAS = 'ferrergbryanu10@gmail.com'
+
 const ALLOWED_GET_ENDPOINTS = [
   '/api/datos_seguros',
   '/api/nichos',
   '/api/mi-nicho',
   '/api/estatus_whatsapp',
+  '/api/estatus_wa',
+  '/estatus_wa',
   '/api/imagen_pau',
   '/excel_mallas_tlaxcalli.csv',
 ]
@@ -25,9 +29,23 @@ const ALLOWED_POST_ENDPOINTS = [
   '/api/confirmar_entrega_comision',
   '/api/generar_marketing',
   '/api/control_motor',
+  '/control_motor',
+  '/api/vincular_wa',
+  '/vincular_wa',
+  '/api/desvincular_wa',
+  '/desvincular_wa',
+  '/api/pedir_codigo_wa',
   '/api/agente_ceo_pau',
   '/api/subir_foto_pau',
 ]
+
+function normalizeVpsEndpoint(ep: string): string {
+  if (ep === '/estatus_wa') return '/api/estatus_wa'
+  if (ep === '/vincular_wa') return '/api/vincular_wa'
+  if (ep === '/desvincular_wa') return '/api/desvincular_wa'
+  if (ep === '/control_motor') return '/api/control_motor'
+  return ep
+}
 
 function getVpsBaseUrl() {
   const url = process.env.VPS_API_URL || ''
@@ -64,8 +82,15 @@ export async function GET(req: NextRequest) {
     if (userEmail) {
       queryParams.set('email', userEmail)
     }
+    if (userEmail !== OWNER_EMAIL_MALLAS) {
+      const requestedCid = (queryParams.get('cliente_id') || '').toLowerCase().trim()
+      if (requestedCid === 'mallas_tlaxcalli') {
+        queryParams.delete('cliente_id')
+      }
+    }
     const qs = queryParams.toString()
-    const targetUrl = `${vpsBase}${cleanEndpoint}${qs ? `?${qs}` : ''}`
+    const targetEndpoint = normalizeVpsEndpoint(cleanEndpoint)
+    const targetUrl = `${vpsBase}${targetEndpoint}${qs ? `?${qs}` : ''}`
 
     const headers: Record<string, string> = {}
     if (process.env.VPS_API_KEY) {
@@ -138,6 +163,12 @@ export async function POST(req: NextRequest) {
       payload.owner_email = userEmail
       payload.email = userEmail
     }
+    if (userEmail !== OWNER_EMAIL_MALLAS) {
+      const requestedCid = String(payload.cliente_id || '').toLowerCase().trim()
+      if (requestedCid === 'mallas_tlaxcalli') {
+        delete payload.cliente_id
+      }
+    }
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -147,7 +178,8 @@ export async function POST(req: NextRequest) {
       headers['Authorization'] = `Bearer ${process.env.VPS_API_KEY}`
     }
 
-    const res = await fetch(`${vpsBase}${endpoint}`, {
+    const targetEndpoint = normalizeVpsEndpoint(endpoint)
+    const res = await fetch(`${vpsBase}${targetEndpoint}`, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),

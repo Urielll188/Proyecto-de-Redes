@@ -123,9 +123,60 @@ if (!ffmpegPath) {
 
 const API_PYTHON = 'http://127.0.0.1:8090';
 const AUTH_DIR = path.join(__dirname, 'sesion_whatsapp_tlaxcalli');
+const SESIONES_MULTI_DIR = path.join(__dirname, 'sesiones_wa');
+try { fs.mkdirSync(SESIONES_MULTI_DIR, { recursive: true }); } catch (_) {}
 const ESTATUS_FILE = '/tmp/estatus_wa.json';
 const NUMERO_PAOLA_ENV = (process.env.NUMERO_PAOLA || '').replace(/\D/g, '');
 const loggerSilencioso = pino({ level: 'silent' });
+
+// Gestor Multi-Sesión aislado por cliente_id
+const sesiones = new Map();
+
+function sanitizarClienteId(rawCid) {
+  const clean = String(rawCid || 'mallas_tlaxcalli')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return clean || 'mallas_tlaxcalli';
+}
+
+function obtenerCarpetaSesion(clienteId) {
+  const cid = sanitizarClienteId(clienteId);
+  if (cid === 'mallas_tlaxcalli') return AUTH_DIR;
+  return path.join(SESIONES_MULTI_DIR, cid);
+}
+
+function obtenerOCrearEstadoSesion(clienteId) {
+  const cid = sanitizarClienteId(clienteId);
+  if (!sesiones.has(cid)) {
+    // Arranque escalonado aleatorio de 5 a 45s por tenant para evitar colisiones SQLite
+    const offsetInicialMs = (5 + Math.floor(Math.random() * 41)) * 1000;
+    sesiones.set(cid, {
+      cliente_id: cid,
+      authDir: obtenerCarpetaSesion(cid),
+      sock: null,
+      conectado: false,
+      vinculando: false,
+      numero: '',
+      miNumeroBase: '',
+      miLidBase: '',
+      qr: '',
+      qr_data_url: '',
+      pairingCode: '',
+      ultimoError: '',
+      erroresConsecutivos: 0,
+      motorPausadoLocal: cid === 'mallas_tlaxcalli' ? true : false,
+      pausaRespuestasGeneral: false,
+      enviandoFrioEnCurso: false,
+      ultimoEnvioFrioMs: Date.now() - (540000 - offsetInicialMs),
+      proximoIntervaloFrioMs: 540000,
+      forzarAhoraPendiente: false,
+      createdAt: Date.now(),
+    });
+  }
+  return sesiones.get(cid);
+}
 
 let sockActual = null;
 let miNumeroBase = '';
@@ -218,6 +269,16 @@ let estadoActual = {
 
 function guardarEstatusWA(parcial) {
   estadoActual = { ...estadoActual, ...parcial, fecha: new Date().toISOString() };
+  const sMallas = obtenerOCrearEstadoSesion('mallas_tlaxcalli');
+  sMallas.conectado = Boolean(estadoActual.conectado);
+  sMallas.qr = estadoActual.qr || '';
+  sMallas.qr_data_url = estadoActual.qr_data_url || '';
+  sMallas.pairingCode = estadoActual.codigo_8_digitos || '';
+  sMallas.numero = estadoActual.numero_vinculado || '';
+  sMallas.sock = sockActual;
+  sMallas.motorPausadoLocal = motorPausadoLocal;
+  sMallas.pausaRespuestasGeneral = pausaRespuestasGeneral;
+  sMallas.erroresConsecutivos = erroresConsecutivosEnvio;
   try {
     fs.writeFileSync(ESTATUS_FILE, JSON.stringify(estadoActual, null, 2), 'utf-8');
   } catch (_) {}
@@ -445,7 +506,10 @@ async function revisarYEnviarUno50Diarios() {
   try {
     // Revisa hasta 8 candidatos seguidos si encuentra líneas fijas sin WhatsApp
     for (let intento = 0; intento < 8; intento++) {
-      const cand = await postJsonPython('/api/obtener_candidato_envio_50', { forzar: esForzado && intento === 0 });
+      const cand = await postJsonPython('/api/obtener_candidato_envio_50', {
+        cliente_id: 'mallas_tlaxcalli',
+        forzar: esForzado && intento === 0
+      });
       if (!cand || !cand.ok || !cand.telefono) break;
 
       const waCheck = await resolverJidWhatsApp(cand.telefono);
@@ -1212,11 +1276,15 @@ async function iniciarPuenteWhatsApp() {
 
         const respuestaIA = await postJsonPython('/api/chat', {
           session_id: `wa_${jid}`,
+          cliente_id: 'mallas_tlaxcalli',
           mensaje: mensajeCliente,
           incluir_voz: pedirVoz
         });
         if (respuestaIA?.pedido_confirmado && respuestaIA?.datos_pedido) {
-          await postJsonPython('/api/registrar_pedido', respuestaIA.datos_pedido).catch(() => {});
+          await postJsonPython('/api/registrar_pedido', {
+            ...respuestaIA.datos_pedido,
+            cliente_id: 'mallas_tlaxcalli'
+          }).catch(() => {});
         }
 
         // Si pidió audio y se generó con Aoede, enviar nota de voz; de lo contrario, texto corto (Escalera del Sí)
@@ -1263,8 +1331,412 @@ async function iniciarPuenteWhatsApp() {
   });
 }
 
-// Microservidor local en puerto 8095 para código 8 dígitos, verificación en lote y disparo inmediato
+// ============================================================================
+// GESTOR MULTI-SESIÓN AISLADO PARA TENANTS SECUNDARIOS (sesiones_wa/<cliente_id>)
+// ============================================================================
+
+async function resolverJidWhatsAppConSock(sock, telRaw) {
+  if (!sock) return { existe: false, motivo: 'NO_CONECTADO' };
+  const dig = String(telRaw || '').replace(/\D/g, '');
+  if (dig.length < 10) return { existe: false, motivo: 'NUMERO_CORTO' };
+  const ult10 = dig.slice(-10);
+  const candidatos = [`521${ult10}`, `52${ult10}`];
+  for (const cand of candidatos) {
+    try {
+      const res = await sock.onWhatsApp(cand);
+      if (Array.isArray(res) && res.length > 0 && res[0]?.exists) {
+        return { existe: true, jid: res[0].jid, numero: cand };
+      }
+    } catch (_) {}
+  }
+  return { existe: false, motivo: 'SIN_WHATSAPP' };
+}
+
+async function enviarMensajeSeguroSesion(sesion, jid, contenido) {
+  if (!sesion || !sesion.sock) return null;
+  if (jid === 'status@broadcast') return null;
+  try {
+    const res = await sesion.sock.sendMessage(jid, contenido);
+    registrarIdBot(res);
+    if (res?.key?.id && res?.message) {
+      guardarMensajeEnCache(res.key.id, res.message);
+    }
+    return res;
+  } catch (err) {
+    console.error(`❌ [${sesion.cliente_id}] Error enviando mensaje a ${jid}:`, err.message);
+    return null;
+  }
+}
+
+async function revisarYEnviarFrioTenant(sesion) {
+  if (!sesion || sesion.cliente_id === 'mallas_tlaxcalli') return;
+  if (sesion.enviandoFrioEnCurso || !sesion.sock || !sesion.conectado) return;
+  if (sesion.motorPausadoLocal && !sesion.forzarAhoraPendiente) return;
+
+  const esForzado = sesion.forzarAhoraPendiente;
+  const transcurrido = Date.now() - sesion.ultimoEnvioFrioMs;
+
+  if (!esForzado) {
+    if (!esHorarioComercialMexico()) return;
+    if (sesion.ultimoEnvioFrioMs > 0 && transcurrido < sesion.proximoIntervaloFrioMs) return;
+  }
+
+  sesion.enviandoFrioEnCurso = true;
+  sesion.forzarAhoraPendiente = false;
+  try {
+    for (let intento = 0; intento < 5; intento++) {
+      const cand = await postJsonPython('/api/obtener_candidato_envio_50', {
+        cliente_id: sesion.cliente_id,
+        forzar: esForzado && intento === 0,
+      });
+      if (!cand || !cand.ok || !cand.telefono) break;
+
+      const waCheck = await resolverJidWhatsAppConSock(sesion.sock, cand.telefono);
+      if (!waCheck.existe) {
+        await postJsonPython('/api/confirmar_envio_50', {
+          id: cand.id,
+          cliente_id: sesion.cliente_id,
+          enviado: false,
+          motivo: 'SIN_WHATSAPP',
+        }).catch(() => {});
+        continue;
+      }
+
+      await sesion.sock.sendPresenceUpdate('composing', waCheck.jid);
+      await new Promise((r) => setTimeout(r, 3000 + Math.floor(Math.random() * 2000)));
+      const resEnvio = await enviarMensajeSeguroSesion(sesion, waCheck.jid, { text: cand.mensaje });
+      if (!resEnvio) {
+        sesion.erroresConsecutivos++;
+        await postJsonPython('/api/confirmar_envio_50', {
+          id: cand.id,
+          cliente_id: sesion.cliente_id,
+          enviado: false,
+          motivo: 'ERROR_ENVIO_WA',
+        }).catch(() => {});
+        if (sesion.erroresConsecutivos >= 3) {
+          sesion.motorPausadoLocal = true;
+          sesion.forzarAhoraPendiente = false;
+          console.error(`🚨 [CIRCUIT BREAKER ${sesion.cliente_id}] 3 errores consecutivos. Motor en frío pausado (Andrea 24/7 sigue activa).`);
+        }
+        break;
+      }
+      sesion.erroresConsecutivos = 0;
+
+      const conf = await postJsonPython('/api/confirmar_envio_50', {
+        id: cand.id,
+        cliente_id: sesion.cliente_id,
+        enviado: true,
+        telefono_real: waCheck.numero,
+        mensaje: cand.mensaje,
+      });
+
+      sesion.ultimoEnvioFrioMs = Date.now();
+      sesion.proximoIntervaloFrioMs = (510 + Math.floor(Math.random() * 210)) * 1000;
+      console.log(`📤 [FRÍO ${sesion.cliente_id}] Enviado #${conf.enviados_hoy || '?'} a ${cand.nombre} (${waCheck.jid})`);
+      break;
+    }
+  } catch (err) {
+    sesion.erroresConsecutivos++;
+    if (sesion.erroresConsecutivos >= 3) {
+      sesion.motorPausadoLocal = true;
+    }
+  } finally {
+    sesion.enviandoFrioEnCurso = false;
+  }
+}
+
+async function iniciarSesionTenant(clienteIdRaw, telefonoPairing = '') {
+  const cid = sanitizarClienteId(clienteIdRaw);
+  if (cid === 'mallas_tlaxcalli') {
+    if (telefonoPairing && sockActual) {
+      let num = String(telefonoPairing).replace(/\D/g, '');
+      if (num.length === 10) num = '521' + num;
+      else if (num.length === 12 && num.startsWith('52') && !num.startsWith('521')) num = '521' + num.slice(2);
+      try {
+        const code = await sockActual.requestPairingCode(num);
+        const codeFmt = code?.match(/.{1,4}/g)?.join('-') || code;
+        guardarEstatusWA({ codigo_8_digitos: codeFmt });
+      } catch (e) {
+        obtenerOCrearEstadoSesion(cid).ultimoError = e.message;
+      }
+    }
+    return obtenerOCrearEstadoSesion('mallas_tlaxcalli');
+  }
+
+  const sesion = obtenerOCrearEstadoSesion(cid);
+  if (sesion.vinculando) {
+    return sesion;
+  }
+  sesion.vinculando = true;
+  sesion.createdAt = Date.now();
+  sesion.ultimoError = '';
+
+  // Cerrar cualquier socket previo antes de abrir uno nuevo sobre la misma carpeta
+  if (sesion.sock) {
+    try {
+      sesion.sock.ev.removeAllListeners();
+      sesion.sock.ws?.close();
+    } catch (_) {}
+    sesion.sock = null;
+  }
+
+  try {
+    fs.mkdirSync(sesion.authDir, { recursive: true });
+    const { state, saveCreds } = await useMultiFileAuthState(sesion.authDir);
+    const { version } = await fetchLatestBaileysVersion();
+
+    const sock = makeWASocket({
+      version,
+      logger: loggerSilencioso,
+      printQRInTerminal: false,
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, loggerSilencioso),
+      },
+      msgRetryCounterCache,
+      getMessage: async (key) => {
+        if (key?.id && cacheMensajes.has(key.id)) {
+          return cacheMensajes.get(key.id);
+        }
+        return { conversation: '✅ Mensaje sincronizado' };
+      },
+      shouldIgnoreJid: (jid) => jid === 'status@broadcast' || (typeof jid === 'string' && jid.endsWith('@broadcast')),
+      browser: Browsers.ubuntu('Chrome'),
+      syncFullHistory: false,
+      fireInitQueries: true,
+      markOnlineOnConnect: true,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
+    });
+
+    sesion.sock = sock;
+    sock.ev.on('creds.update', saveCreds);
+
+    if (telefonoPairing && !sock.authState.creds.registered) {
+      let numLimpio = String(telefonoPairing).replace(/\D/g, '');
+      if (numLimpio.length === 10) numLimpio = '521' + numLimpio;
+      else if (numLimpio.length === 12 && numLimpio.startsWith('52') && !numLimpio.startsWith('521')) {
+        numLimpio = '521' + numLimpio.slice(2);
+      }
+      setTimeout(async () => {
+        try {
+          if (sesion.sock !== sock) return;
+          const rawCode = await sock.requestPairingCode(numLimpio);
+          const codeFmt = rawCode?.match(/.{1,4}/g)?.join('-') || rawCode;
+          sesion.pairingCode = codeFmt || '';
+          console.log(`🔑 [${cid}] Código de vinculación generado para +${numLimpio}: ${sesion.pairingCode}`);
+        } catch (errP) {
+          sesion.ultimoError = errP.message;
+        } finally {
+          sesion.vinculando = false;
+        }
+      }, 2200);
+    } else {
+      setTimeout(() => {
+        sesion.vinculando = false;
+      }, 1500);
+    }
+
+    sock.ev.on('connection.update', async (update) => {
+      if (sesion.sock !== sock) return;
+      const { connection, lastDisconnect, qr } = update;
+      if (qr) {
+        let dataUrl = '';
+        if (QRCodeLib) {
+          try {
+            dataUrl = await QRCodeLib.toDataURL(qr, { errorCorrectionLevel: 'L', margin: 3, width: 300 });
+          } catch (_) {}
+        }
+        sesion.conectado = false;
+        sesion.qr = qr;
+        sesion.qr_data_url = dataUrl;
+      }
+
+      if (connection === 'open') {
+        const rawId = sock.user?.id || '';
+        const rawLid = sock.user?.lid || '';
+        sesion.miNumeroBase = rawId.split('@')[0].split(':')[0].replace(/\D/g, '');
+        sesion.miLidBase = rawLid ? rawLid.split('@')[0].split(':')[0] : '';
+        sesion.conectado = true;
+        sesion.vinculando = false;
+        sesion.qr = '';
+        sesion.qr_data_url = '';
+        sesion.pairingCode = '';
+        sesion.numero = rawId || 'Conectado';
+        console.log(`✅ [${cid}] WhatsApp conectado en vivo: ${sesion.numero}`);
+      } else if (connection === 'close') {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        sesion.conectado = false;
+        sesion.vinculando = false;
+        if (statusCode === DisconnectReason.loggedOut) {
+          console.log(`🔒 [${cid}] Sesión cerrada desde el teléfono. Limpiando carpeta ${sesion.authDir}`);
+          try { fs.rmSync(sesion.authDir, { recursive: true, force: true }); } catch (_) {}
+          sesion.qr = '';
+          sesion.qr_data_url = '';
+          sesion.pairingCode = '';
+          sesion.numero = '';
+          return;
+        }
+        // Reconectar solo si aún existe en el mapa de sesiones activas y tiene creds registradas
+        if (sesiones.has(cid) && fs.existsSync(path.join(sesion.authDir, 'creds.json'))) {
+          setTimeout(() => {
+            if (sesiones.has(cid) && !sesion.conectado && !sesion.vinculando) {
+              iniciarSesionTenant(cid).catch(() => {});
+            }
+          }, 4000);
+        }
+      }
+    });
+
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify' || sesion.sock !== sock) return;
+      for (const msg of messages) {
+        if (!msg.message) continue;
+        if (msg.key?.id) cacheMensajes.set(msg.key.id, msg.message);
+        if (idsMensajesBot.has(msg.key.id)) continue;
+        if (msg.key.fromMe) continue;
+
+        const jid = msg.key.remoteJid;
+        if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
+        if (sesion.pausaRespuestasGeneral) continue;
+
+        const audioMsg =
+          msg.message.audioMessage ||
+          msg.message?.documentWithCaptionMessage?.message?.audioMessage ||
+          (msg.message?.documentMessage?.mimetype?.startsWith('audio/') ? msg.message.documentMessage : null);
+
+        let textoEntrante =
+          msg.message.conversation ||
+          msg.message.extendedTextMessage?.text ||
+          msg.message.imageMessage?.caption ||
+          '';
+        let vinoDeAudio = false;
+
+        if (audioMsg && !textoEntrante) {
+          try {
+            await sock.sendPresenceUpdate('recording', jid);
+            const bufferAudio = await downloadMediaMessage(
+              msg,
+              'buffer',
+              {},
+              { logger: loggerSilencioso, reuploadRequest: sock.updateMediaMessage }
+            );
+            const mimeAudio = audioMsg.mimetype || 'audio/ogg; codecs=opus';
+            const resTrans = await postJsonPython('/api/transcribir_audio', {
+              audio_b64: bufferAudio.toString('base64'),
+              mimetype: mimeAudio,
+            }, 35000);
+            if (resTrans && resTrans.texto) {
+              textoEntrante = resTrans.texto.trim();
+              vinoDeAudio = true;
+            }
+          } catch (_) {}
+        }
+
+        if (!textoEntrante.trim()) continue;
+
+        try {
+          const msgCliLow = textoEntrante.toLowerCase();
+          const pedirVoz =
+            vinoDeAudio ||
+            msgCliLow.includes('audio') ||
+            msgCliLow.includes('voz') ||
+            msgCliLow.includes('nota de voz');
+
+          await sock.sendPresenceUpdate(pedirVoz ? 'recording' : 'composing', jid);
+          const respuestaIA = await postJsonPython('/api/chat', {
+            session_id: `wa_${cid}_${jid}`,
+            cliente_id: cid,
+            mensaje: textoEntrante.trim(),
+            incluir_voz: pedirVoz,
+          });
+
+          if (respuestaIA?.pedido_confirmado && respuestaIA?.datos_pedido) {
+            await postJsonPython('/api/registrar_pedido', {
+              ...respuestaIA.datos_pedido,
+              cliente_id: cid,
+            }).catch(() => {});
+          }
+
+          if (pedirVoz && respuestaIA?.audio_data_url) {
+            const b64Audio = respuestaIA.audio_data_url.split(',')[1];
+            const wavBuf = Buffer.from(b64Audio, 'base64');
+            const audioNativo = convertirWavAOggOpusNativo(wavBuf);
+            await enviarMensajeSeguroSesion(sesion, jid, {
+              audio: audioNativo.buffer,
+              mimetype: audioNativo.mimetype,
+              ptt: true,
+            });
+          } else if (respuestaIA?.respuesta) {
+            await enviarMensajeSeguroSesion(sesion, jid, { text: respuestaIA.respuesta });
+          }
+
+          if (respuestaIA?.pedido_confirmado && sesion.miNumeroBase) {
+            const propioTenant = `${sesion.miNumeroBase}@s.whatsapp.net`;
+            const dp = respuestaIA.datos_pedido || {};
+            await enviarMensajeSeguroSesion(sesion, propioTenant, {
+              text: `🎉 *¡NUEVO PEDIDO CERRADO POR ANDREA IA (${cid})!*\n🏪 Cliente: ${dp.cliente || jid}\n📍 Dirección: ${dp.direccion || ''} (${dp.municipio || ''})\n🕐 Horario: ${dp.horario || ''}\n💳 Pago: ${dp.metodo_pago || 'Contra entrega'}`,
+            }).catch(() => {});
+          }
+        } catch (errChat) {
+          console.error(`❌ [${cid}] Error procesando mensaje con Andrea IA:`, errChat.message);
+        }
+      }
+    });
+  } catch (errInit) {
+    sesion.ultimoError = errInit.message;
+    sesion.vinculando = false;
+  }
+  return sesion;
+}
+
+function obtenerPayloadEstatusTenant(clienteIdRaw) {
+  const cid = sanitizarClienteId(clienteIdRaw);
+  if (cid === 'mallas_tlaxcalli') {
+    return {
+      ok: true,
+      cliente_id: 'mallas_tlaxcalli',
+      carpeta_sesion: 'sesion_whatsapp_tlaxcalli/',
+      conectado: Boolean(estadoActual.conectado),
+      vinculando: false,
+      numero_vinculado: estadoActual.numero_vinculado || '',
+      qr: estadoActual.qr || '',
+      qr_data_url: estadoActual.qr_data_url || '',
+      codigo_8_digitos: estadoActual.codigo_8_digitos || '',
+      pairingCode: estadoActual.codigo_8_digitos || '',
+      motor_50_activo: !motorPausadoLocal,
+      motorPausadoLocal,
+      pausaRespuestasGeneral,
+      erroresConsecutivos: erroresConsecutivosEnvio,
+      fecha: estadoActual.fecha || new Date().toISOString(),
+    };
+  }
+  const s = sesiones.get(cid);
+  return {
+    ok: true,
+    cliente_id: cid,
+    carpeta_sesion: `sesiones_wa/${cid}/`,
+    conectado: Boolean(s?.conectado),
+    vinculando: Boolean(s?.vinculando),
+    numero_vinculado: s?.numero || '',
+    qr: s?.qr || '',
+    qr_data_url: s?.qr_data_url || '',
+    codigo_8_digitos: s?.pairingCode || '',
+    pairingCode: s?.pairingCode || '',
+    ultimoError: s?.ultimoError || '',
+    motor_50_activo: s ? !s.motorPausadoLocal : false,
+    motorPausadoLocal: s ? Boolean(s.motorPausadoLocal) : true,
+    pausaRespuestasGeneral: s ? Boolean(s.pausaRespuestasGeneral) : false,
+    erroresConsecutivos: s?.erroresConsecutivos || 0,
+    fecha: new Date().toISOString(),
+  };
+}
+
+// Microservidor local en puerto 8095 para multi-sesión, código 8 dígitos, verificación en lote y disparo inmediato
 const serverHttpInterno = http.createServer(async (req, res) => {
+    const parsedUrl = new URL(req.url || '/', 'http://127.0.0.1:8095');
+    const pathname = parsedUrl.pathname;
+
     const leerBody = () =>
       new Promise((resolve) => {
         let body = '';
@@ -1274,32 +1746,130 @@ const serverHttpInterno = http.createServer(async (req, res) => {
         });
       });
 
-    if (req.method === 'POST' && req.url === '/control_motor') {
+    if (req.method === 'GET' && pathname === '/estatus_wa') {
+      const cid = sanitizarClienteId(parsedUrl.searchParams.get('cliente_id') || 'mallas_tlaxcalli');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(obtenerPayloadEstatusTenant(cid)));
+    }
+
+    if (req.method === 'POST' && pathname === '/vincular_wa') {
       const data = await leerBody();
+      const cid = sanitizarClienteId(data.cliente_id || 'mallas_tlaxcalli');
+      const tel = String(data.telefono || '').replace(/\D/g, '');
+      try {
+        await iniciarSesionTenant(cid, tel);
+        // Esperar hasta 4.2s si se solicitó pairing code o generación de QR
+        for (let i = 0; i < 14; i++) {
+          const st = obtenerPayloadEstatusTenant(cid);
+          if (st.conectado || (tel && st.pairingCode) || (!tel && st.qr_data_url)) {
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 300));
+        }
+        const stFinal = obtenerPayloadEstatusTenant(cid);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ...stFinal,
+          codigo: stFinal.pairingCode || stFinal.codigo_8_digitos || '',
+        }));
+      } catch (err) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, cliente_id: cid, error: err.message }));
+      }
+    }
+
+    if (req.method === 'POST' && pathname === '/desvincular_wa') {
+      const data = await leerBody();
+      const cid = sanitizarClienteId(data.cliente_id || '');
+      if (cid === 'mallas_tlaxcalli') {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: false,
+          error: 'La carpeta sesion_whatsapp_tlaxcalli está protegida y no puede eliminarse.',
+        }));
+      }
+      const s = sesiones.get(cid);
+      if (s && s.sock) {
+        try {
+          s.sock.ev.removeAllListeners();
+          s.sock.ws?.close();
+        } catch (_) {}
+      }
+      sesiones.delete(cid);
+      const dirBorrar = obtenerCarpetaSesion(cid);
+      try {
+        if (dirBorrar !== AUTH_DIR && fs.existsSync(dirBorrar)) {
+          fs.rmSync(dirBorrar, { recursive: true, force: true });
+        }
+      } catch (_) {}
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, cliente_id: cid, conectado: false }));
+    }
+
+    if (req.method === 'POST' && pathname === '/control_motor') {
+      const data = await leerBody();
+      const cid = sanitizarClienteId(data.cliente_id || 'mallas_tlaxcalli');
       const accion = String(data.accion || '').toLowerCase();
+
+      if (cid === 'mallas_tlaxcalli') {
+        if (accion === 'pausar_frio' || accion === 'pausar') {
+          motorPausadoLocal = true;
+          pausaRespuestasGeneral = false;
+          forzarAhoraPendiente = false;
+          console.log('🛑 [MOTOR FRÍO mallas_tlaxcalli] Envío en frío pausado (Andrea sigue respondiendo)');
+        } else if (accion === 'reanudar_frio' || accion === 'activar') {
+          motorPausadoLocal = false;
+          pausaRespuestasGeneral = false;
+          erroresConsecutivosEnvio = 0;
+          console.log('▶️ [MOTOR FRÍO mallas_tlaxcalli] Envío en frío reanudado y Andrea activa');
+        } else if (accion === 'pausar_todo') {
+          motorPausadoLocal = true;
+          pausaRespuestasGeneral = true;
+          forzarAhoraPendiente = false;
+          console.log('🛑 [MOTOR TOTAL mallas_tlaxcalli] Envío en frío y respuestas de Andrea pausados');
+        } else if (accion === 'reanudar_todo') {
+          motorPausadoLocal = false;
+          pausaRespuestasGeneral = false;
+          erroresConsecutivosEnvio = 0;
+          console.log('▶️ [MOTOR TOTAL mallas_tlaxcalli] Envío en frío y respuestas de Andrea reanudados');
+        }
+        guardarEstatusWA({});
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: true,
+          cliente_id: cid,
+          motorPausadoLocal,
+          pausaRespuestasGeneral,
+          erroresConsecutivosEnvio,
+        }));
+      }
+
+      const s = obtenerOCrearEstadoSesion(cid);
       if (accion === 'pausar_frio' || accion === 'pausar') {
-        motorPausadoLocal = true;
-        pausaRespuestasGeneral = false;
-        forzarAhoraPendiente = false;
-        console.log('🛑 [MOTOR FRÍO] Envío en frío pausado (Andrea sigue respondiendo)');
+        s.motorPausadoLocal = true;
+        s.pausaRespuestasGeneral = false;
+        s.forzarAhoraPendiente = false;
       } else if (accion === 'reanudar_frio' || accion === 'activar') {
-        motorPausadoLocal = false;
-        pausaRespuestasGeneral = false;
-        erroresConsecutivosEnvio = 0;
-        console.log('▶️ [MOTOR FRÍO] Envío en frío reanudado y Andrea activa');
+        s.motorPausadoLocal = false;
+        s.pausaRespuestasGeneral = false;
+        s.erroresConsecutivos = 0;
       } else if (accion === 'pausar_todo') {
-        motorPausadoLocal = true;
-        pausaRespuestasGeneral = true;
-        forzarAhoraPendiente = false;
-        console.log('🛑 [MOTOR TOTAL] Envío en frío y respuestas de Andrea pausados');
+        s.motorPausadoLocal = true;
+        s.pausaRespuestasGeneral = true;
+        s.forzarAhoraPendiente = false;
       } else if (accion === 'reanudar_todo') {
-        motorPausadoLocal = false;
-        pausaRespuestasGeneral = false;
-        erroresConsecutivosEnvio = 0;
-        console.log('▶️ [MOTOR TOTAL] Envío en frío y respuestas de Andrea reanudados');
+        s.motorPausadoLocal = false;
+        s.pausaRespuestasGeneral = false;
+        s.erroresConsecutivos = 0;
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ ok: true, motorPausadoLocal, pausaRespuestasGeneral, erroresConsecutivosEnvio }));
+      return res.end(JSON.stringify({
+        ok: true,
+        cliente_id: cid,
+        motorPausadoLocal: s.motorPausadoLocal,
+        pausaRespuestasGeneral: s.pausaRespuestasGeneral,
+        erroresConsecutivosEnvio: s.erroresConsecutivos,
+      }));
     }
 
     if (req.method === 'POST' && req.url === '/activar_motor_ahora') {
@@ -1368,30 +1938,60 @@ const serverHttpInterno = http.createServer(async (req, res) => {
       }
     }
 
-    if (req.method === 'POST' && req.url === '/notificar_dueno') {
+    if (req.method === 'POST' && pathname === '/notificar_dueno') {
       const data = await leerBody();
       try {
-        const propioJid = obtenerPropioJid();
-        if (!sockActual || !estadoActual.conectado || !propioJid) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ ok: false, motivo: 'WHATSAPP_NO_CONECTADO' }));
-        }
+        const cid = sanitizarClienteId(data.cliente_id || 'mallas_tlaxcalli');
         const texto = String(data.mensaje || '').trim();
         if (!texto) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ ok: false, motivo: 'MENSAJE_VACIO' }));
         }
+
+        if (cid !== 'mallas_tlaxcalli') {
+          const s = sesiones.get(cid);
+          if (s && s.conectado && s.sock && s.miNumeroBase) {
+            const jidTenant = `${s.miNumeroBase}@s.whatsapp.net`;
+            const resT = await enviarMensajeSeguroSesion(s, jidTenant, { text: texto });
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: Boolean(resT), cliente_id: cid, destino: jidTenant }));
+          }
+        }
+
+        const propioJid = obtenerPropioJid();
+        if (!sockActual || !estadoActual.conectado || !propioJid) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, motivo: 'WHATSAPP_NO_CONECTADO' }));
+        }
         const resEnvio = await enviarMensajeSeguro(propioJid, { text: texto });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: Boolean(resEnvio), destino: propioJid }));
+        return res.end(JSON.stringify({ ok: Boolean(resEnvio), cliente_id: cid, destino: propioJid }));
       } catch (err) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: false, error: err.message }));
       }
     }
 
-    if (req.method === 'POST' && req.url === '/codigo_8_digitos') {
+    if (req.method === 'POST' && pathname === '/codigo_8_digitos') {
       const data = await leerBody();
+      const cid = sanitizarClienteId(data.cliente_id || 'mallas_tlaxcalli');
+      if (cid !== 'mallas_tlaxcalli') {
+        const tel = String(data.telefono || '').replace(/\D/g, '');
+        await iniciarSesionTenant(cid, tel);
+        for (let i = 0; i < 14; i++) {
+          const st = obtenerPayloadEstatusTenant(cid);
+          if (st.pairingCode) break;
+          await new Promise((r) => setTimeout(r, 300));
+        }
+        const stFinal = obtenerPayloadEstatusTenant(cid);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: Boolean(stFinal.pairingCode),
+          cliente_id: cid,
+          codigo: stFinal.pairingCode,
+          error: stFinal.ultimoError || undefined,
+        }));
+      }
       try {
         let num = String(data.telefono || '').replace(/\D/g, '');
         if (num.length === 10) num = '521' + num;
@@ -1456,9 +2056,54 @@ setInterval(async () => {
   } catch (_) {}
 }, 4000);
 
-// 2. Motor Anti-Bloqueo de 50 Mensajes Diarios (verifica cada 15s; respeta pausa de 8.5-10.5 min o arranca al instante al activar)
+// 2. Motor Anti-Bloqueo de Envíos en Frío Multi-Tenant (verifica cada 15s; respeta ventana 06:00-22:59 CDMX y jitter 8.5-12 min)
 setInterval(() => {
   revisarYEnviarUno50Diarios();
+  for (const [cid, sesion] of sesiones.entries()) {
+    if (cid !== 'mallas_tlaxcalli') {
+      revisarYEnviarFrioTenant(sesion);
+    }
+  }
 }, 15000);
 
+// 3. Limpieza automática de sesiones zombis no vinculadas (> 5 minutos sin conectar, excluyendo mallas_tlaxcalli)
+setInterval(() => {
+  const ahora = Date.now();
+  for (const [cid, sesion] of sesiones.entries()) {
+    if (cid === 'mallas_tlaxcalli') continue;
+    if (!sesion.conectado && ahora - (sesion.createdAt || ahora) > 5 * 60 * 1000) {
+      console.log(`🧹 [ZOMBIE CLEANUP] Cerrando sesión inactiva no vinculada (>5 min): ${cid}`);
+      if (sesion.sock) {
+        try {
+          sesion.sock.ev.removeAllListeners();
+          sesion.sock.ws?.close();
+        } catch (_) {}
+      }
+      sesiones.delete(cid);
+    }
+  }
+}, 60000);
+
+// 4. Arranque inicial de mallas_tlaxcalli + reconexión automática de subcarpetas con creds.json en sesiones_wa/
+obtenerOCrearEstadoSesion('mallas_tlaxcalli');
 iniciarPuenteWhatsApp();
+
+try {
+  if (fs.existsSync(SESIONES_MULTI_DIR)) {
+    const carpetas = fs.readdirSync(SESIONES_MULTI_DIR, { withFileTypes: true });
+    let idxDelay = 1;
+    for (const dirent of carpetas) {
+      if (!dirent.isDirectory()) continue;
+      const cidSub = sanitizarClienteId(dirent.name);
+      if (cidSub === 'mallas_tlaxcalli') continue;
+      const credsPath = path.join(SESIONES_MULTI_DIR, dirent.name, 'creds.json');
+      if (fs.existsSync(credsPath)) {
+        setTimeout(() => {
+          console.log(`🔄 Reconectando sesión existente multi-tenant: ${cidSub}`);
+          iniciarSesionTenant(cidSub).catch(() => {});
+        }, idxDelay * 2500);
+        idxDelay++;
+      }
+    }
+  }
+} catch (_) {}

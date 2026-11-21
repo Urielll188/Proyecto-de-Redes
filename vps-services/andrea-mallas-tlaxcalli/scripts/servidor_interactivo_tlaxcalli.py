@@ -1449,50 +1449,53 @@ def _mensaje_saliente_prospecto(pid: int, nombre: str, municipio: str, cliente_i
     return saludos_nicho[pid % len(saludos_nicho)]
 
 
-def obtener_candidato_envio_50() -> dict:
-    if not ESTADO_MOTOR_50_DIARIOS.get("activo", False):
-        return {"ok": False, "motivo": "MOTOR_PAUSADO", "enviados_hoy": 0}
+def obtener_candidato_envio_50(cliente_id: str = "mallas_tlaxcalli") -> dict:
+    cid_filtro = motor_m1.normalizar_cliente_id(cliente_id or "mallas_tlaxcalli")
+    if cid_filtro == "mallas_tlaxcalli" and not ESTADO_MOTOR_50_DIARIOS.get("activo", False):
+        return {"ok": False, "motivo": "MOTOR_PAUSADO", "enviados_hoy": 0, "id_cliente_agencia": cid_filtro}
     """
     Entrega el siguiente candidato pendiente SIN marcarlo todavía como enviado;
     el puente WhatsApp verifica primero con `onWhatsApp()` que el número exista en WhatsApp
     y luego confirma en `/api/confirmar_envio_50` para NO quemar el cupo diario en líneas fijas.
+    Aislado estrictamente por `cliente_id` (default 'mallas_tlaxcalli').
     """
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     hoy_prefijo = datetime.now().strftime("%Y-%m-%d")
-    cur.execute("SELECT COUNT(*) FROM bitacora_envios_wa WHERE fecha_hora LIKE ?", (f"{hoy_prefijo}%",))
+    cur.execute(
+        "SELECT COUNT(*) FROM bitacora_envios_wa WHERE fecha_hora LIKE ? AND LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)",
+        (f"{hoy_prefijo}%", cid_filtro)
+    )
     enviados_hoy = cur.fetchone()[0]
 
     if enviados_hoy >= ESTADO_MOTOR_50_DIARIOS["meta_diaria"]:
         conn.close()
-        return {"ok": False, "motivo": "META_DIARIA_50_COMPLETADA", "enviados_hoy": enviados_hoy}
+        return {"ok": False, "motivo": "META_DIARIA_50_COMPLETADA", "enviados_hoy": enviados_hoy, "id_cliente_agencia": cid_filtro}
 
-    cur.execute("SELECT LOWER(cliente_id) FROM perfiles_nicho WHERE activo = 0")
-    inactivos = {r[0] for r in cur.fetchall()}
+    cur.execute("SELECT activo FROM perfiles_nicho WHERE LOWER(cliente_id) = LOWER(?)", (cid_filtro,))
+    row_act = cur.fetchone()
+    if row_act is not None and int(row_act[0]) == 0:
+        conn.close()
+        return {"ok": False, "motivo": "NICHO_INACTIVO", "enviados_hoy": enviados_hoy, "id_cliente_agencia": cid_filtro}
 
     cur.execute("""
         SELECT id, nombre, telefono, municipio, direccion, google_maps_url, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')
         FROM prospectos_cazador
-        WHERE (estatus_contacto_wa IS NULL OR estatus_contacto_wa IN ('PENDIENTE', 'PENDIENTE_ENVIO', 'VERIFICADO_WA', ''))
+        WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)
+          AND (estatus_contacto_wa IS NULL OR estatus_contacto_wa IN ('PENDIENTE', 'PENDIENTE_ENVIO', 'VERIFICADO_WA', ''))
           AND (estatus_clasificacion LIKE 'APROBADO%')
           AND (estatus_maps IS NULL OR estatus_maps != 'CERRADA_DESCARTADA')
         ORDER BY CASE WHEN estatus_contacto_wa = 'VERIFICADO_WA' THEN 0 ELSE 1 END, id ASC
-        LIMIT 25
-    """)
-    filas = cur.fetchall()
+        LIMIT 1
+    """, (cid_filtro,))
+    row = cur.fetchone()
     conn.close()
-    row = None
-    for cand_r in filas:
-        cid_cand = motor_m1.normalizar_cliente_id(cand_r[6])
-        if cid_cand.lower() not in inactivos:
-            row = cand_r
-            break
 
     if not row:
-        return {"ok": False, "motivo": "SIN_PROSPECTOS_PENDIENTES", "enviados_hoy": enviados_hoy}
+        return {"ok": False, "motivo": "SIN_PROSPECTOS_PENDIENTES", "enviados_hoy": enviados_hoy, "id_cliente_agencia": cid_filtro}
 
     pid, nombre, telefono, municipio, direccion, maps_url, cid_raw = row
-    cid = motor_m1.normalizar_cliente_id(cid_raw)
+    cid = motor_m1.normalizar_cliente_id(cid_raw or cid_filtro)
     mensaje_wa = _mensaje_saliente_prospecto(pid, nombre, municipio, cliente_id=cid)
     return {
         "ok": True,
@@ -1507,7 +1510,7 @@ def obtener_candidato_envio_50() -> dict:
     }
 
 
-def confirmar_envio_50(pid: int, enviado: bool, motivo: str = "", telefono_real: str = "", mensaje: str = "") -> dict:
+def confirmar_envio_50(pid: int, enviado: bool, motivo: str = "", telefono_real: str = "", mensaje: str = "", cliente_id: str = "") -> dict:
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("SELECT nombre, telefono, municipio, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli') FROM prospectos_cazador WHERE id = ?", (pid,))
@@ -1519,7 +1522,7 @@ def confirmar_envio_50(pid: int, enviado: bool, motivo: str = "", telefono_real:
         return {"ok": False, "error": "ID no encontrado"}
 
     nombre, tel_bd, municipio, cid_raw = row
-    cid = motor_m1.normalizar_cliente_id(cid_raw)
+    cid = motor_m1.normalizar_cliente_id(cliente_id or cid_raw or "mallas_tlaxcalli")
     if not enviado:
         nuevo_est = "SIN_WHATSAPP" if "SIN_WHATSAPP" in motivo.upper() else "ERROR_ENVIO_WA"
         cur.execute("UPDATE prospectos_cazador SET estatus_contacto_wa = ? WHERE id = ?", (nuevo_est, pid))
@@ -1541,23 +1544,27 @@ def confirmar_envio_50(pid: int, enviado: bool, motivo: str = "", telefono_real:
     """, (tel_final, nombre, municipio, msg_final, "GOTEO_50_DIARIOS_ANTIBAN", ahora_str, cid))
 
     hoy_prefijo = datetime.now().strftime("%Y-%m-%d")
-    cur.execute("SELECT COUNT(*) FROM bitacora_envios_wa WHERE fecha_hora LIKE ?", (f"{hoy_prefijo}%",))
+    cur.execute(
+        "SELECT COUNT(*) FROM bitacora_envios_wa WHERE fecha_hora LIKE ? AND LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)",
+        (f"{hoy_prefijo}%", cid)
+    )
     enviados_hoy = cur.fetchone()[0]
     conn.commit()
     conn.close()
 
-    ultimo_txt = f"{nombre} ({municipio} - {tel_final})"
-    ESTADO_MOTOR_50_DIARIOS["ultimo_negocio_contactado"] = ultimo_txt
-    guardar_config("ultimo_negocio_contactado", ultimo_txt)
+    if cid == "mallas_tlaxcalli":
+        ultimo_txt = f"{nombre} ({municipio} - {tel_final})"
+        ESTADO_MOTOR_50_DIARIOS["ultimo_negocio_contactado"] = ultimo_txt
+        guardar_config("ultimo_negocio_contactado", ultimo_txt)
     exportar_excel_en_vivo()
     return {"ok": True, "estatus": "CONTACTADO_WA", "id_cliente_agencia": cid, "enviados_hoy": enviados_hoy, "nombre": nombre, "municipio": municipio}
 
 
-def obtener_siguiente_envio_50_diarios() -> dict:
-    cand = obtener_candidato_envio_50()
+def obtener_siguiente_envio_50_diarios(cliente_id: str = "mallas_tlaxcalli") -> dict:
+    cand = obtener_candidato_envio_50(cliente_id=cliente_id)
     if not cand.get("ok"):
         return cand
-    conf = confirmar_envio_50(cand["id"], True, mensaje=cand["mensaje"])
+    conf = confirmar_envio_50(cand["id"], True, mensaje=cand["mensaje"], cliente_id=cand.get("id_cliente_agencia", cliente_id))
     cand["enviados_hoy"] = conf.get("enviados_hoy", cand["enviados_hoy"] + 1)
     return cand
 
@@ -2420,21 +2427,71 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             self.wfile.write(raw)
             return
 
-        if parsed.path == "/api/estatus_whatsapp":
+        if parsed.path in ("/api/estatus_whatsapp", "/api/estatus_wa", "/estatus_wa"):
+            qs = urllib.parse.parse_qs(parsed.query)
+            email_q = (qs.get("email", [""])[0] or "").strip().lower()
+            cid_q = (qs.get("cliente_id", [""])[0] or "").strip()
+
+            if email_q:
+                cid_target, nicho_ctx, es_mallas = resolver_contexto_tenant_request(email_q, cid_q)
+                if not cid_target or not nicho_ctx:
+                    self._send_json({
+                        "ok": True,
+                        "tiene_perfil": False,
+                        "es_mallas": False,
+                        "cliente_id": "",
+                        "conectado": False,
+                        "qr": "",
+                        "qr_data_url": "",
+                        "pairingCode": "",
+                        "codigo_8_digitos": "",
+                        "miNumero": "",
+                        "numero_vinculado": "",
+                        "motorPausadoLocal": False,
+                        "pausaRespuestasGeneral": False,
+                        "erroresConsecutivosEnvio": 0,
+                        "motor_50_activo": False
+                    })
+                    return
+            else:
+                cid_target = motor_m1.normalizar_cliente_id(cid_q or "mallas_tlaxcalli")
+                es_mallas = (cid_target == "mallas_tlaxcalli")
+
             est = {
+                "ok": True,
+                "tiene_perfil": True,
+                "es_mallas": es_mallas,
+                "cliente_id": cid_target,
                 "conectado": False,
                 "qr": "",
+                "qr_data_url": "",
+                "pairingCode": "",
+                "codigo_8_digitos": "",
+                "miNumero": "",
                 "numero_vinculado": "",
-                "motor_50_activo": ESTADO_MOTOR_50_DIARIOS["activo"],
-                "fotos_producto_reales": len(listar_imagenes_producto_reales()),
-                "fotos_publicidad": len(listar_publicidad_pau())
+                "motor_50_activo": ESTADO_MOTOR_50_DIARIOS["activo"] if es_mallas else True,
+                "fotos_producto_reales": len(listar_imagenes_producto_reales()) if es_mallas else 0,
+                "fotos_publicidad": len(listar_publicidad_pau()) if es_mallas else 0
             }
-            if os.path.exists("/tmp/estatus_wa.json"):
+
+            bridge_ok = False
+            try:
+                url_bridge = f"http://127.0.0.1:8095/estatus_wa?cliente_id={urllib.parse.quote(cid_target)}"
+                with urllib.request.urlopen(url_bridge, timeout=5) as resp_b:
+                    datos_b = json.loads(resp_b.read().decode("utf-8"))
+                    if isinstance(datos_b, dict):
+                        est.update(datos_b)
+                        bridge_ok = True
+            except Exception:
+                bridge_ok = False
+
+            if not bridge_ok and es_mallas and os.path.exists("/tmp/estatus_wa.json"):
                 try:
                     with open("/tmp/estatus_wa.json", "r", encoding="utf-8") as fw:
                         est.update(json.load(fw))
                 except Exception:
                     pass
+
             self._send_json(est)
             return
 
@@ -2940,12 +2997,90 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True})
             return
 
-        if self.path == "/api/control_motor":
-            activo = bool(data.get("activo", False))
-            ESTADO_MOTOR_50_DIARIOS["activo"] = activo
-            guardar_config("motor_50_activo", "1" if activo else "0")
-            guardar_config("auto_responder_activo", "1" if activo else "0")
-            self._send_json({"ok": True, "activo": activo})
+        if self.path in ("/api/control_motor", "/control_motor"):
+            email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            cid_req = str(data.get("cliente_id") or "").strip()
+            if email_req:
+                cid_target, nicho_ctx, es_mallas = resolver_contexto_tenant_request(email_req, cid_req)
+                if not cid_target or not nicho_ctx:
+                    self._send_json({"ok": False, "error": "Primero configura tu negocio en 01 • IDEA."}, status=400)
+                    return
+            else:
+                cid_target = motor_m1.normalizar_cliente_id(cid_req or "mallas_tlaxcalli")
+                es_mallas = (cid_target == "mallas_tlaxcalli")
+
+            accion = str(data.get("accion") or "").strip().lower()
+            if "activo" in data:
+                activo = bool(data.get("activo", False))
+                if es_mallas:
+                    ESTADO_MOTOR_50_DIARIOS["activo"] = activo
+                    guardar_config("motor_50_activo", "1" if activo else "0")
+                    guardar_config("auto_responder_activo", "1" if activo else "0")
+                if not accion:
+                    accion = "reanudar_frio" if activo else "pausar_frio"
+            elif accion in ("reanudar_frio", "activar", "reanudar_todo") and es_mallas:
+                ESTADO_MOTOR_50_DIARIOS["activo"] = True
+                guardar_config("motor_50_activo", "1")
+            elif accion in ("pausar_frio", "pausar", "pausar_todo") and es_mallas:
+                ESTADO_MOTOR_50_DIARIOS["activo"] = False
+                guardar_config("motor_50_activo", "0")
+
+            res_bridge = _llamar_bridge_wa("/control_motor", {
+                "cliente_id": cid_target,
+                "accion": accion or "reanudar_frio"
+            }, timeout=8)
+            self._send_json({
+                "ok": True,
+                "cliente_id": cid_target,
+                "activo": ESTADO_MOTOR_50_DIARIOS["activo"] if es_mallas else (not res_bridge.get("motorPausadoLocal", False)),
+                "bridge": res_bridge
+            })
+            return
+
+        if self.path in ("/api/vincular_wa", "/vincular_wa"):
+            email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            cid_req = str(data.get("cliente_id") or "").strip()
+            telefono = str(data.get("telefono") or "").strip()
+            if email_req:
+                cid_target, nicho_ctx, _ = resolver_contexto_tenant_request(email_req, cid_req)
+                if not cid_target or not nicho_ctx:
+                    self._send_json({
+                        "ok": False,
+                        "error": "Primero registra tu producto o idea en '01 • IDEA' antes de vincular tu línea de WhatsApp."
+                    }, status=400)
+                    return
+            else:
+                cid_target = motor_m1.normalizar_cliente_id(cid_req or "mallas_tlaxcalli")
+
+            res_vinc = _llamar_bridge_wa("/vincular_wa", {
+                "cliente_id": cid_target,
+                "telefono": telefono
+            }, timeout=20)
+            self._send_json(res_vinc)
+            return
+
+        if self.path in ("/api/desvincular_wa", "/desvincular_wa"):
+            email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            cid_req = str(data.get("cliente_id") or "").strip()
+            if email_req:
+                cid_target, nicho_ctx, _ = resolver_contexto_tenant_request(email_req, cid_req)
+                if not cid_target or not nicho_ctx:
+                    self._send_json({"ok": False, "error": "Perfil no encontrado."}, status=400)
+                    return
+            else:
+                cid_target = motor_m1.normalizar_cliente_id(cid_req or "mallas_tlaxcalli")
+
+            if cid_target == "mallas_tlaxcalli":
+                self._send_json({
+                    "ok": False,
+                    "error": "La sesión principal de Mallas Tlaxcalli está protegida y no puede desvincularse."
+                }, status=403)
+                return
+
+            res_desv = _llamar_bridge_wa("/desvincular_wa", {
+                "cliente_id": cid_target
+            }, timeout=12)
+            self._send_json(res_desv)
             return
 
         if self.path == "/api/agente_ceo_pau":
@@ -2970,13 +3105,22 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/pedir_codigo_wa":
             tel = data.get("telefono", "")
+            email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            cid_req = str(data.get("cliente_id") or "").strip()
+            if email_req:
+                cid_target, nicho_ctx, _ = resolver_contexto_tenant_request(email_req, cid_req)
+                if not cid_target or not nicho_ctx:
+                    self._send_json({"ok": False, "error": "Primero registra tu negocio en 01 • IDEA."}, status=400)
+                    return
+            else:
+                cid_target = motor_m1.normalizar_cliente_id(cid_req or "mallas_tlaxcalli")
             try:
                 req = urllib.request.Request(
                     "http://127.0.0.1:8095/codigo_8_digitos",
-                    data=json.dumps({"telefono": tel}).encode("utf-8"),
+                    data=json.dumps({"cliente_id": cid_target, "telefono": tel}).encode("utf-8"),
                     headers={"Content-Type": "application/json"}
                 )
-                with urllib.request.urlopen(req, timeout=15) as resp:
+                with urllib.request.urlopen(req, timeout=20) as resp:
                     self._send_json(json.loads(resp.read().decode("utf-8")))
             except Exception as e:
                 self._send_json({"ok": False, "error": str(e)})
@@ -2984,19 +3128,21 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/siguiente_envio_50_diarios":
             forzar = bool(data.get("forzar", False))
-            if not ESTADO_MOTOR_50_DIARIOS["activo"] and not forzar:
-                self._send_json({"ok": False, "motivo": "MOTOR_50_EN_PAUSA"})
+            cid_req = motor_m1.normalizar_cliente_id(data.get("cliente_id") or "mallas_tlaxcalli")
+            if cid_req == "mallas_tlaxcalli" and not ESTADO_MOTOR_50_DIARIOS["activo"] and not forzar:
+                self._send_json({"ok": False, "motivo": "MOTOR_50_EN_PAUSA", "id_cliente_agencia": cid_req})
                 return
-            res_50 = obtener_siguiente_envio_50_diarios()
+            res_50 = obtener_siguiente_envio_50_diarios(cliente_id=cid_req)
             self._send_json(res_50)
             return
 
         if self.path == "/api/obtener_candidato_envio_50":
             forzar = bool(data.get("forzar", False))
-            if not ESTADO_MOTOR_50_DIARIOS["activo"] and not forzar:
-                self._send_json({"ok": False, "motivo": "MOTOR_50_EN_PAUSA"})
+            cid_req = motor_m1.normalizar_cliente_id(data.get("cliente_id") or "mallas_tlaxcalli")
+            if cid_req == "mallas_tlaxcalli" and not ESTADO_MOTOR_50_DIARIOS["activo"] and not forzar:
+                self._send_json({"ok": False, "motivo": "MOTOR_50_EN_PAUSA", "id_cliente_agencia": cid_req})
                 return
-            cand = obtener_candidato_envio_50()
+            cand = obtener_candidato_envio_50(cliente_id=cid_req)
             self._send_json(cand)
             return
 
@@ -3006,7 +3152,8 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             motivo = str(data.get("motivo", ""))
             tel_real = str(data.get("telefono_real", ""))
             mensaje = str(data.get("mensaje", ""))
-            res_conf = confirmar_envio_50(pid, enviado, motivo=motivo, telefono_real=tel_real, mensaje=mensaje)
+            cid_req = str(data.get("cliente_id") or "").strip()
+            res_conf = confirmar_envio_50(pid, enviado, motivo=motivo, telefono_real=tel_real, mensaje=mensaje, cliente_id=cid_req)
             self._send_json(res_conf)
             return
 
@@ -4199,9 +4346,9 @@ ESTADO_CAZADOR_24_7 = {
 }
 
 
-def _notificar_dueno_wa(mensaje: str) -> bool:
+def _notificar_dueno_wa(mensaje: str, cliente_id: str = "mallas_tlaxcalli") -> bool:
     try:
-        payload = json.dumps({"mensaje": mensaje}).encode("utf-8")
+        payload = json.dumps({"mensaje": mensaje, "cliente_id": cliente_id}).encode("utf-8")
         req = urllib.request.Request(
             "http://127.0.0.1:8095/notificar_dueno",
             data=payload,
@@ -4327,7 +4474,7 @@ def _ejecutar_ciclo_cazador_24_7(ciclo_idx: int) -> None:
             f"{resumen_lista}{extra_txt}\n\n"
             f"{estado_cola}"
         )
-        _notificar_dueno_wa(msg_dueno)
+        _notificar_dueno_wa(msg_dueno, cliente_id=cid)
         print(f"🕵️ [CAZADOR 24/7] Ciclo #{ESTADO_CAZADOR_24_7['ciclos_completados']} ({cid}/{fuente}/{muni}): +{len(nuevos_bd)} nuevos prospectos -> PENDIENTE_ENVIO")
 
 
