@@ -1,4 +1,5 @@
 export interface ProspectoVps {
+  id_cliente_agencia?: string
   nombre: string
   fuente: string
   google_maps_url: string
@@ -7,6 +8,23 @@ export interface ProspectoVps {
   direccion: string
   municipio: string
   segmento_cliente: string
+  oferta_recomendada?: string
+  estatus_contacto_wa?: string
+}
+
+export interface NichoVps {
+  cliente_id: string
+  nombre_negocio: string
+  nombre_agente: string
+  giro_objetivo: string
+  codigo_scian_inegi: string
+  keywords_busqueda: string
+  oferta_gancho: string
+  catalogo_y_reglas: string
+  protegido: boolean
+  activo: boolean
+  total_prospectos: number
+  enviados_wa: number
 }
 
 export interface PedidoVps {

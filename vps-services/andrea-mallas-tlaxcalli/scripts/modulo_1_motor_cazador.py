@@ -122,6 +122,13 @@ def _extraer_municipio_denue(ubicacion: str, fallback: str = "") -> str:
     return fallback
 
 
+def normalizar_cliente_id(cliente_id: str) -> str:
+    cid = re.sub(r"[^a-z0-9_-]", "_", quitar_acentos(str(cliente_id or "mallas_tlaxcalli"))).strip("_")
+    if not cid or cid == "mallas_tlaxcalli":
+        return "mallas_tlaxcalli"
+    return cid
+
+
 def _es_giro_valido_tlaxcalli(nombre: str, clase_actividad: str) -> bool:
     """
     Evita contaminación con tiendas de abarrotes, pollerías o restaurantes que por casualidad
@@ -150,11 +157,39 @@ def _es_giro_valido_tlaxcalli(nombre: str, clase_actividad: str) -> bool:
     return any(p in nom for p in ["tortill", "molino", "nixtamal", "celorio", "verduzco", "maquinaria", "refaccion"])
 
 
+def _es_giro_valido_nicho(nombre: str, clase_actividad: str, perfil: dict = None) -> bool:
+    if not perfil or normalizar_cliente_id(perfil.get("id_cliente", "mallas_tlaxcalli")) == "mallas_tlaxcalli":
+        return _es_giro_valido_tlaxcalli(nombre, clase_actividad)
+
+    busq = perfil.get("busqueda", {}) or {}
+    scian = str(busq.get("codigo_scian_inegi") or "").strip()
+    kws_raw = busq.get("palabras_clave_maps") or []
+    giro = str(busq.get("giro_principal") or "").strip()
+
+    clase = quitar_acentos(clase_actividad)
+    nom = quitar_acentos(nombre)
+    combinado = f"{nom} {clase}"
+
+    if scian and scian in combinado:
+        return True
+
+    tokens = []
+    for k in kws_raw + [giro]:
+        for tok in re.split(r"[,;/\s]+", quitar_acentos(str(k))):
+            if len(tok) >= 4 and tok not in ("para", "como", "este", "zona", "cdmx", "edomex", "mexico"):
+                tokens.append(tok)
+
+    if not tokens:
+        return True
+    return any(t in combinado for t in tokens)
+
+
+
 # ==============================================================================
 # 1. EXTRACCIÓN REAL DESDE INEGI DENUE API OFICIAL Y APIFY GOOGLE MAPS
 # ==============================================================================
 
-def _parsear_item_denue(d: dict, fallback_muni: str = "") -> dict | None:
+def _parsear_item_denue(d: dict, fallback_muni: str = "", perfil: dict = None) -> dict | None:
     tel = str(d.get("Telefono") or "").strip()
     if not tel:
         return None
@@ -163,7 +198,7 @@ def _parsear_item_denue(d: dict, fallback_muni: str = "") -> dict | None:
     razon = re.sub(r"\s+", " ", str(d.get("Razon_social") or "")).strip()
     clase = str(d.get("Clase_actividad") or "").strip()
 
-    if not _es_giro_valido_tlaxcalli(nombre_raw, clase):
+    if not _es_giro_valido_nicho(nombre_raw, clase, perfil):
         return None
 
     muni_real = _extraer_municipio_denue(d.get("Ubicacion") or "", fallback_muni)
@@ -185,8 +220,10 @@ def _parsear_item_denue(d: dict, fallback_muni: str = "") -> dict | None:
         partes_dir.append(f"C.P. {cp}")
     dir_completa = ", ".join(partes_dir) or f"Col. {colonia or 'Centro'}, {muni_real}"
 
+    es_tlaxcalli = not perfil or normalizar_cliente_id(perfil.get("id_cliente", "mallas_tlaxcalli")) == "mallas_tlaxcalli"
+    prefijo_giro = "Tortillería" if es_tlaxcalli else (perfil.get("busqueda", {}).get("giro_principal") or "Negocio")
     if not nombre_raw or "SIN NOMBRE" in nombre_raw.upper():
-        nombre = f"Tortillería Col. {colonia.title()}" if colonia else (razon.title() if razon else f"Tortillería {muni_real}")
+        nombre = f"{prefijo_giro} Col. {colonia.title()}" if colonia else (razon.title() if razon else f"{prefijo_giro} {muni_real}")
     else:
         nombre = nombre_raw.title()
 
@@ -208,7 +245,7 @@ def _parsear_item_denue(d: dict, fallback_muni: str = "") -> dict | None:
     }
 
 
-def extraer_inegi_por_coordenadas(termino: str, lat: str, lon: str, radio_metros: int, cant: int, token: str, reg_ini: int = 1, municipio_filtro: str = "") -> list:
+def extraer_inegi_por_coordenadas(termino: str, lat: str, lon: str, radio_metros: int, cant: int, token: str, reg_ini: int = 1, municipio_filtro: str = "", perfil: dict = None) -> list:
     """
     Usa el endpoint geográfico oficial del INEGI DENUE (`/Buscar/{termino}/{lat},{lon}/{radio}/{token}`),
     que devuelve los locales exactos dentro del municipio con Latitud/Longitud verificadas.
@@ -227,7 +264,7 @@ def extraer_inegi_por_coordenadas(termino: str, lat: str, lon: str, radio_metros
             extraidos = []
             muni_norm = quitar_acentos(municipio_filtro)
             for d in datos:
-                item = _parsear_item_denue(d, fallback_muni=municipio_filtro)
+                item = _parsear_item_denue(d, fallback_muni=municipio_filtro, perfil=perfil)
                 if not item:
                     continue
                 if muni_norm:
@@ -245,29 +282,34 @@ def extraer_inegi_por_coordenadas(termino: str, lat: str, lon: str, radio_metros
         return []
 
 
-def extraer_inegi_por_municipio(termino: str, clave_entidad: str, cant: int, token: str, reg_ini: int = 1) -> list:
+def extraer_inegi_por_municipio(termino: str, clave_entidad: str, cant: int, token: str, reg_ini: int = 1, perfil: dict = None) -> list:
     """
     Router inteligente para INEGI DENUE:
     Si el término incluye alguno de los municipios autorizados, consulta por coordenadas reales
-    del municipio (`/Buscar/tortilleria/lat,lon/5000/`) que SÍ arroja cientos de tortillerías
-    exactas del municipio (en vez de `BuscarEntidad/tortilleria ecatepec` que solo buscaba por nombre).
+    del municipio (`/Buscar/{giro}/lat,lon/5000/`).
     """
     if not token:
         return []
 
     termino_norm = quitar_acentos(termino)
     termino_limpio = re.sub(r"\s+", " ", termino_norm)
+    es_tlaxcalli = not perfil or normalizar_cliente_id(perfil.get("id_cliente", "mallas_tlaxcalli")) == "mallas_tlaxcalli"
 
     for clave_m, (lat, lon, nombre_m, ent) in CENTROS_MUNICIPIOS.items():
         if clave_m in termino_limpio:
-            q_base = "tortilleria"
-            if any(k in termino_limpio for k in ["mecanico", "maquina", "refaccion", "reparacion"]):
-                q_base = "maquinas tortilladoras"
-            elif "molino" in termino_limpio:
-                q_base = "molino"
+            if es_tlaxcalli:
+                q_base = "tortilleria"
+                if any(k in termino_limpio for k in ["mecanico", "maquina", "refaccion", "reparacion"]):
+                    q_base = "maquinas tortilladoras"
+                elif "molino" in termino_limpio:
+                    q_base = "molino"
+            else:
+                kws = (perfil.get("busqueda", {}) or {}).get("palabras_clave_maps") or []
+                q_base = kws[0] if kws else (perfil.get("busqueda", {}).get("giro_principal") or termino_limpio.replace(clave_m, "").strip() or "comercio")
             res = extraer_inegi_por_coordenadas(
                 q_base, lat, lon, 5000, cant, token, reg_ini=reg_ini,
-                municipio_filtro=("" if clave_m == "cdmx" else nombre_m)
+                municipio_filtro=("" if clave_m == "cdmx" else nombre_m),
+                perfil=perfil
             )
             if res:
                 return res
@@ -284,7 +326,7 @@ def extraer_inegi_por_municipio(termino: str, clave_entidad: str, cant: int, tok
                 return []
             extraidos = []
             for d in datos:
-                item = _parsear_item_denue(d)
+                item = _parsear_item_denue(d, perfil=perfil)
                 if item:
                     extraidos.append(item)
             return extraidos[:cant]
@@ -293,7 +335,7 @@ def extraer_inegi_por_municipio(termino: str, clave_entidad: str, cant: int, tok
         return []
 
 
-def extraer_apify_google_maps(busqueda: str, max_items: int, apify_token: str) -> list:
+def extraer_apify_google_maps(busqueda: str, max_items: int, apify_token: str, perfil: dict = None) -> list:
     """
     Ejecuta el scraper oficial de Google Maps en Apify (`compass~crawler-google-places`).
     Sobremuestrea (3x) para descartar locales cerrados o sin teléfono y devolver
@@ -324,9 +366,9 @@ def extraer_apify_google_maps(busqueda: str, max_items: int, apify_token: str) -
                 tel = str(it.get("phoneUnformatted") or it.get("phone") or "").strip()
                 if not tel:
                     continue
-                nombre = str(it.get("title") or "Tortillería").strip()
+                nombre = str(it.get("title") or "Negocio").strip()
                 cat = str(it.get("categoryName") or "").strip()
-                if not _es_giro_valido_tlaxcalli(nombre, cat or "tortilleria"):
+                if not _es_giro_valido_nicho(nombre, cat or busqueda, perfil):
                     continue
 
                 direccion = str(it.get("address") or "").strip()
@@ -481,6 +523,9 @@ def limpiar_telefono_mexicano(tel_crudo: str) -> tuple:
 
 
 def clasificar_negocio(registro: dict, perfil: dict) -> dict:
+    id_cliente = normalizar_cliente_id(perfil.get("id_cliente", "mallas_tlaxcalli"))
+    es_tlaxcalli = (id_cliente == "mallas_tlaxcalli")
+
     nombre = registro.get("nombre", "").strip()
     direccion = registro.get("direccion", "").strip()
     colonia = registro.get("colonia", "").strip()
@@ -491,20 +536,23 @@ def clasificar_negocio(registro: dict, perfil: dict) -> dict:
 
     tel_limpio, tel_valido = limpiar_telefono_mexicano(registro.get("telefono", ""))
 
-    cob = perfil["cobertura_logistica"]
-    municipios_ok = [quitar_acentos(m) for m in cob["municipios_edomex_autorizados"]]
-    alcaldias_ok = [quitar_acentos(a) for a in cob["alcaldias_cdmx_autorizadas"]]
+    cob = perfil.get("cobertura_logistica", {}) or {}
+    municipios_ok = [quitar_acentos(m) for m in (cob.get("municipios_edomex_autorizados") or [])]
+    alcaldias_ok = [quitar_acentos(a) for a in (cob.get("alcaldias_cdmx_autorizadas") or [])]
     muni_norm = quitar_acentos(municipio)
 
-    en_cobertura = any(
-        m in muni_norm or muni_norm in m
-        for m in (municipios_ok + alcaldias_ok + ["cdmx", "ciudad de mexico"])
-        if m
-    )
+    if not municipios_ok and not alcaldias_ok:
+        en_cobertura = True
+    else:
+        en_cobertura = any(
+            m in muni_norm or muni_norm in m
+            for m in (municipios_ok + alcaldias_ok + ["cdmx", "ciudad de mexico"])
+            if m
+        )
 
-    zonas_rojas = [quitar_acentos(z) for z in cob["colonias_zonas_rojas"]]
+    zonas_rojas = [quitar_acentos(z) for z in (cob.get("colonias_zonas_rojas") or [])]
     texto_ubicacion = quitar_acentos(f"{direccion} {colonia}")
-    es_zona_roja = any(zr in texto_ubicacion for zr in zonas_rojas)
+    es_zona_roja = any(zr in texto_ubicacion for zr in zonas_rojas if zr)
 
     if not tel_valido:
         estatus_filtro = "RECHAZADO_SIN_TELEFONO"
@@ -519,17 +567,26 @@ def clasificar_negocio(registro: dict, perfil: dict) -> dict:
         estatus_filtro = "APROBADO_RUTA_DIRECTA"
         modalidad_entrega = "ENTREGA_A_DOMICILIO_GRATIS"
 
-    reglas_oferta = perfil["reglas_clasificacion_oferta"]
-    palabras_mayoreo = [quitar_acentos(p) for p in reglas_oferta["palabras_clave_mayoreo"]]
+    reglas_oferta = perfil.get("reglas_clasificacion_oferta", {}) or {}
+    palabras_mayoreo = [quitar_acentos(p) for p in (reglas_oferta.get("palabras_clave_mayoreo") or [])]
     nombre_norm = quitar_acentos(nombre)
 
-    es_mecanico_mayoreo = any(pm in nombre_norm for pm in palabras_mayoreo)
-    if es_mecanico_mayoreo:
-        segmento = "MAYOREO_MECANICO_10_PIEZAS"
-        oferta_asignada = reglas_oferta["oferta_mayoreo"]
+    es_mecanico_mayoreo = any(pm in nombre_norm for pm in palabras_mayoreo if pm)
+    if es_tlaxcalli:
+        if es_mecanico_mayoreo:
+            segmento = "MAYOREO_MECANICO_10_PIEZAS"
+            oferta_asignada = reglas_oferta.get("oferta_mayoreo", "Mayoreo Mecánicos 10+ piezas")
+        else:
+            segmento = "MENUDEO_PAQUETE_1713"
+            oferta_asignada = reglas_oferta.get("oferta_menudeo", "Paquete Completo Mantenimiento $1,713 MXN")
     else:
-        segmento = "MENUDEO_PAQUETE_1713"
-        oferta_asignada = reglas_oferta["oferta_menudeo"]
+        giro_label = (perfil.get("busqueda", {}) or {}).get("giro_principal") or perfil.get("giro_objetivo") or "PROSPECTO_NICHO"
+        segmento = re.sub(r"\s+", "_", giro_label.strip().upper())[:36]
+        oferta_asignada = (
+            perfil.get("oferta_gancho")
+            or reglas_oferta.get("oferta_menudeo")
+            or f"Oferta Especial {perfil.get('nombre_empresa', id_cliente)}"
+        )
 
     score = 0
     if tel_valido and en_cobertura:
@@ -544,7 +601,7 @@ def clasificar_negocio(registro: dict, perfil: dict) -> dict:
     maps_url = registro.get("google_maps_url") or construir_link_google_maps(nombre, direccion, municipio, latitud, longitud)
 
     return {
-        "id_cliente_agencia": perfil["id_cliente"],
+        "id_cliente_agencia": id_cliente,
         "nombre": nombre,
         "telefono": tel_limpio,
         "direccion": direccion,
@@ -574,7 +631,7 @@ def inicializar_bd_sqlite():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS prospectos_cazador (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            id_cliente_agencia TEXT,
+            id_cliente_agencia TEXT DEFAULT 'mallas_tlaxcalli',
             nombre TEXT,
             telefono TEXT,
             direccion TEXT,
@@ -596,13 +653,25 @@ def inicializar_bd_sqlite():
     """)
     cur.execute("PRAGMA table_info(prospectos_cazador)")
     cols = [row[1] for row in cur.fetchall()]
+    if "id_cliente_agencia" not in cols:
+        cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN id_cliente_agencia TEXT DEFAULT 'mallas_tlaxcalli'")
     if "google_maps_url" not in cols:
         cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN google_maps_url TEXT")
     if "latitud" not in cols:
         cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN latitud TEXT DEFAULT ''")
     if "longitud" not in cols:
         cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN longitud TEXT DEFAULT ''")
-    # Asegurar índice único compatible con tablas antiguas ya creadas en VPS
+
+    # Normalizar todos los registros existentes de Mallas Tlaxcalli al tenant canónico protegido 'mallas_tlaxcalli'
+    cur.execute("""
+        UPDATE prospectos_cazador
+        SET id_cliente_agencia = 'mallas_tlaxcalli'
+        WHERE id_cliente_agencia IS NULL
+           OR TRIM(id_cliente_agencia) = ''
+           OR LOWER(TRIM(id_cliente_agencia)) = 'mallas_tlaxcalli'
+    """)
+
+    # Asegurar índices únicos compuestos (telefono, id_cliente_agencia) y (id_cliente_agencia, telefono)
     cur.execute("""
         DELETE FROM prospectos_cazador
         WHERE id NOT IN (
@@ -610,24 +679,29 @@ def inicializar_bd_sqlite():
         )
     """)
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prospecto_cliente_tel ON prospectos_cazador(id_cliente_agencia, telefono)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prospecto_tel_cliente ON prospectos_cazador(telefono, id_cliente_agencia)")
     conn.commit()
     return conn
 
 
 def guardar_y_exportar(clasificados: list, id_cliente: str):
+    id_cliente_norm = normalizar_cliente_id(id_cliente)
     conn = inicializar_bd_sqlite()
     cur = conn.cursor()
 
     for c in clasificados:
+        cid_item = normalizar_cliente_id(c.get("id_cliente_agencia") or id_cliente_norm)
+        c["id_cliente_agencia"] = cid_item
         if c["telefono"] and c["estatus_clasificacion"].startswith("APROBADO"):
             cur.execute(
-                "SELECT id FROM prospectos_cazador WHERE id_cliente_agencia = ? AND telefono = ?",
-                (c["id_cliente_agencia"], c["telefono"])
+                "SELECT id FROM prospectos_cazador WHERE LOWER(id_cliente_agencia) = LOWER(?) AND telefono = ?",
+                (cid_item, c["telefono"])
             )
             existente = cur.fetchone()
             if existente:
                 cur.execute("""
                     UPDATE prospectos_cazador SET
+                        id_cliente_agencia = ?,
                         nombre = ?,
                         direccion = ?,
                         colonia = ?,
@@ -637,7 +711,7 @@ def guardar_y_exportar(clasificados: list, id_cliente: str):
                         google_maps_url = CASE WHEN ? != '' THEN ? ELSE google_maps_url END
                     WHERE id = ?
                 """, (
-                    c["nombre"], c["direccion"], c["colonia"], c["municipio"],
+                    cid_item, c["nombre"], c["direccion"], c["colonia"], c["municipio"],
                     c.get("latitud", ""), c.get("latitud", ""),
                     c.get("longitud", ""), c.get("longitud", ""),
                     c.get("google_maps_url", ""), c.get("google_maps_url", ""),
@@ -652,7 +726,7 @@ def guardar_y_exportar(clasificados: list, id_cliente: str):
                         fecha_registro, google_maps_url, latitud, longitud
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    c["id_cliente_agencia"], c["nombre"], c["telefono"], c["direccion"], c["colonia"],
+                    cid_item, c["nombre"], c["telefono"], c["direccion"], c["colonia"],
                     c["municipio"], c["segmento_cliente"], c["oferta_recomendada"], c["modalidad_entrega"],
                     c["estatus_clasificacion"], c["score_prioridad"], c["fuente"], c["estatus_contacto_wa"],
                     c["fecha_registro"], c.get("google_maps_url", ""), c.get("latitud", ""), c.get("longitud", "")
@@ -660,16 +734,27 @@ def guardar_y_exportar(clasificados: list, id_cliente: str):
 
     conn.commit()
 
-    cur.execute("""
-        SELECT nombre, telefono, direccion, colonia, municipio, segmento_cliente,
-               oferta_recomendada, modalidad_entrega, estatus_clasificacion,
-               score_prioridad, fuente, estatus_contacto_wa, fecha_registro,
-               google_maps_url, latitud, longitud
-        FROM prospectos_cazador
-        WHERE id_cliente_agencia = ?
-          AND estatus_clasificacion LIKE 'APROBADO%'
-        ORDER BY score_prioridad DESC, id DESC
-    """, (id_cliente,))
+    if str(id_cliente or "").upper() == "TODOS":
+        cur.execute("""
+            SELECT nombre, telefono, direccion, colonia, municipio, segmento_cliente,
+                   oferta_recomendada, modalidad_entrega, estatus_clasificacion,
+                   score_prioridad, fuente, estatus_contacto_wa, fecha_registro,
+                   google_maps_url, latitud, longitud, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')
+            FROM prospectos_cazador
+            WHERE estatus_clasificacion LIKE 'APROBADO%'
+            ORDER BY score_prioridad DESC, id DESC
+        """)
+    else:
+        cur.execute("""
+            SELECT nombre, telefono, direccion, colonia, municipio, segmento_cliente,
+                   oferta_recomendada, modalidad_entrega, estatus_clasificacion,
+                   score_prioridad, fuente, estatus_contacto_wa, fecha_registro,
+                   google_maps_url, latitud, longitud, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')
+            FROM prospectos_cazador
+            WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)
+              AND estatus_clasificacion LIKE 'APROBADO%'
+            ORDER BY score_prioridad DESC, id DESC
+        """, (id_cliente_norm,))
     filas = cur.fetchall()
     conn.close()
 
@@ -680,8 +765,10 @@ def guardar_y_exportar(clasificados: list, id_cliente: str):
         muni_f = f[4]
         lat_f = f[14] if len(f) > 14 else ""
         lon_f = f[15] if len(f) > 15 else ""
+        cid_f = normalizar_cliente_id(f[16] if len(f) > 16 else id_cliente_norm)
         maps_link = f[13] if (len(f) > 13 and f[13] and "&center=" not in f[13]) else construir_link_google_maps(nombre_f, dir_f, muni_f, lat_f, lon_f)
         aprobados_db.append({
+            "id_cliente_agencia": cid_f,
             "nombre": nombre_f,
             "telefono": f[1],
             "direccion": dir_f,

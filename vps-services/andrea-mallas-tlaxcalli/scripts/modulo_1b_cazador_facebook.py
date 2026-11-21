@@ -151,9 +151,13 @@ def extraer_facebook_apify(query_o_url: str, max_posts: int = 20, apify_token: s
         return []
 
 
-def clasificar_post_gemini(texto_post: str, autor: str, municipio_fallback: str, llaves: list, modelos: list) -> dict:
+def clasificar_post_gemini(texto_post: str, autor: str, municipio_fallback: str, llaves: list, modelos: list, perfil_nicho: dict = None) -> dict:
     """Clasifica un post mediante Gemini con salida JSON estricta."""
-    prompt = f"""Analiza este contenido público de Facebook y determina si es un NEGOCIO, TALLER, TORTILLERÍA o CLIENTE POTENCIAL para mallas antiadherentes y refacciones de tortilladoras.
+    cid = str((perfil_nicho or {}).get("cliente_id") or "mallas_tlaxcalli").strip().lower()
+    es_tlaxcalli = (cid == "mallas_tlaxcalli")
+
+    if es_tlaxcalli:
+        prompt = f"""Analiza este contenido público de Facebook y determina si es un NEGOCIO, TALLER, TORTILLERÍA o CLIENTE POTENCIAL para mallas antiadherentes y refacciones de tortilladoras.
 
 REGLAS:
 1. Si es meme, queja política o empleo para repartidor/chofer, marca "es_negocio_valido": false.
@@ -171,6 +175,29 @@ Responde ÚNICAMENTE con este JSON válido (sin markdown, sin bloques ```):
   "nombre_comercial": "Nombre del Negocio",
   "municipio": "Municipio detectado",
   "segmento": "TORTILLERIA" o "MECANICO_MAQUINARIA"
+}}"""
+    else:
+        giro_obj = (perfil_nicho or {}).get("giro_objetivo") or "Comercio / Negocio"
+        kws_obj = (perfil_nicho or {}).get("keywords_busqueda") or giro_obj
+        nom_neg = (perfil_nicho or {}).get("nombre_negocio") or cid
+        prompt = f"""Analiza este contenido público de Facebook y determina si es un PROSPECTO o NEGOCIO VÁLIDO para "{nom_neg}" cuyo giro objetivo es: {giro_obj} (palabras clave: {kws_obj}).
+
+REGLAS:
+1. Si es meme, queja política o spam sin relación al giro, marca "es_negocio_valido": false.
+2. Si es un negocio, profesional o cliente potencial relacionado con "{giro_obj}", marca "es_negocio_valido": true.
+3. Extrae el nombre comercial (o el nombre del negocio/autor).
+4. Si menciona municipio o ciudad en el texto, extráelo; de lo contrario usa "{municipio_fallback}".
+
+Texto:
+\"\"\"{texto_post}\"\"\"
+Autor/Título: {autor}
+
+Responde ÚNICAMENTE con este JSON válido (sin markdown, sin bloques ```):
+{{
+  "es_negocio_valido": true,
+  "nombre_comercial": "Nombre del Negocio",
+  "municipio": "Municipio detectado",
+  "segmento": "{giro_obj[:30].upper()}"
 }}"""
 
     payload = {
@@ -201,29 +228,39 @@ Responde ÚNICAMENTE con este JSON válido (sin markdown, sin bloques ```):
                 continue
 
     # Fallback heurístico
-    es_valido = any(k in texto_post.lower() for k in ["tortill", "nixtamal", "molino", "malla", "teflon", "maquin", "celorio"])
+    if es_tlaxcalli:
+        es_valido = any(k in texto_post.lower() for k in ["tortill", "nixtamal", "molino", "malla", "teflon", "maquin", "celorio"])
+        seg_def = "TORTILLERIA"
+    else:
+        kws_fb = [k.strip().lower() for k in re.split(r"[,;/\s]+", str((perfil_nicho or {}).get("keywords_busqueda") or "")) if len(k.strip()) >= 4]
+        es_valido = True if not kws_fb else any(k in texto_post.lower() for k in kws_fb)
+        seg_def = str((perfil_nicho or {}).get("giro_objetivo") or "PROSPECTO_FB")[:30].upper()
     return {
         "es_negocio_valido": es_valido,
-        "nombre_comercial": autor or f"Tortillería Facebook ({municipio_fallback})",
+        "nombre_comercial": autor or f"Prospecto Facebook ({municipio_fallback})",
         "municipio": municipio_fallback,
-        "segmento": "TORTILLERIA",
+        "segmento": seg_def,
     }
 
 
-def ejecutar_caza_facebook(target: str, municipio_default: str = "Ecatepec", max_posts: int = 20) -> dict:
-    """Función orquestadora de Facebook con métricas para auditoría."""
+def ejecutar_caza_facebook(target: str, municipio_default: str = "Ecatepec", max_posts: int = 20, cliente_id: str = "mallas_tlaxcalli", perfil_nicho: dict = None) -> dict:
+    """Función orquestadora de Facebook con métricas para auditoría y soporte multi-nicho."""
     global ESTADO_ULTIMA_CORRIDA_FB
     ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cid_norm = re.sub(r"[^a-z0-9_-]", "_", str(cliente_id or "mallas_tlaxcalli").strip().lower()).strip("_") or "mallas_tlaxcalli"
+    es_tlaxcalli = (cid_norm == "mallas_tlaxcalli")
+    oferta_nicho = "PAQUETE_MALLAS_1713" if es_tlaxcalli else (str((perfil_nicho or {}).get("oferta_gancho") or "Oferta Especial").strip())
 
     ESTADO_ULTIMA_CORRIDA_FB = {
         "timestamp": ahora,
         "target": target,
+        "cliente_id": cid_norm,
         "status": "EJECUTANDO",
         "posts_extraidos": 0,
         "con_telefono": 0,
         "aprobados_ia": 0,
         "guardados_bd": 0,
-        "mensaje": f"Iniciando extracción en Facebook para '{target}'..."
+        "mensaje": f"Iniciando extracción en Facebook para '{target}' ({cid_norm})..."
     }
 
     env = cargar_env()
@@ -268,7 +305,7 @@ def ejecutar_caza_facebook(target: str, municipio_default: str = "Ecatepec", max
             continue
         con_tel += 1
 
-        clasif = clasificar_post_gemini(p["texto"], p["autor"], municipio_default, llaves, modelos)
+        clasif = clasificar_post_gemini(p["texto"], p["autor"], municipio_default, llaves, modelos, perfil_nicho=perfil_nicho)
         if not clasif.get("es_negocio_valido", False):
             continue
         aprobados += 1
@@ -293,14 +330,14 @@ def ejecutar_caza_facebook(target: str, municipio_default: str = "Ecatepec", max
                     ?, ?, ?, ?
                 )
             """, (
-                "mallas_tlaxcalli",
+                cid_norm,
                 nombre,
                 tel_principal,
                 direccion,
                 "Contacto Facebook",
                 muni,
-                clasif.get("segmento", "TORTILLERIA"),
-                "PAQUETE_MALLAS_1713",
+                clasif.get("segmento", "TORTILLERIA" if es_tlaxcalli else "PROSPECTO_FB"),
+                oferta_nicho,
                 "ENTREGA_A_DOMICILIO_GRATIS",
                 "APROBADO_FACEBOOK",
                 85,

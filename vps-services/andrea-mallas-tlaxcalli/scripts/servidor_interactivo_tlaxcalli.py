@@ -165,9 +165,98 @@ def inicializar_tablas_ecosistema():
             municipio TEXT,
             mensaje TEXT,
             tipo_envio TEXT,
-            fecha_hora TEXT
+            fecha_hora TEXT,
+            id_cliente_agencia TEXT DEFAULT 'mallas_tlaxcalli'
         )
     """)
+    cur.execute("PRAGMA table_info(bitacora_envios_wa)")
+    cols_bit = [row[1] for row in cur.fetchall()]
+    if "id_cliente_agencia" not in cols_bit:
+        cur.execute("ALTER TABLE bitacora_envios_wa ADD COLUMN id_cliente_agencia TEXT DEFAULT 'mallas_tlaxcalli'")
+    cur.execute("""
+        UPDATE bitacora_envios_wa
+        SET id_cliente_agencia = 'mallas_tlaxcalli'
+        WHERE id_cliente_agencia IS NULL
+           OR TRIM(id_cliente_agencia) = ''
+           OR LOWER(TRIM(id_cliente_agencia)) = 'mallas_tlaxcalli'
+    """)
+
+    # Normalizar prospectos existentes de Mallas Tlaxcalli y asegurar índice único compuesto (telefono, id_cliente_agencia)
+    cur.execute("PRAGMA table_info(prospectos_cazador)")
+    cols_prosp = [row[1] for row in cur.fetchall()]
+    if cols_prosp:
+        if "id_cliente_agencia" not in cols_prosp:
+            cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN id_cliente_agencia TEXT DEFAULT 'mallas_tlaxcalli'")
+        cur.execute("""
+            UPDATE prospectos_cazador
+            SET id_cliente_agencia = 'mallas_tlaxcalli'
+            WHERE id_cliente_agencia IS NULL
+               OR TRIM(id_cliente_agencia) = ''
+               OR LOWER(TRIM(id_cliente_agencia)) = 'mallas_tlaxcalli'
+        """)
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prospecto_cliente_tel ON prospectos_cazador(id_cliente_agencia, telefono)")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prospecto_tel_cliente ON prospectos_cazador(telefono, id_cliente_agencia)")
+
+    # Tabla Multi-Nicho / Multi-Tenant con tenant base protegido 'mallas_tlaxcalli'
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS perfiles_nicho (
+            cliente_id TEXT PRIMARY KEY,
+            nombre_negocio TEXT NOT NULL,
+            nombre_agente TEXT DEFAULT 'Andrea',
+            giro_objetivo TEXT NOT NULL,
+            codigo_scian_inegi TEXT DEFAULT '',
+            keywords_busqueda TEXT DEFAULT '',
+            oferta_gancho TEXT DEFAULT '',
+            catalogo_y_reglas TEXT DEFAULT '',
+            system_prompt TEXT DEFAULT '',
+            saludos_frio_json TEXT DEFAULT '[]',
+            municipios_json TEXT DEFAULT '[]',
+            protegido INTEGER DEFAULT 0,
+            activo INTEGER DEFAULT 1,
+            fecha_creacion TEXT DEFAULT ''
+        )
+    """)
+
+    prompt_tlax_default = ""
+    if os.path.exists(PROMPT_PATH):
+        try:
+            with open(PROMPT_PATH, "r", encoding="utf-8") as fp:
+                prompt_tlax_default = fp.read()
+        except Exception:
+            pass
+
+    municipios_tlax_default = [
+        "Ecatepec", "Ecatepec de Morelos", "Tultitlán", "Cuautitlán",
+        "Cuautitlán Izcalli", "Tepotzotlán", "Naucalpan", "Tlalnepantla",
+        "Atizapán", "Coacalco"
+    ]
+    catalogo_tlax_default = (
+        "PAQUETE_MALLAS_1713: Paquete Completo de Mantenimiento Mallas Tlaxcalli en $1,713 MXN (precio lista $1,900; en refaccionaria $2,700+). "
+        "Incluye 1 Malla Testalera (23 cm x 1.40 m) + 1 Malla Transportadora (10 pulg x 9 m Calibre 14 reforzado) + 1 Balero 7210B alemán con jaula de acero. "
+        "Envío GRATIS a domicilio en CDMX y 9 municipios de Edomex. Pago contra entrega con transferencia o tarjeta Mercado Pago. "
+        "Mayoreo para mecánicos (10+ piezas): Testalera Fierro $225 / Galv $230 / Transportadora $650."
+    )
+    cur.execute("""
+        INSERT OR IGNORE INTO perfiles_nicho (
+            cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
+            codigo_scian_inegi, keywords_busqueda, oferta_gancho,
+            catalogo_y_reglas, system_prompt, saludos_frio_json,
+            municipios_json, protegido, activo, fecha_creacion
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, datetime('now'))
+    """, (
+        "mallas_tlaxcalli",
+        "Mallas Tlaxcalli",
+        "Andrea / Paola",
+        "Tortillerías, Molinos de Nixtamal y Mecánicos de Maquinaria Tortilladora",
+        "311830",
+        "tortilleria, molino de nixtamal, maquinas tortilladoras, refacciones para tortilladoras, celorio, verduzco",
+        "PAQUETE_MALLAS_1713 — Paquete Completo Mantenimiento $1,713 MXN (Testalera 23x140 + Transportadora 10x9m Cal 14 + Balero 7210B) con envío gratis",
+        catalogo_tlax_default,
+        prompt_tlax_default,
+        "[]",
+        json.dumps(municipios_tlax_default, ensure_ascii=False)
+    ))
+    cur.execute("UPDATE perfiles_nicho SET protegido = 1 WHERE cliente_id = 'mallas_tlaxcalli'")
 
     # Tabla de Números Autorizados como Dueños (Ing. Paola / Ing. Rocha) para usar su Agente CDO directo en WhatsApp
     cur.execute("""
@@ -296,6 +385,177 @@ def cargar_system_prompt() -> str:
         with open(PROMPT_PATH, "r", encoding="utf-8") as f:
             return f.read()
     return "Eres la encargada de Ventas de Mallas Tlaxcalli."
+
+
+def obtener_nicho_bd(cliente_id: str = "mallas_tlaxcalli") -> dict:
+    cid = motor_m1.normalizar_cliente_id(cliente_id)
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
+               codigo_scian_inegi, keywords_busqueda, oferta_gancho,
+               catalogo_y_reglas, system_prompt, saludos_frio_json,
+               municipios_json, protegido, activo, fecha_creacion
+        FROM perfiles_nicho
+        WHERE LOWER(cliente_id) = LOWER(?)
+        LIMIT 1
+    """, (cid,))
+    row = cur.fetchone()
+    if not row and cid != "mallas_tlaxcalli":
+        cur.execute("""
+            SELECT cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
+                   codigo_scian_inegi, keywords_busqueda, oferta_gancho,
+                   catalogo_y_reglas, system_prompt, saludos_frio_json,
+                   municipios_json, protegido, activo, fecha_creacion
+            FROM perfiles_nicho
+            WHERE cliente_id = 'mallas_tlaxcalli'
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+    conn.close()
+    if not row:
+        return {
+            "cliente_id": "mallas_tlaxcalli",
+            "nombre_negocio": "Mallas Tlaxcalli",
+            "nombre_agente": "Andrea / Paola",
+            "giro_objetivo": "Tortillerías, Molinos de Nixtamal y Mecánicos de Maquinaria Tortilladora",
+            "codigo_scian_inegi": "311830",
+            "keywords_busqueda": "tortilleria, molino de nixtamal, maquinas tortilladoras",
+            "oferta_gancho": "PAQUETE_MALLAS_1713",
+            "catalogo_y_reglas": "",
+            "system_prompt": cargar_system_prompt(),
+            "protegido": True,
+            "activo": True
+        }
+    try:
+        munis = json.loads(row[10] or "[]")
+    except Exception:
+        munis = []
+    return {
+        "cliente_id": row[0],
+        "nombre_negocio": row[1],
+        "nombre_agente": row[2] or "Andrea",
+        "giro_objetivo": row[3] or "",
+        "codigo_scian_inegi": row[4] or "",
+        "keywords_busqueda": row[5] or "",
+        "oferta_gancho": row[6] or "",
+        "catalogo_y_reglas": row[7] or "",
+        "system_prompt": row[8] or "",
+        "saludos_frio_json": row[9] or "[]",
+        "municipios": munis,
+        "protegido": bool(row[11]),
+        "activo": bool(row[12]),
+        "fecha_creacion": row[13] or ""
+    }
+
+
+def construir_perfil_motor_desde_nicho(cliente_id: str = "mallas_tlaxcalli") -> dict:
+    cid = motor_m1.normalizar_cliente_id(cliente_id)
+    with open(PERFIL_PATH, "r", encoding="utf-8") as f:
+        perfil_base = json.load(f)
+    if cid == "mallas_tlaxcalli":
+        perfil_base["id_cliente"] = "mallas_tlaxcalli"
+        return perfil_base
+
+    nicho = obtener_nicho_bd(cid)
+    kws = [k.strip() for k in re.split(r"[,;\n]+", nicho.get("keywords_busqueda") or "") if k.strip()]
+    if not kws and nicho.get("giro_objetivo"):
+        kws = [nicho["giro_objetivo"].strip()]
+
+    perfil_custom = json.loads(json.dumps(perfil_base))
+    perfil_custom["id_cliente"] = nicho["cliente_id"]
+    perfil_custom["nombre_empresa"] = nicho["nombre_negocio"]
+    perfil_custom["giro_objetivo"] = nicho["giro_objetivo"]
+    perfil_custom["oferta_gancho"] = nicho["oferta_gancho"]
+    perfil_custom["busqueda"] = {
+        "giro_principal": nicho["giro_objetivo"],
+        "palabras_clave_maps": kws,
+        "codigo_scian_inegi": nicho.get("codigo_scian_inegi", ""),
+        "pais": "mx"
+    }
+    if nicho.get("municipios"):
+        perfil_custom["cobertura_logistica"]["municipios_edomex_autorizados"] = nicho["municipios"]
+    perfil_custom["reglas_clasificacion_oferta"] = {
+        "palabras_clave_mayoreo": ["mayoreo", "distribuidor", "proveedor", "taller"],
+        "oferta_menudeo": nicho.get("oferta_gancho") or f"Oferta Especial {nicho['nombre_negocio']}",
+        "oferta_mayoreo": nicho.get("oferta_gancho") or f"Mayoreo {nicho['nombre_negocio']}"
+    }
+    return perfil_custom
+
+
+def obtener_lista_nichos_con_metricas() -> list:
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')), COUNT(*)
+        FROM prospectos_cazador
+        WHERE estatus_clasificacion LIKE 'APROBADO%'
+        GROUP BY LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli'))
+    """)
+    conteo_prosp = {r[0]: r[1] for r in cur.fetchall()}
+
+    cur.execute("""
+        SELECT LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')), COUNT(*)
+        FROM bitacora_envios_wa
+        GROUP BY LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli'))
+    """)
+    conteo_bit = {r[0]: r[1] for r in cur.fetchall()}
+
+    cur.execute("""
+        SELECT cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
+               codigo_scian_inegi, keywords_busqueda, oferta_gancho,
+               catalogo_y_reglas, protegido, activo, fecha_creacion
+        FROM perfiles_nicho
+        ORDER BY protegido DESC, fecha_creacion ASC
+    """)
+    filas = cur.fetchall()
+    conn.close()
+
+    nichos = []
+    for r in filas:
+        cid = r[0]
+        nichos.append({
+            "cliente_id": cid,
+            "nombre_negocio": r[1],
+            "nombre_agente": r[2] or "Andrea",
+            "giro_objetivo": r[3] or "",
+            "codigo_scian_inegi": r[4] or "",
+            "keywords_busqueda": r[5] or "",
+            "oferta_gancho": r[6] or "",
+            "catalogo_y_reglas": r[7] or "",
+            "protegido": bool(r[8]),
+            "activo": bool(r[9]),
+            "fecha_creacion": r[10] or "",
+            "total_prospectos": conteo_prosp.get(cid.lower(), 0),
+            "enviados_wa": conteo_bit.get(cid.lower(), 0)
+        })
+    return nichos
+
+
+def resolver_cliente_id_por_telefono_o_sesion(session_id: str, cliente_id_explicito: str = "") -> str:
+    if cliente_id_explicito and str(cliente_id_explicito).strip():
+        return motor_m1.normalizar_cliente_id(cliente_id_explicito)
+    digs = re.sub(r"\D", "", str(session_id or ""))
+    if len(digs) >= 10:
+        ult10 = digs[-10:]
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')
+                FROM prospectos_cazador
+                WHERE telefono LIKE ?
+                ORDER BY CASE WHEN fecha_ultimo_wa IS NOT NULL AND fecha_ultimo_wa != '' THEN 0 ELSE 1 END,
+                         fecha_ultimo_wa DESC, id DESC
+                LIMIT 1
+            """, (f"%{ult10}",))
+            row = cur.fetchone()
+            conn.close()
+            if row and row[0]:
+                return motor_m1.normalizar_cliente_id(row[0])
+        except Exception:
+            pass
+    return motor_m1.normalizar_cliente_id(leer_config("nicho_activo_default", "mallas_tlaxcalli"))
 
 
 # ==============================================================================
@@ -711,16 +971,48 @@ def transcribir_audio_gemini(audio_b64: str, mimetype: str = "audio/ogg") -> str
     return ""
 
 
-def llamar_pool_ia_real(session_id: str, mensaje_usuario: str, incluir_voz: bool = False) -> dict:
+def construir_system_prompt_nicho(nicho: dict, historial: list) -> str:
+    cid = motor_m1.normalizar_cliente_id(nicho.get("cliente_id", "mallas_tlaxcalli"))
+    if cid == "mallas_tlaxcalli":
+        return cargar_system_prompt() + analizar_memoria_verificada_cliente(historial)
+
+    nombre_negocio = nicho.get("nombre_negocio") or cid
+    nombre_agente = nicho.get("nombre_agente") or "Andrea"
+    giro_obj = nicho.get("giro_objetivo") or "clientes comerciales"
+    oferta = nicho.get("oferta_gancho") or "Oferta especial"
+    # Truncado seguro a máximo 2,500 caracteres para latencia óptima
+    catalogo_truncado = str(nicho.get("catalogo_y_reglas") or "")[:2500]
+    prompt_custom = str(nicho.get("system_prompt") or "").strip()
+
+    base = prompt_custom if prompt_custom else (
+        f"# {nombre_agente.upper()} — ASESORA COMERCIAL DE {nombre_negocio.upper()} (WhatsApp)\n\n"
+        f"## QUIÉN ERES\n"
+        f"Eres **{nombre_agente}**, asesora comercial de **{nombre_negocio}**, especializada en atender a **{giro_obj}**.\n"
+        f"Eres mujer mexicana, cálida, ágil y persuasiva. Tu objetivo es resolver dudas con naturalidad y **CERRAR LA VENTA / PEDIDO**.\n\n"
+        f"## OFERTA GANCHO PRINCIPAL\n{oferta}\n\n"
+        f"## CATÁLOGO, PRECIOS Y REGLAS DEL NEGOCIO\n{catalogo_truncado}\n\n"
+        f"## REGLAS DE ORO EN WHATSAPP\n"
+        f"1. **MÁXIMO 2 RENGLONES (25-35 palabras).** Mensajes cortos y humanos.\n"
+        f"2. **SIEMPRE termina con UNA sola pregunta fácil de contestar** para avanzar el cierre.\n"
+        f"3. Suelta un beneficio o precio a la vez (Escalera del Sí).\n"
+        f"4. CAPACIDAD DE VOZ ACTIVA: Nunca digas que eres IA ni que no puedes mandar audios.\n"
+        f"5. Si el cliente confirma pedido y ya dio sus 4 datos (nombre/negocio, dirección, horario y método de pago), añade al final:\n"
+        f'`[PEDIDO_CERRADO:{{"cliente":"Nombre","direccion":"Direccion","municipio":"Municipio","horario":"Horario","metodo_pago":"METODO","precio":"0"}}]`'
+    )
+    return base
+
+
+def llamar_pool_ia_real(session_id: str, mensaje_usuario: str, incluir_voz: bool = False, cliente_id: str = "") -> dict:
     ESTADISTICAS_POOL["llamadas_totales"] += 1
-    sys_prompt_base = cargar_system_prompt()
+    cid = resolver_cliente_id_por_telefono_o_sesion(session_id, cliente_id)
+    nicho = obtener_nicho_bd(cid)
 
     if session_id not in SESIONES_CHAT:
         SESIONES_CHAT[session_id] = []
     historial = SESIONES_CHAT[session_id]
     historial.append({"role": "user", "content": mensaje_usuario})
 
-    sys_prompt_completo = sys_prompt_base + analizar_memoria_verificada_cliente(historial)
+    sys_prompt_completo = construir_system_prompt_nicho(nicho, historial)
     llaves = obtener_llaves_ia_backend()
 
     contents = []
@@ -858,7 +1150,7 @@ Devuelve tu respuesta dividida claramente con estos 4 encabezados exactos:
 COLA_MENSAJES_PAOLA = []
 
 
-def _mensaje_saliente_prospecto(pid: int, nombre: str, municipio: str) -> str:
+def _mensaje_saliente_prospecto(pid: int, nombre: str, municipio: str, cliente_id: str = "mallas_tlaxcalli") -> str:
     # Saludo dinámico según hora real en CDMX (UTC-6) + 6 variantes naturales anti-huella
     ahora_mx = datetime.now(timezone.utc) - timedelta(hours=6)
     hora_mx = ahora_mx.hour
@@ -878,15 +1170,31 @@ def _mensaje_saliente_prospecto(pid: int, nombre: str, municipio: str) -> str:
     )
     ref_negocio = f"*{nom_raw}*" if nombre_valido else f"su negocio en *{mun}*"
 
-    saludos = [
-        f"{saludo_hora}, disculpe la molestia 👋 Le saluda Paola de *Mallas Tlaxcalli*. Somos fabricantes directos de mallas y refacciones para tortilladora y andamos armando ruta por *{mun}*. Queríamos dejarle nuestro contacto para {ref_negocio} por si llegan a ocupar mallas o baleros sin frenar su turno. Si gusta le paso foto del paquete con envío gratis, sin compromiso. ¡Excelente jornada!",
-        f"Qué tal, muy {saludo_hora.lower()}, disculpe interrumpir el turno 👋 Le escribe Paola de *Mallas Tlaxcalli*. Fabricamos mallas reforzadas para tortilladora y baleros, y seguido entregamos pedidos en *{mun}*. Les compartimos nuestro contacto directo para {ref_negocio} por si en algún momento necesitan refacción directo de fábrica. ¿Le gustaría ver la foto del paquete completo? Sin presión, aquí quedamos a la orden.",
-        f"{saludo_hora}, disculpe que le escriba en horario de trabajo 👋 Soy Paola del taller *Mallas Tlaxcalli*. Hacemos mallas testaleras, transportadoras y baleros para máquina tortilladora con entrega directa en *{mun}* y pago al recibir. Si en {ref_negocio} llegan a requerir cambio, con gusto le mando fotos de referencia cuando tenga un chance. ¡Mucho éxito hoy!",
-        f"Hola, {saludo_hora.lower()} 👋 Le saluda Paola de *Mallas Tlaxcalli*. Andamos visitando y entregando pedidos de mallas y baleros para tortilladora en la zona de *{mun}*. Le dejo este mensaje breve por si en {ref_negocio} buscan proveedor directo de taller con envío sin costo. Si le interesa, me responde y le mando el catálogo rápido. ¡Que tenga muy buena venta!",
-        f"{saludo_hora}, un saludo cordial hasta *{mun}* 👋 Le escribe Paola de *Mallas Tlaxcalli*. Nos dedicamos a fabricar mallas de acero y refacciones para tortilladora, entregando directo en su local. Quedamos a la orden para {ref_negocio} para cuando necesiten mantenimiento preventivo o alguna urgencia. ¿Quiere que le comparta precios y fotos de nuestro paquete? Quedo pendiente sin compromiso.",
-        f"Qué tal, {saludo_hora.lower()}, mucho gusto 👋 Soy Paola de *Mallas Tlaxcalli*. Somos taller fabricante de mallas y baleros para tortilladora y esta semana traemos ruta por *{mun}*. Le dejamos nuestro WhatsApp por si en {ref_negocio} ocupan cotizar refacciones directo de fábrica y con pago contra entrega. Si gusta le envío fotos del kit cuando guste. ¡Saludos!"
+    cid = motor_m1.normalizar_cliente_id(cliente_id)
+    if cid == "mallas_tlaxcalli":
+        saludos = [
+            f"{saludo_hora}, disculpe la molestia 👋 Le saluda Paola de *Mallas Tlaxcalli*. Somos fabricantes directos de mallas y refacciones para tortilladora y andamos armando ruta por *{mun}*. Queríamos dejarle nuestro contacto para {ref_negocio} por si llegan a ocupar mallas o baleros sin frenar su turno. Si gusta le paso foto del paquete con envío gratis, sin compromiso. ¡Excelente jornada!",
+            f"Qué tal, muy {saludo_hora.lower()}, disculpe interrumpir el turno 👋 Le escribe Paola de *Mallas Tlaxcalli*. Fabricamos mallas reforzadas para tortilladora y baleros, y seguido entregamos pedidos en *{mun}*. Les compartimos nuestro contacto directo para {ref_negocio} por si en algún momento necesitan refacción directo de fábrica. ¿Le gustaría ver la foto del paquete completo? Sin presión, aquí quedamos a la orden.",
+            f"{saludo_hora}, disculpe que le escriba en horario de trabajo 👋 Soy Paola del taller *Mallas Tlaxcalli*. Hacemos mallas testaleras, transportadoras y baleros para máquina tortilladora con entrega directa en *{mun}* y pago al recibir. Si en {ref_negocio} llegan a requerir cambio, con gusto le mando fotos de referencia cuando tenga un chance. ¡Mucho éxito hoy!",
+            f"Hola, {saludo_hora.lower()} 👋 Le saluda Paola de *Mallas Tlaxcalli*. Andamos visitando y entregando pedidos de mallas y baleros para tortilladora en la zona de *{mun}*. Le dejo este mensaje breve por si en {ref_negocio} buscan proveedor directo de taller con envío sin costo. Si le interesa, me responde y le mando el catálogo rápido. ¡Que tenga muy buena venta!",
+            f"{saludo_hora}, un saludo cordial hasta *{mun}* 👋 Le escribe Paola de *Mallas Tlaxcalli*. Nos dedicamos a fabricar mallas de acero y refacciones para tortilladora, entregando directo en su local. Quedamos a la orden para {ref_negocio} para cuando necesiten mantenimiento preventivo o alguna urgencia. ¿Quiere que le comparta precios y fotos de nuestro paquete? Quedo pendiente sin compromiso.",
+            f"Qué tal, {saludo_hora.lower()}, mucho gusto 👋 Soy Paola de *Mallas Tlaxcalli*. Somos taller fabricante de mallas y baleros para tortilladora y esta semana traemos ruta por *{mun}*. Le dejamos nuestro WhatsApp por si en {ref_negocio} ocupan cotizar refacciones directo de fábrica y con pago contra entrega. Si gusta le envío fotos del kit cuando guste. ¡Saludos!"
+        ]
+        return saludos[pid % len(saludos)]
+
+    nicho = obtener_nicho_bd(cid)
+    nom_emp = nicho.get("nombre_negocio") or cid
+    agente = nicho.get("nombre_agente") or "Andrea"
+    oferta = nicho.get("oferta_gancho") or "nuestra promoción especial"
+    saludos_nicho = [
+        f"{saludo_hora}, disculpe la molestia 👋 Le saluda {agente} de *{nom_emp}*. Andamos atendiendo negocios en *{mun}* y queríamos ponernos a las órdenes de {ref_negocio} con {oferta}. ¿Gusta que le comparta los detalles rápido y sin compromiso? ¡Excelente día!",
+        f"Qué tal, muy {saludo_hora.lower()} 👋 Le escribe {agente} de *{nom_emp}*. Vimos a {ref_negocio} en *{mun}* y le dejamos nuestro contacto directo por si les interesa aprovechar {oferta}. Si gusta le paso la información por aquí cuando tenga un minuto.",
+        f"{saludo_hora}, un gusto saludarle hasta *{mun}* 👋 Soy {agente} de *{nom_emp}*. Estamos apoyando a negocios de su giro como {ref_negocio} con {oferta}. ¿Le gustaría que le envíe precios y catálogo breve sin compromiso?",
+        f"Hola, {saludo_hora.lower()} 👋 Le saluda {agente} del equipo de *{nom_emp}*. Esta semana tenemos atención prioritaria en *{mun}* para {ref_negocio} con {oferta}. ¿Le comparto la ficha rápida por este medio? ¡Mucho éxito hoy!",
+        f"{saludo_hora}, disculpe que le escriba brevemente 👋 Soy {agente} de *{nom_emp}*. Nos especializamos en atender a negocios en *{mun}* y tenemos disponible {oferta} para {ref_negocio}. Quedo a su orden si desea conocer los beneficios.",
+        f"Qué tal, {saludo_hora.lower()}, cordial saludo 👋 Le escribe {agente} de *{nom_emp}*. Le dejo nuestro WhatsApp directo para {ref_negocio} en *{mun}*; contamos con {oferta}. Si le interesa revisarlo sin presión, dígame y le mando los detalles."
     ]
-    return saludos[pid % len(saludos)]
+    return saludos_nicho[pid % len(saludos_nicho)]
 
 
 def obtener_candidato_envio_50() -> dict:
@@ -907,25 +1215,37 @@ def obtener_candidato_envio_50() -> dict:
         conn.close()
         return {"ok": False, "motivo": "META_DIARIA_50_COMPLETADA", "enviados_hoy": enviados_hoy}
 
+    cur.execute("SELECT LOWER(cliente_id) FROM perfiles_nicho WHERE activo = 0")
+    inactivos = {r[0] for r in cur.fetchall()}
+
     cur.execute("""
-        SELECT id, nombre, telefono, municipio, direccion, google_maps_url
+        SELECT id, nombre, telefono, municipio, direccion, google_maps_url, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')
         FROM prospectos_cazador
         WHERE (estatus_contacto_wa IS NULL OR estatus_contacto_wa IN ('PENDIENTE', 'PENDIENTE_ENVIO', 'VERIFICADO_WA', ''))
           AND (estatus_clasificacion LIKE 'APROBADO%')
           AND (estatus_maps IS NULL OR estatus_maps != 'CERRADA_DESCARTADA')
         ORDER BY CASE WHEN estatus_contacto_wa = 'VERIFICADO_WA' THEN 0 ELSE 1 END, id ASC
-        LIMIT 1
+        LIMIT 25
     """)
-    row = cur.fetchone()
+    filas = cur.fetchall()
     conn.close()
+    row = None
+    for cand_r in filas:
+        cid_cand = motor_m1.normalizar_cliente_id(cand_r[6])
+        if cid_cand.lower() not in inactivos:
+            row = cand_r
+            break
+
     if not row:
         return {"ok": False, "motivo": "SIN_PROSPECTOS_PENDIENTES", "enviados_hoy": enviados_hoy}
 
-    pid, nombre, telefono, municipio, direccion, maps_url = row
-    mensaje_wa = _mensaje_saliente_prospecto(pid, nombre, municipio)
+    pid, nombre, telefono, municipio, direccion, maps_url, cid_raw = row
+    cid = motor_m1.normalizar_cliente_id(cid_raw)
+    mensaje_wa = _mensaje_saliente_prospecto(pid, nombre, municipio, cliente_id=cid)
     return {
         "ok": True,
         "id": pid,
+        "id_cliente_agencia": cid,
         "nombre": nombre,
         "telefono": telefono,
         "municipio": municipio,
@@ -938,7 +1258,7 @@ def obtener_candidato_envio_50() -> dict:
 def confirmar_envio_50(pid: int, enviado: bool, motivo: str = "", telefono_real: str = "", mensaje: str = "") -> dict:
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("SELECT nombre, telefono, municipio FROM prospectos_cazador WHERE id = ?", (pid,))
+    cur.execute("SELECT nombre, telefono, municipio, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli') FROM prospectos_cazador WHERE id = ?", (pid,))
     row = cur.fetchone()
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -946,26 +1266,27 @@ def confirmar_envio_50(pid: int, enviado: bool, motivo: str = "", telefono_real:
         conn.close()
         return {"ok": False, "error": "ID no encontrado"}
 
-    nombre, tel_bd, municipio = row
+    nombre, tel_bd, municipio, cid_raw = row
+    cid = motor_m1.normalizar_cliente_id(cid_raw)
     if not enviado:
         nuevo_est = "SIN_WHATSAPP" if "SIN_WHATSAPP" in motivo.upper() else "ERROR_ENVIO_WA"
         cur.execute("UPDATE prospectos_cazador SET estatus_contacto_wa = ? WHERE id = ?", (nuevo_est, pid))
         conn.commit()
         conn.close()
         exportar_excel_en_vivo()
-        return {"ok": True, "estatus": nuevo_est}
+        return {"ok": True, "estatus": nuevo_est, "id_cliente_agencia": cid}
 
     tel_final = telefono_real or tel_bd
-    msg_final = mensaje or _mensaje_saliente_prospecto(pid, nombre, municipio)
+    msg_final = mensaje or _mensaje_saliente_prospecto(pid, nombre, municipio, cliente_id=cid)
     cur.execute("""
         UPDATE prospectos_cazador
         SET estatus_contacto_wa = 'CONTACTADO_WA', fecha_ultimo_wa = ?
         WHERE id = ?
     """, (ahora_str, pid))
     cur.execute("""
-        INSERT INTO bitacora_envios_wa (telefono, nombre_negocio, municipio, mensaje, tipo_envio, fecha_hora)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (tel_final, nombre, municipio, msg_final, "GOTEO_50_DIARIOS_ANTIBAN", ahora_str))
+        INSERT INTO bitacora_envios_wa (telefono, nombre_negocio, municipio, mensaje, tipo_envio, fecha_hora, id_cliente_agencia)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (tel_final, nombre, municipio, msg_final, "GOTEO_50_DIARIOS_ANTIBAN", ahora_str, cid))
 
     hoy_prefijo = datetime.now().strftime("%Y-%m-%d")
     cur.execute("SELECT COUNT(*) FROM bitacora_envios_wa WHERE fecha_hora LIKE ?", (f"{hoy_prefijo}%",))
@@ -977,7 +1298,7 @@ def confirmar_envio_50(pid: int, enviado: bool, motivo: str = "", telefono_real:
     ESTADO_MOTOR_50_DIARIOS["ultimo_negocio_contactado"] = ultimo_txt
     guardar_config("ultimo_negocio_contactado", ultimo_txt)
     exportar_excel_en_vivo()
-    return {"ok": True, "estatus": "CONTACTADO_WA", "enviados_hoy": enviados_hoy, "nombre": nombre, "municipio": municipio}
+    return {"ok": True, "estatus": "CONTACTADO_WA", "id_cliente_agencia": cid, "enviados_hoy": enviados_hoy, "nombre": nombre, "municipio": municipio}
 
 
 def obtener_siguiente_envio_50_diarios() -> dict:
@@ -1670,15 +1991,43 @@ Devuelve SOLO un objeto JSON válido con esas llaves."""
 # ==============================================================================
 
 def obtener_datos_completos_bd(id_cliente: str) -> dict:
-    _, aprobados_db, _ = motor_m1.guardar_y_exportar([], id_cliente)
+    es_todos = str(id_cliente or "").upper() == "TODOS"
+    cid_norm = "TODOS" if es_todos else motor_m1.normalizar_cliente_id(id_cliente)
+    _, aprobados_db, _ = motor_m1.guardar_y_exportar([], cid_norm)
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    # Mapear estatus_maps de cada teléfono
-    cur.execute("SELECT telefono, estatus_maps FROM prospectos_cazador WHERE id_cliente_agencia = ?", (id_cliente,))
-    mapa_estatus = {r[0]: (r[1] or "PENDIENTE_VERIFICAR") for r in cur.fetchall()}
+    # Mapear estatus_maps de cada teléfono y cliente
+    if es_todos:
+        cur.execute("SELECT LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')), telefono, estatus_maps FROM prospectos_cazador")
+    else:
+        cur.execute(
+            "SELECT LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')), telefono, estatus_maps FROM prospectos_cazador WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)",
+            (cid_norm,)
+        )
+    mapa_estatus = {(r[0], r[1]): (r[2] or "PENDIENTE_VERIFICAR") for r in cur.fetchall()}
     for p in aprobados_db:
-        p["estatus_maps"] = mapa_estatus.get(p["telefono"], "PENDIENTE_VERIFICAR")
+        cid_p = motor_m1.normalizar_cliente_id(p.get("id_cliente_agencia", cid_norm)).lower()
+        p["estatus_maps"] = mapa_estatus.get((cid_p, p["telefono"]), "PENDIENTE_VERIFICAR")
+
+    # Métricas de bitácora de envíos WA por nicho
+    hoy_pref = datetime.now().strftime("%Y-%m-%d")
+    if es_todos:
+        cur.execute("SELECT COUNT(*) FROM bitacora_envios_wa")
+        bit_total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM bitacora_envios_wa WHERE fecha_hora LIKE ?", (f"{hoy_pref}%",))
+        bit_hoy = cur.fetchone()[0]
+    else:
+        cur.execute(
+            "SELECT COUNT(*) FROM bitacora_envios_wa WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)",
+            (cid_norm,)
+        )
+        bit_total = cur.fetchone()[0]
+        cur.execute(
+            "SELECT COUNT(*) FROM bitacora_envios_wa WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?) AND fecha_hora LIKE ?",
+            (cid_norm, f"{hoy_pref}%")
+        )
+        bit_hoy = cur.fetchone()[0]
 
     # Módulo 3: Pedidos y Comisiones
     cur.execute("""
@@ -1732,7 +2081,9 @@ def obtener_datos_completos_bd(id_cliente: str) -> dict:
     return {
         "prospectos": aprobados_db,
         "pedidos": pedidos,
-        "seguimientos": seguimientos
+        "seguimientos": seguimientos,
+        "bitacora_total": bit_total,
+        "bitacora_hoy": bit_hoy
     }
 
 
@@ -1896,13 +2247,26 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if parsed.path == "/api/datos_seguros":
-            env = motor_m1.cargar_env()
-            with open(PERFIL_PATH, "r", encoding="utf-8") as f:
-                perfil = json.load(f)
+        if parsed.path == "/api/nichos":
+            nichos = obtener_lista_nichos_con_metricas()
+            self._send_json({
+                "ok": True,
+                "nicho_default": leer_config("nicho_activo_default", "mallas_tlaxcalli"),
+                "nichos": nichos
+            })
+            return
 
-            bd_info = obtener_datos_completos_bd(perfil["id_cliente"])
+        if parsed.path == "/api/datos_seguros":
+            qs = urllib.parse.parse_qs(parsed.query)
+            cid_query = (qs.get("cliente_id", [""])[0] or "").strip()
+            cid_target = "TODOS" if cid_query.upper() == "TODOS" else motor_m1.normalizar_cliente_id(cid_query or "mallas_tlaxcalli")
+
+            env = motor_m1.cargar_env()
+            perfil = construir_perfil_motor_desde_nicho("mallas_tlaxcalli" if cid_target == "TODOS" else cid_target)
+
+            bd_info = obtener_datos_completos_bd(cid_target)
             fotos_pau = listar_imagenes_pau()
+            nichos_lista = obtener_lista_nichos_con_metricas()
 
             n8n_url = "https://agencia-topdiegozc-vsc-server.ngssgr.easypanel.host/proxy/5678/"
             if os.path.exists("/tmp/cf_n8n_vps.log"):
@@ -1922,8 +2286,13 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
 
             self._send_json({
                 "cliente": perfil["nombre_empresa"],
+                "cliente_id_activo": cid_target,
+                "nichos": nichos_lista,
                 "municipios_autorizados": perfil["cobertura_logistica"]["municipios_edomex_autorizados"],
                 "total_reales_bd": len(bd_info["prospectos"]),
+                "bitacora_total": bd_info.get("bitacora_total", 0),
+                "bitacora_hoy": bd_info.get("bitacora_hoy", 0),
+                "meta_diaria_frio": ESTADO_MOTOR_50_DIARIOS["meta_diaria"],
                 "prospectos": bd_info["prospectos"],
                 "pedidos": bd_info["pedidos"],
                 "seguimientos": bd_info["seguimientos"],
@@ -1955,17 +2324,106 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
         data = json.loads(raw)
 
+        if self.path == "/api/nichos":
+            nombre_negocio = str(data.get("nombre_negocio") or "").strip()
+            raw_cid = str(data.get("cliente_id") or nombre_negocio).strip()
+            cid = motor_m1.normalizar_cliente_id(raw_cid)
+            if not nombre_negocio:
+                self._send_json({"ok": False, "error": "El nombre del negocio es obligatorio."}, status=400)
+                return
+            if cid == "mallas_tlaxcalli":
+                self._send_json({
+                    "ok": False,
+                    "error": "El perfil base Mallas Tlaxcalli está protegido con candado y no puede ser modificado ni sobreescrito."
+                }, status=403)
+                return
+
+            nombre_agente = str(data.get("nombre_agente") or "Andrea").strip() or "Andrea"
+            giro_objetivo = str(data.get("giro_objetivo") or "").strip()
+            if not giro_objetivo:
+                self._send_json({"ok": False, "error": "El giro o cliente objetivo es obligatorio."}, status=400)
+                return
+            codigo_scian = str(data.get("codigo_scian_inegi") or "").strip()
+            keywords = str(data.get("keywords_busqueda") or giro_objetivo).strip()
+            oferta_gancho = str(data.get("oferta_gancho") or "").strip()
+            # Truncado seguro a máximo 2,500 caracteres
+            catalogo_reglas = str(data.get("catalogo_y_reglas") or "").strip()[:2500]
+            system_prompt_custom = str(data.get("system_prompt") or "").strip()[:2500]
+
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO perfiles_nicho (
+                    cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
+                    codigo_scian_inegi, keywords_busqueda, oferta_gancho,
+                    catalogo_y_reglas, system_prompt, saludos_frio_json,
+                    municipios_json, protegido, activo, fecha_creacion
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', 0, 1, datetime('now'))
+                ON CONFLICT(cliente_id) DO UPDATE SET
+                    nombre_negocio = excluded.nombre_negocio,
+                    nombre_agente = excluded.nombre_agente,
+                    giro_objetivo = excluded.giro_objetivo,
+                    codigo_scian_inegi = excluded.codigo_scian_inegi,
+                    keywords_busqueda = excluded.keywords_busqueda,
+                    oferta_gancho = excluded.oferta_gancho,
+                    catalogo_y_reglas = excluded.catalogo_y_reglas,
+                    system_prompt = excluded.system_prompt
+                WHERE perfiles_nicho.protegido = 0
+            """, (
+                cid, nombre_negocio, nombre_agente, giro_objetivo,
+                codigo_scian, keywords, oferta_gancho,
+                catalogo_reglas, system_prompt_custom
+            ))
+            conn.commit()
+            conn.close()
+            self._send_json({
+                "ok": True,
+                "cliente_id": cid,
+                "nichos": obtener_lista_nichos_con_metricas()
+            })
+            return
+
+        if self.path == "/api/nichos/toggle":
+            cid = motor_m1.normalizar_cliente_id(data.get("cliente_id", ""))
+            accion = str(data.get("accion") or "").lower()
+            if accion in ("eliminar", "delete", "desproteger"):
+                if cid == "mallas_tlaxcalli":
+                    self._send_json({
+                        "ok": False,
+                        "error": "Mallas Tlaxcalli es el tenant principal protegido y no puede eliminarse ni desprotegerse."
+                    }, status=403)
+                    return
+                conn = sqlite3.connect(DB_PATH)
+                cur = conn.cursor()
+                cur.execute("DELETE FROM perfiles_nicho WHERE LOWER(cliente_id) = LOWER(?) AND protegido = 0", (cid,))
+                conn.commit()
+                conn.close()
+                self._send_json({"ok": True, "nichos": obtener_lista_nichos_con_metricas()})
+                return
+
+            activo = 1 if bool(data.get("activo", True)) else 0
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("UPDATE perfiles_nicho SET activo = ? WHERE LOWER(cliente_id) = LOWER(?)", (activo, cid))
+            cur.execute("UPDATE perfiles_nicho SET protegido = 1 WHERE cliente_id = 'mallas_tlaxcalli'")
+            conn.commit()
+            conn.close()
+            self._send_json({"ok": True, "cliente_id": cid, "activo": bool(activo), "nichos": obtener_lista_nichos_con_metricas()})
+            return
+
         if self.path == "/api/chat":
             session_id = data.get("session_id", "default_session")
+            cid_chat = str(data.get("cliente_id") or "").strip()
             if data.get("reset"):
                 SESIONES_CHAT[session_id] = []
+                nicho_r = obtener_nicho_bd(resolver_cliente_id_por_telefono_o_sesion(session_id, cid_chat))
                 self._send_json({
-                    "respuesta": "¡Hola, qué tal Jefe! Buen día 😊 Le atiende el área de Ventas de Mallas Tlaxcalli. ¿En qué le podemos apoyar hoy con sus mallas o baleros?"
+                    "respuesta": f"¡Hola, qué tal! Buen día 😊 Le atiende {nicho_r.get('nombre_agente', 'Andrea')} de {nicho_r.get('nombre_negocio', 'Mallas Tlaxcalli')}. ¿En qué le podemos apoyar hoy?"
                 })
                 return
             msg = data.get("mensaje", "")
             incluir_voz = bool(data.get("incluir_voz", False))
-            resultado = llamar_pool_ia_real(session_id, msg, incluir_voz=incluir_voz)
+            resultado = llamar_pool_ia_real(session_id, msg, incluir_voz=incluir_voz, cliente_id=cid_chat)
             self._send_json(resultado)
             return
 
@@ -2318,13 +2776,19 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/cazar_lote_10":
             muni = data.get("municipio", "Ecatepec")
+            if muni == "TODOS":
+                muni = "Ecatepec"
             fuente = data.get("fuente", "INEGI")
+            cid = motor_m1.normalizar_cliente_id(data.get("cliente_id", "mallas_tlaxcalli"))
+            nicho = obtener_nicho_bd(cid)
+            perfil = construir_perfil_motor_desde_nicho(cid)
+            es_tlaxcalli = (cid == "mallas_tlaxcalli")
             env = motor_m1.cargar_env()
-            with open(PERFIL_PATH, "r", encoding="utf-8") as f:
-                perfil = json.load(f)
+
+            kws_nicho = (perfil.get("busqueda", {}) or {}).get("palabras_clave_maps") or []
+            kw_principal = "tortilleria" if es_tlaxcalli else (kws_nicho[0] if kws_nicho else (nicho.get("giro_objetivo") or "negocio"))
 
             if fuente == "FACEBOOK":
-                import threading
                 try:
                     import modulo_1b_cazador_facebook as motor_fb
                 except ImportError:
@@ -2336,24 +2800,33 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                     target_query = target_custom
                 elif target_custom:
                     target_query = target_custom
-                else:
+                elif es_tlaxcalli:
                     target_query = f"tortilleria maquinaria refacciones {muni}"
+                else:
+                    target_query = f"{kw_principal} {muni}"
 
                 def _tarea_caza_fb():
                     try:
-                        motor_fb.ejecutar_caza_facebook(target_query, municipio_default=muni, max_posts=20)
+                        motor_fb.ejecutar_caza_facebook(
+                            target_query,
+                            municipio_default=muni,
+                            max_posts=20,
+                            cliente_id=cid,
+                            perfil_nicho=nicho
+                        )
                     except Exception as err_fb:
-                        print(f"   [!] Error en hilo asíncrono Facebook: {err_fb}")
+                        print(f"   [!] Error en hilo asíncrono Facebook ({cid}): {err_fb}")
 
                 t = threading.Thread(target=_tarea_caza_fb, daemon=True)
                 t.start()
 
-                bd_info = obtener_datos_completos_bd(perfil["id_cliente"])
+                bd_info = obtener_datos_completos_bd(cid)
                 self._send_json({
                     "ok": True,
                     "async": True,
+                    "cliente_id": cid,
                     "fuente": "FACEBOOK",
-                    "mensaje": f"Cazando en Facebook ({target_query}) en segundo plano...",
+                    "mensaje": f"Cazando en Facebook ({target_query}) para {nicho['nombre_negocio']}...",
                     "total_acumulado": len(bd_info["prospectos"]),
                     "prospectos": bd_info["prospectos"]
                 })
@@ -2361,14 +2834,19 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
 
             if fuente == "APIFY":
                 estado_q = "Ciudad de Mexico" if "CDMX" in muni.upper() else "Estado de Mexico"
+                query_maps = f"Tortilleria en {muni}, {estado_q}, Mexico" if es_tlaxcalli else f"{kw_principal} en {muni}, {estado_q}, Mexico"
                 nuevos = motor_m1.extraer_apify_google_maps(
-                    f"Tortilleria en {muni}, {estado_q}, Mexico",
+                    query_maps,
                     10,
-                    env.get("APIFY_API_TOKEN", "")
+                    env.get("APIFY_API_TOKEN", ""),
+                    perfil=perfil
                 )
             else:
                 clave_ent = "09" if "CDMX" in muni.upper() else "15"
-                termino = "tortilleria cdmx" if clave_ent == "09" else f"tortilleria {muni.lower()}"
+                if es_tlaxcalli:
+                    termino = "tortilleria cdmx" if clave_ent == "09" else f"tortilleria {muni.lower()}"
+                else:
+                    termino = f"{kw_principal} cdmx" if clave_ent == "09" else f"{kw_principal} {muni.lower()}"
                 ini = OFFSET_EXTRACCION_INEGI["actual"]
                 OFFSET_EXTRACCION_INEGI["actual"] += 10
                 nuevos = motor_m1.extraer_inegi_por_municipio(
@@ -2376,13 +2854,16 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                     clave_ent,
                     10,
                     env.get("INEGI_DENUE_TOKEN", ""),
-                    reg_ini=ini
+                    reg_ini=ini,
+                    perfil=perfil
                 )
 
             clasificados = [motor_m1.clasificar_negocio(r, perfil) for r in nuevos]
-            motor_m1.guardar_y_exportar(clasificados, perfil["id_cliente"])
-            bd_info = obtener_datos_completos_bd(perfil["id_cliente"])
+            motor_m1.guardar_y_exportar(clasificados, cid)
+            bd_info = obtener_datos_completos_bd(cid)
             self._send_json({
+                "ok": True,
+                "cliente_id": cid,
                 "lote_extraido": len(nuevos[:10]),
                 "total_acumulado": len(bd_info["prospectos"]),
                 "prospectos": bd_info["prospectos"]
@@ -3312,14 +3793,23 @@ def _notificar_dueno_wa(mensaje: str) -> bool:
 
 
 def _ejecutar_ciclo_cazador_24_7(ciclo_idx: int) -> None:
+    nichos_todos = obtener_lista_nichos_con_metricas()
+    nichos_activos = [n for n in nichos_todos if n.get("activo")] or [obtener_nicho_bd("mallas_tlaxcalli")]
+    nicho_actual = nichos_activos[ciclo_idx % len(nichos_activos)]
+    cid = motor_m1.normalizar_cliente_id(nicho_actual.get("cliente_id", "mallas_tlaxcalli"))
+    nombre_negocio = nicho_actual.get("nombre_negocio") or "Mallas Tlaxcalli"
+    es_tlaxcalli = (cid == "mallas_tlaxcalli")
+
     fuentes = ["INEGI", "APIFY", "FACEBOOK"]
     fuente = fuentes[ciclo_idx % len(fuentes)]
 
-    with open(PERFIL_PATH, "r", encoding="utf-8") as f:
-        perfil = json.load(f)
+    perfil = construir_perfil_motor_desde_nicho(cid)
     municipios = perfil.get("cobertura_logistica", {}).get("municipios_edomex_autorizados", []) or ["Ecatepec"]
     muni = municipios[ciclo_idx % len(municipios)]
     env = motor_m1.cargar_env()
+
+    kws_nicho = (perfil.get("busqueda", {}) or {}).get("palabras_clave_maps") or []
+    kw_principal = "tortilleria" if es_tlaxcalli else (kws_nicho[0] if kws_nicho else (nicho_actual.get("giro_objetivo") or "negocio"))
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -3332,23 +3822,28 @@ def _ejecutar_ciclo_cazador_24_7(ciclo_idx: int) -> None:
             import modulo_1b_cazador_facebook as motor_fb
         except ImportError:
             from scripts import modulo_1b_cazador_facebook as motor_fb
+        q_fb = f"tortilleria maquinaria refacciones {muni}" if es_tlaxcalli else f"{kw_principal} {muni}"
         motor_fb.ejecutar_caza_facebook(
-            f"tortilleria maquinaria refacciones {muni}",
+            q_fb,
             municipio_default=muni,
-            max_posts=15
+            max_posts=15,
+            cliente_id=cid,
+            perfil_nicho=nicho_actual
         )
     elif fuente == "APIFY":
         estado_q = "Ciudad de Mexico" if "CDMX" in muni.upper() else "Estado de Mexico"
+        q_maps = f"Tortilleria en {muni}, {estado_q}, Mexico" if es_tlaxcalli else f"{kw_principal} en {muni}, {estado_q}, Mexico"
         nuevos = motor_m1.extraer_apify_google_maps(
-            f"Tortilleria en {muni}, {estado_q}, Mexico",
+            q_maps,
             10,
-            env.get("APIFY_API_TOKEN", "")
+            env.get("APIFY_API_TOKEN", ""),
+            perfil=perfil
         )
         clasificados = [motor_m1.clasificar_negocio(r, perfil) for r in nuevos]
-        motor_m1.guardar_y_exportar(clasificados, perfil["id_cliente"])
+        motor_m1.guardar_y_exportar(clasificados, cid)
     else:
         clave_ent = "09" if "CDMX" in muni.upper() else "15"
-        termino = "tortilleria cdmx" if clave_ent == "09" else f"tortilleria {muni.lower()}"
+        termino = ("tortilleria cdmx" if clave_ent == "09" else f"tortilleria {muni.lower()}") if es_tlaxcalli else (f"{kw_principal} cdmx" if clave_ent == "09" else f"{kw_principal} {muni.lower()}")
         ini = OFFSET_EXTRACCION_INEGI["actual"]
         OFFSET_EXTRACCION_INEGI["actual"] += 10
         nuevos = motor_m1.extraer_inegi_por_municipio(
@@ -3356,18 +3851,20 @@ def _ejecutar_ciclo_cazador_24_7(ciclo_idx: int) -> None:
             clave_ent,
             10,
             env.get("INEGI_DENUE_TOKEN", ""),
-            reg_ini=ini
+            reg_ini=ini,
+            perfil=perfil
         )
         clasificados = [motor_m1.clasificar_negocio(r, perfil) for r in nuevos]
-        motor_m1.guardar_y_exportar(clasificados, perfil["id_cliente"])
+        motor_m1.guardar_y_exportar(clasificados, cid)
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("""
         UPDATE prospectos_cazador
-        SET estatus_contacto_wa = 'PENDIENTE_ENVIO'
+        SET estatus_contacto_wa = 'PENDIENTE_ENVIO',
+            id_cliente_agencia = COALESCE(NULLIF(id_cliente_agencia, ''), ?)
         WHERE id > ? AND (estatus_contacto_wa IS NULL OR estatus_contacto_wa IN ('', 'PENDIENTE'))
-    """, (max_id_antes,))
+    """, (cid, max_id_antes))
     conn.commit()
     cur.execute("""
         SELECT id, nombre, telefono, municipio
@@ -3384,6 +3881,7 @@ def _ejecutar_ciclo_cazador_24_7(ciclo_idx: int) -> None:
 
     ESTADO_CAZADOR_24_7["ciclos_completados"] += 1
     ESTADO_CAZADOR_24_7["ultimo_ciclo"] = ahora_mx.strftime("%Y-%m-%d %H:%M:%S CDMX")
+    ESTADO_CAZADOR_24_7["ultimo_nicho"] = cid
     ESTADO_CAZADOR_24_7["ultima_fuente"] = fuente
     ESTADO_CAZADOR_24_7["ultimo_municipio"] = muni
     ESTADO_CAZADOR_24_7["ultimos_nuevos"] = len(nuevos_bd)
@@ -3401,12 +3899,13 @@ def _ejecutar_ciclo_cazador_24_7(ciclo_idx: int) -> None:
         )
         msg_dueno = (
             f"🕵️ *Cazador 24/7 — {len(nuevos_bd)} Prospecto(s) Nuevo(s)*\n"
+            f"🏢 Negocio: *{nombre_negocio}* (`{cid}`)\n"
             f"📡 Fuente: *{fuente}* | 📍 Zona: *{muni}*\n\n"
             f"{resumen_lista}{extra_txt}\n\n"
             f"{estado_cola}"
         )
         _notificar_dueno_wa(msg_dueno)
-        print(f"🕵️ [CAZADOR 24/7] Ciclo #{ESTADO_CAZADOR_24_7['ciclos_completados']} ({fuente}/{muni}): +{len(nuevos_bd)} nuevos prospectos -> PENDIENTE_ENVIO")
+        print(f"🕵️ [CAZADOR 24/7] Ciclo #{ESTADO_CAZADOR_24_7['ciclos_completados']} ({cid}/{fuente}/{muni}): +{len(nuevos_bd)} nuevos prospectos -> PENDIENTE_ENVIO")
 
 
 def _bucle_cazador_24_7() -> None:

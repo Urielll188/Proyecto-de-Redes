@@ -15,9 +15,14 @@ import {
   AlertTriangle,
   Share2,
   ExternalLink,
+  Plus,
+  Lock,
+  Building2,
+  Sparkles,
+  Power,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fetchVpsGet, fetchVpsPost, ProspectoVps } from '@/lib/vps/types';
+import { fetchVpsGet, fetchVpsPost, NichoVps, ProspectoVps } from '@/lib/vps/types';
 
 const MUNICIPIOS = [
   'TODOS',
@@ -32,10 +37,32 @@ const MUNICIPIOS = [
   'Tepotzotlán',
 ];
 
+const DEFAULT_MALLAS_NICHO: NichoVps = {
+  cliente_id: 'mallas_tlaxcalli',
+  nombre_negocio: 'Mallas Tlaxcalli',
+  nombre_agente: 'Andrea / Paola',
+  giro_objetivo: 'Tortillerías, Molinos de Nixtamal y Mecánicos de Maquinaria Tortilladora',
+  codigo_scian_inegi: '311830',
+  keywords_busqueda:
+    'tortilleria, molino de nixtamal, maquinas tortilladoras, refacciones para tortilladoras, celorio, verduzco',
+  oferta_gancho:
+    'PAQUETE_MALLAS_1713 — Paquete Completo Mantenimiento $1,713 MXN (Testalera 23x140 + Transportadora 10x9m Cal 14 + Balero 7210B) con envío gratis',
+  catalogo_y_reglas:
+    'Paquete Completo $1,713 MXN (Testalera + Transportadora Cal 14 + Balero 7210B alemán). Envío gratis CDMX y Edomex. Pago contra entrega.',
+  protegido: true,
+  activo: true,
+  total_prospectos: 284,
+  enviados_wa: 11,
+};
+
 const PAGE_SIZE = 10;
 
 export default function CazadorPage() {
+  const [nichos, setNichos] = useState<NichoVps[]>([DEFAULT_MALLAS_NICHO]);
+  const [nichoActivo, setNichoActivo] = useState<string>('mallas_tlaxcalli');
   const [prospectos, setProspectos] = useState<ProspectoVps[]>([]);
+  const [bitacoraTotal, setBitacoraTotal] = useState<number>(0);
+  const [bitacoraHoy, setBitacoraHoy] = useState<number>(0);
   const [municipio, setMunicipio] = useState<string>('TODOS');
   const [paginaLote, setPaginaLote] = useState<number>(0);
   const [telPrueba, setTelPrueba] = useState<string>('');
@@ -51,25 +78,70 @@ export default function CazadorPage() {
   const [cazaAsyncActiva, setCazaAsyncActiva] = useState<boolean>(false);
   const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const cargarDatos = useCallback(async () => {
-    setLoading(true);
-    setErrorMsg(null);
-    const data = await fetchVpsGet('/api/datos_seguros');
-    if (data.vpsOffline || data.ok === false) {
-      setVpsOffline(true);
-      setErrorMsg(data.error || 'Servidor VPS sin conexión.');
-    } else {
-      setVpsOffline(false);
-    }
-    if (Array.isArray(data.prospectos)) {
-      setProspectos(data.prospectos);
-    }
-    setLoading(false);
-  }, []);
+  // Modal + Nuevo Nicho / Producto
+  const [mostrarModalNicho, setMostrarModalNicho] = useState<boolean>(false);
+  const [guardandoNicho, setGuardandoNicho] = useState<boolean>(false);
+  const [formNicho, setFormNicho] = useState({
+    nombre_negocio: '',
+    nombre_agente: 'Andrea',
+    giro_objetivo: '',
+    keywords_busqueda: '',
+    codigo_scian_inegi: '',
+    oferta_gancho: '',
+    catalogo_y_reglas: '',
+  });
+
+  const perfilNichoActual = useMemo(() => {
+    return (
+      nichos.find((n) => n.cliente_id.toLowerCase() === nichoActivo.toLowerCase()) ||
+      DEFAULT_MALLAS_NICHO
+    );
+  }, [nichos, nichoActivo]);
+
+  const cargarDatos = useCallback(
+    async (cidOverride?: string) => {
+      const targetCid = cidOverride || nichoActivo || 'mallas_tlaxcalli';
+      setLoading(true);
+      setErrorMsg(null);
+
+      const [data, resNichos] = await Promise.all([
+        fetchVpsGet('/api/datos_seguros', { cliente_id: targetCid }),
+        fetchVpsGet('/api/nichos').catch(() => null),
+      ]);
+
+      if (data.vpsOffline || data.ok === false) {
+        setVpsOffline(true);
+        setErrorMsg(data.error || 'Servidor VPS sin conexión.');
+      } else {
+        setVpsOffline(false);
+      }
+
+      const listaNichos =
+        (resNichos && Array.isArray(resNichos.nichos) && resNichos.nichos) ||
+        (Array.isArray(data.nichos) && data.nichos) ||
+        null;
+
+      if (listaNichos && listaNichos.length > 0) {
+        setNichos(listaNichos);
+      }
+
+      if (Array.isArray(data.prospectos)) {
+        setProspectos(data.prospectos);
+      }
+      if (typeof data.bitacora_total === 'number') {
+        setBitacoraTotal(data.bitacora_total);
+      }
+      if (typeof data.bitacora_hoy === 'number') {
+        setBitacoraHoy(data.bitacora_hoy);
+      }
+      setLoading(false);
+    },
+    [nichoActivo]
+  );
 
   useEffect(() => {
-    cargarDatos();
-  }, [cargarDatos]);
+    cargarDatos(nichoActivo);
+  }, [cargarDatos, nichoActivo]);
 
   // Limpiar timer de polling al desmontar
   useEffect(() => {
@@ -85,21 +157,24 @@ export default function CazadorPage() {
 
     pollingTimerRef.current = setInterval(async () => {
       intentos += 1;
-      await cargarDatos();
+      await cargarDatos(nichoActivo);
       if (intentos >= 7) {
-        // 7 intentos cada 5s = 35 segundos
         if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
         setCazaAsyncActiva(false);
       }
     }, 5000);
-  }, [cargarDatos]);
+  }, [cargarDatos, nichoActivo]);
 
   const filtrados = useMemo(() => {
-    if (municipio === 'TODOS') return prospectos;
-    return prospectos.filter((p) =>
-      (p.municipio || '').toLowerCase().includes(municipio.toLowerCase())
-    );
-  }, [prospectos, municipio]);
+    return prospectos.filter((p) => {
+      const cidRow = (p.id_cliente_agencia || 'mallas_tlaxcalli').toLowerCase();
+      if (nichoActivo !== 'TODOS' && cidRow !== nichoActivo.toLowerCase()) {
+        return false;
+      }
+      if (municipio === 'TODOS') return true;
+      return (p.municipio || '').toLowerCase().includes(municipio.toLowerCase());
+    });
+  }, [prospectos, municipio, nichoActivo]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaActual = Math.min(paginaLote, totalPaginas - 1);
@@ -110,7 +185,11 @@ export default function CazadorPage() {
 
   const handleCazarLote = async (fuente: 'INEGI' | 'APIFY' | 'FACEBOOK') => {
     setCazando(fuente);
-    const body: Record<string, any> = { municipio, fuente };
+    const body: Record<string, any> = {
+      municipio,
+      fuente,
+      cliente_id: nichoActivo,
+    };
     if (fuente === 'FACEBOOK') {
       body.modo = modoFb;
       body.target = targetFb.trim();
@@ -124,21 +203,83 @@ export default function CazadorPage() {
     }
 
     if (res.async) {
-      toast.info(res.mensaje || 'Cazando en Facebook en segundo plano. Los prospectos se actualizarán automáticamente.');
+      toast.info(
+        res.mensaje ||
+          `Cazando en Facebook para ${perfilNichoActual.nombre_negocio}. Los prospectos se actualizarán automáticamente.`
+      );
       setMostrarModalFb(false);
       iniciarPollingAutoRefresco();
       return;
     }
 
-    toast.success(`Lote de 10 prospectos (${fuente}) actualizado.`);
-    await cargarDatos();
+    toast.success(
+      `Lote de prospectos (${fuente}) actualizado para ${perfilNichoActual.nombre_negocio}.`
+    );
+    await cargarDatos(nichoActivo);
+  };
+
+  const handleCrearNicho = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formNicho.nombre_negocio.trim() || !formNicho.giro_objetivo.trim()) {
+      toast.error('Completa al menos el Nombre del Negocio y el Giro Objetivo.');
+      return;
+    }
+    setGuardandoNicho(true);
+    const res = await fetchVpsPost('/api/nichos', {
+      ...formNicho,
+      catalogo_y_reglas: formNicho.catalogo_y_reglas.slice(0, 2500),
+    });
+    setGuardandoNicho(false);
+
+    if (!res.ok || res.vpsOffline) {
+      toast.error(res.error || 'No se pudo guardar el nuevo nicho.');
+      return;
+    }
+
+    if (Array.isArray(res.nichos)) {
+      setNichos(res.nichos);
+    }
+    const nuevoCid = res.cliente_id || 'mallas_tlaxcalli';
+    setNichoActivo(nuevoCid);
+    setPaginaLote(0);
+    setMostrarModalNicho(false);
+    setFormNicho({
+      nombre_negocio: '',
+      nombre_agente: 'Andrea',
+      giro_objetivo: '',
+      keywords_busqueda: '',
+      codigo_scian_inegi: '',
+      oferta_gancho: '',
+      catalogo_y_reglas: '',
+    });
+    toast.success(`Nicho "${formNicho.nombre_negocio}" creado y activado.`);
+    await cargarDatos(nuevoCid);
+  };
+
+  const handleToggleNichoWorker = async () => {
+    const nuevoEstado = !perfilNichoActual.activo;
+    const res = await fetchVpsPost('/api/nichos/toggle', {
+      cliente_id: perfilNichoActual.cliente_id,
+      activo: nuevoEstado,
+    });
+    if (!res.ok || res.vpsOffline) {
+      toast.error(res.error || 'No se pudo cambiar el estado del nicho.');
+      return;
+    }
+    if (Array.isArray(res.nichos)) {
+      setNichos(res.nichos);
+    }
+    toast.success(
+      nuevoEstado
+        ? `Nicho ${perfilNichoActual.nombre_negocio} activado en el Cazador 24/7.`
+        : `Nicho ${perfilNichoActual.nombre_negocio} pausado en el Cazador 24/7.`
+    );
   };
 
   const handleMarcarMaps = async (
     telefono: string,
     estatus: 'ABIERTA_VERIFICADA' | 'CERRADA_DESCARTADA'
   ) => {
-    // Optimistic update
     setProspectos((prev) =>
       prev.map((p) => (p.telefono === telefono ? { ...p, estatus_maps: estatus } : p))
     );
@@ -148,7 +289,7 @@ export default function CazadorPage() {
     });
     if (res.ok === false && !res.vpsOffline) {
       toast.error(res.error || 'Error al actualizar estatus en Maps.');
-      await cargarDatos();
+      await cargarDatos(nichoActivo);
       return;
     }
     toast.success(
@@ -169,33 +310,279 @@ export default function CazadorPage() {
       destino = `52${destino}`;
     }
 
-    const msg = `Hola! Soy de *Mallas Tlaxcalli*. Vimos su negocio "${p.nombre}" en ${p.municipio}. Tenemos el *Paquete Completo* de malla + bandas en *$1,713 MXN* con envío gratis y pago contra entrega. ¿Le gustaría recibir detalles para su máquina?`;
+    const isTlaxcalli =
+      (p.id_cliente_agencia || nichoActivo || 'mallas_tlaxcalli').toLowerCase() ===
+      'mallas_tlaxcalli';
+
+    const msg = isTlaxcalli
+      ? `Hola! Soy de *Mallas Tlaxcalli*. Vimos su negocio "${p.nombre}" en ${p.municipio}. Tenemos el *Paquete Completo* de malla + bandas en *$1,713 MXN* con envío gratis y pago contra entrega. ¿Le gustaría recibir detalles para su máquina?`
+      : `Hola! Le saluda ${perfilNichoActual.nombre_agente || 'Andrea'} de *${perfilNichoActual.nombre_negocio}*. Vimos a "${p.nombre}" en ${p.municipio} y queremos compartirle nuestra promoción: *${perfilNichoActual.oferta_gancho || p.oferta_recomendada || 'Oferta Especial'}*. ¿Gusta que le envíe los detalles sin compromiso?`;
+
     return `https://wa.me/${destino}?text=${encodeURIComponent(msg)}`;
   };
 
+  const defaultFbPlaceholder =
+    perfilNichoActual.cliente_id === 'mallas_tlaxcalli'
+      ? `Ej: tortilleria maquinaria refacciones ${municipio !== 'TODOS' ? municipio : 'Edomex'}`
+      : `Ej: ${perfilNichoActual.keywords_busqueda.split(',')[0] || perfilNichoActual.giro_objetivo} ${
+          municipio !== 'TODOS' ? municipio : 'CDMX'
+        }`;
+
   return (
     <div className="space-y-6">
+      {/* Barra Superior: Selector Multi-Nicho / Multi-Tenant */}
+      <div className="p-4 rounded-xl bg-zinc-950/90 border border-zinc-800/90 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 shadow-lg">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-400 shrink-0">
+            <Building2 className="w-4 h-4" />
+            Nicho / Negocio Activo:
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 flex-1">
+            <select
+              value={nichoActivo}
+              onChange={(e) => {
+                setNichoActivo(e.target.value);
+                setPaginaLote(0);
+              }}
+              className="px-3.5 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-white text-sm font-semibold focus:outline-none focus:border-amber-500 min-w-[240px]"
+            >
+              {nichos.map((n) => (
+                <option key={n.cliente_id} value={n.cliente_id}>
+                  {n.nombre_negocio} {n.protegido ? '🔒' : ''} ({n.total_prospectos} leads)
+                </option>
+              ))}
+            </select>
+
+            {perfilNichoActual.protegido && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-semibold">
+                <Lock className="w-3.5 h-3.5" />
+                Tenant Base Protegido
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={handleToggleNichoWorker}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
+                perfilNichoActual.activo
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25'
+                  : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-zinc-200'
+              }`}
+              title="Activar o pausar este nicho en la rotación automática 24/7"
+            >
+              <Power className="w-3.5 h-3.5" />
+              {perfilNichoActual.activo ? 'Worker 24/7: Activo' : 'Worker 24/7: En Pausa'}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between lg:justify-end gap-3">
+          <div className="flex items-center gap-4 text-xs text-zinc-400 bg-zinc-900/80 border border-zinc-800 px-3 py-1.5 rounded-lg">
+            <div>
+              Agente IA:{' '}
+              <span className="text-zinc-100 font-semibold">
+                {perfilNichoActual.nombre_agente || 'Andrea'}
+              </span>
+            </div>
+            <div className="h-3 w-px bg-zinc-800" />
+            <div>
+              Bitácora WA:{' '}
+              <span className="text-emerald-400 font-bold">
+                {bitacoraTotal || perfilNichoActual.enviados_wa || 0}
+              </span>{' '}
+              <span className="text-zinc-500">({bitacoraHoy} hoy)</span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setMostrarModalNicho(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-bold transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4 stroke-[2.5]" />
+            + Nuevo Nicho / Producto
+          </button>
+        </div>
+      </div>
+
+      {/* Modal Dark Obsidian: + Nuevo Nicho / Producto */}
+      {mostrarModalNicho && (
+        <div className="p-5 rounded-xl bg-zinc-950/95 border border-amber-500/40 space-y-4 shadow-2xl">
+          <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+            <div className="flex items-center gap-2 text-amber-400 text-sm font-bold uppercase tracking-wider">
+              <Sparkles className="w-4 h-4" />
+              Configurar Nuevo Nicho / Producto para Cazador y Andrea IA
+            </div>
+            <button
+              type="button"
+              onClick={() => setMostrarModalNicho(false)}
+              className="text-zinc-400 hover:text-white text-xs font-semibold"
+            >
+              ✕ Cerrar
+            </button>
+          </div>
+
+          <form onSubmit={handleCrearNicho} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1">
+                  Nombre del Negocio / Marca *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={formNicho.nombre_negocio}
+                  onChange={(e) => setFormNicho({ ...formNicho, nombre_negocio: e.target.value })}
+                  placeholder="Ej: Empaques Industriales Bajío"
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1">
+                  Nombre de la Asesora IA (WhatsApp)
+                </label>
+                <input
+                  type="text"
+                  value={formNicho.nombre_agente}
+                  onChange={(e) => setFormNicho({ ...formNicho, nombre_agente: e.target.value })}
+                  placeholder="Ej: Andrea"
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1">
+                  Código SCIAN INEGI (Opcional)
+                </label>
+                <input
+                  type="text"
+                  value={formNicho.codigo_scian_inegi}
+                  onChange={(e) =>
+                    setFormNicho({ ...formNicho, codigo_scian_inegi: e.target.value })
+                  }
+                  placeholder="Vacío = búsqueda abierta por keywords"
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 text-xs font-mono focus:outline-none focus:border-amber-500"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1">
+                  Giro / Tipo de Clientes a Prospectar *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={formNicho.giro_objetivo}
+                  onChange={(e) => setFormNicho({ ...formNicho, giro_objetivo: e.target.value })}
+                  placeholder="Ej: Panaderías, Pizzerías y Pastelerías"
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1">
+                  Palabras Clave de Búsqueda (INEGI, Maps y Facebook)
+                </label>
+                <input
+                  type="text"
+                  value={formNicho.keywords_busqueda}
+                  onChange={(e) =>
+                    setFormNicho({ ...formNicho, keywords_busqueda: e.target.value })
+                  }
+                  placeholder="Ej: panaderia, horno para pan, pasteleria, amasadora"
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-amber-500"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-zinc-300 mb-1">
+                Oferta Gancho Principal (Primer contacto en frío y etiqueta de lead) *
+              </label>
+              <input
+                type="text"
+                required
+                value={formNicho.oferta_gancho}
+                onChange={(e) => setFormNicho({ ...formNicho, oferta_gancho: e.target.value })}
+                placeholder="Ej: Kit de 10 Charolas Aluminio Reforzado por $1,450 MXN con envío gratis"
+                className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-amber-500"
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-zinc-300">
+                  Catálogo de Precios, Objeciones y Reglas de Cierre para Andrea
+                </label>
+                <span className="text-[11px] text-zinc-500 font-mono">
+                  {formNicho.catalogo_y_reglas.length} / 2500 máx.
+                </span>
+              </div>
+              <textarea
+                rows={4}
+                maxLength={2500}
+                value={formNicho.catalogo_y_reglas}
+                onChange={(e) =>
+                  setFormNicho({ ...formNicho, catalogo_y_reglas: e.target.value.slice(0, 2500) })
+                }
+                placeholder="Describe precios, garantías, zonas de entrega, métodos de pago y datos necesarios para cerrar pedido. Andrea usará este contexto automáticamente cuando un prospecto de este nicho responda por WhatsApp."
+                className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-amber-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-zinc-800">
+              <span className="text-[11px] text-zinc-400">
+                🔒 El negocio base <strong>Mallas Tlaxcalli</strong> permanece 100% protegido e intacto.
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMostrarModalNicho(false)}
+                  className="px-3.5 py-2 rounded-lg bg-zinc-800 text-zinc-300 text-xs font-medium hover:bg-zinc-700"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={guardandoNicho}
+                  className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-bold transition-colors disabled:opacity-50"
+                >
+                  {guardandoNicho ? 'Guardando Nicho...' : 'Guardar y Activar Nicho'}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-zinc-800 pb-5">
         <div>
           <div className="flex items-center gap-2 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-1">
             <Crosshair className="w-4 h-4" />
-            Módulo 1 • Prospección Multi-Fuente
+            Módulo 1 • Prospección Multi-Fuente ({perfilNichoActual.nombre_negocio})
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
             Cazador INEGI / Apify Maps / Facebook
           </h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Filtra negocios por municipio, verifica su estado y envía el pitch de venta por WhatsApp con Andrea.
+            Giro activo: <span className="text-zinc-200">{perfilNichoActual.giro_objetivo}</span> •
+            Oferta: <span className="text-amber-300/90">{perfilNichoActual.oferta_gancho}</span>
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={cargarDatos}
+            onClick={() => cargarDatos(nichoActivo)}
             disabled={loading}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 text-sm transition-colors disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 ${loading || cazaAsyncActiva ? 'animate-spin text-blue-400' : ''}`} />
+            <RefreshCw
+              className={`w-4 h-4 ${loading || cazaAsyncActiva ? 'animate-spin text-blue-400' : ''}`}
+            />
             {cazaAsyncActiva ? 'Auto-refrescando...' : 'Actualizar'}
           </button>
           <button
@@ -231,7 +618,7 @@ export default function CazadorPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-wider">
               <Share2 className="w-4 h-4" />
-              Cazador en Facebook (Modo Híbrido)
+              Cazador en Facebook — {perfilNichoActual.nombre_negocio}
             </div>
             <button
               onClick={() => setMostrarModalFb(false)}
@@ -242,7 +629,9 @@ export default function CazadorPage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-zinc-400 mb-1">Estrategia de Búsqueda</label>
+              <label className="block text-xs font-medium text-zinc-400 mb-1">
+                Estrategia de Búsqueda
+              </label>
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -270,16 +659,16 @@ export default function CazadorPage() {
             </div>
             <div>
               <label className="block text-xs font-medium text-zinc-400 mb-1">
-                {modoFb === 'KEYWORD' ? 'Término o Giro Comercial (opcional)' : 'Enlace directo del Grupo de Facebook'}
+                {modoFb === 'KEYWORD'
+                  ? 'Término o Giro Comercial (opcional)'
+                  : 'Enlace directo del Grupo de Facebook'}
               </label>
               <input
                 type="text"
                 value={targetFb}
                 onChange={(e) => setTargetFb(e.target.value)}
                 placeholder={
-                  modoFb === 'KEYWORD'
-                    ? `Ej: tortilleria maquinaria refacciones ${municipio !== 'TODOS' ? municipio : 'Edomex'}`
-                    : 'https://www.facebook.com/groups/...'
+                  modoFb === 'KEYWORD' ? defaultFbPlaceholder : 'https://www.facebook.com/groups/...'
                 }
                 className="w-full px-3 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-indigo-500"
               />
@@ -309,7 +698,8 @@ export default function CazadorPage() {
           <div>
             <p className="font-semibold">Conexión VPS en espera</p>
             <p className="text-amber-200/80 text-xs mt-0.5">
-              {errorMsg || 'Configura VPS_API_URL y VPS_API_KEY en el entorno para sincronizar prospectos en vivo.'}
+              {errorMsg ||
+                'Configura VPS_API_URL y VPS_API_KEY en el entorno para sincronizar prospectos en vivo.'}
             </p>
           </div>
         </div>
@@ -352,7 +742,7 @@ export default function CazadorPage() {
 
         <div className="flex items-end justify-between lg:justify-end gap-3">
           <div className="text-xs text-zinc-400">
-            Total filtrados:{' '}
+            Prospectos en <span className="text-amber-300 font-semibold">{perfilNichoActual.nombre_negocio}</span>:{' '}
             <span className="font-bold text-white text-sm">{filtrados.length}</span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -385,7 +775,7 @@ export default function CazadorPage() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-950/60 text-[11px] uppercase tracking-wider text-zinc-400">
-                <th className="py-3 px-4">Tortillería / Fuente</th>
+                <th className="py-3 px-4">Prospecto / Fuente</th>
                 <th className="py-3 px-4">Municipio / Dirección</th>
                 <th className="py-3 px-4">Teléfono</th>
                 <th className="py-3 px-4">Verificación / Enlace</th>
@@ -396,13 +786,13 @@ export default function CazadorPage() {
               {loading ? (
                 <tr>
                   <td colSpan={5} className="py-12 text-center text-zinc-500">
-                    Cargando prospectos desde el servidor...
+                    Cargando prospectos de {perfilNichoActual.nombre_negocio}...
                   </td>
                 </tr>
               ) : loteVisible.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-12 text-center text-zinc-500">
-                    No hay prospectos registrados para este filtro. Usa +10 INEGI, +10 Apify Maps o +15 Facebook Grupos.
+                    No hay prospectos registrados en {perfilNichoActual.nombre_negocio} para este filtro. Usa +10 INEGI, +10 Apify Maps o +15 Facebook Grupos.
                   </td>
                 </tr>
               ) : (
@@ -413,14 +803,14 @@ export default function CazadorPage() {
 
                   return (
                     <tr
-                      key={`${p.telefono}-${idx}`}
+                      key={`${p.id_cliente_agencia || nichoActivo}-${p.telefono}-${idx}`}
                       className={`hover:bg-zinc-900/80 transition-colors ${
                         isDescartada ? 'opacity-50' : ''
                       }`}
                     >
                       <td className="py-3.5 px-4">
                         <div className="font-medium text-white">{p.nombre}</div>
-                        <div className="flex items-center gap-2 mt-1">
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
                           <span
                             className={`text-[11px] px-2 py-0.5 rounded font-medium ${
                               isFacebook

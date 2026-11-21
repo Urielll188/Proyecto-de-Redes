@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 
 const ALLOWED_GET_ENDPOINTS = [
   '/api/datos_seguros',
+  '/api/nichos',
   '/api/estatus_whatsapp',
   '/api/imagen_pau',
   '/excel_mallas_tlaxcalli.csv',
@@ -12,6 +13,8 @@ const ALLOWED_GET_ENDPOINTS = [
 
 const ALLOWED_POST_ENDPOINTS = [
   '/api/cazar_lote_10',
+  '/api/nichos',
+  '/api/nichos/toggle',
   '/api/marcar_maps',
   '/api/marcar_lote_wa',
   '/api/chat',
