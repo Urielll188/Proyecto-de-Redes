@@ -2291,6 +2291,42 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             with open(PERFIL_PATH, "r", encoding="utf-8") as f:
                 perfil = json.load(f)
 
+            if fuente == "FACEBOOK":
+                import threading
+                try:
+                    import modulo_1b_cazador_facebook as motor_fb
+                except ImportError:
+                    from scripts import modulo_1b_cazador_facebook as motor_fb
+
+                modo = str(data.get("modo", "KEYWORD") or "KEYWORD").upper()
+                target_custom = str(data.get("target", "") or "").strip()
+                if modo == "GROUP" and target_custom:
+                    target_query = target_custom
+                elif target_custom:
+                    target_query = target_custom
+                else:
+                    target_query = f"tortilleria maquinaria refacciones {muni}"
+
+                def _tarea_caza_fb():
+                    try:
+                        motor_fb.ejecutar_caza_facebook(target_query, municipio_default=muni, max_posts=20)
+                    except Exception as err_fb:
+                        print(f"   [!] Error en hilo asíncrono Facebook: {err_fb}")
+
+                t = threading.Thread(target=_tarea_caza_fb, daemon=True)
+                t.start()
+
+                bd_info = obtener_datos_completos_bd(perfil["id_cliente"])
+                self._send_json({
+                    "ok": True,
+                    "async": True,
+                    "fuente": "FACEBOOK",
+                    "mensaje": f"Cazando en Facebook ({target_query}) en segundo plano...",
+                    "total_acumulado": len(bd_info["prospectos"]),
+                    "prospectos": bd_info["prospectos"]
+                })
+                return
+
             if fuente == "APIFY":
                 estado_q = "Ciudad de Mexico" if "CDMX" in muni.upper() else "Estado de Mexico"
                 nuevos = motor_m1.extraer_apify_google_maps(

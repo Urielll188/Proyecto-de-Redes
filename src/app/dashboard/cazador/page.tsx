@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Crosshair,
   MapPin,
@@ -12,8 +12,9 @@ import {
   Zap,
   Map,
   RefreshCw,
-  Phone,
   AlertTriangle,
+  Share2,
+  ExternalLink,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchVpsGet, fetchVpsPost, ProspectoVps } from '@/lib/vps/types';
@@ -43,6 +44,13 @@ export default function CazadorPage() {
   const [vpsOffline, setVpsOffline] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Selector híbrido de Facebook
+  const [mostrarModalFb, setMostrarModalFb] = useState<boolean>(false);
+  const [modoFb, setModoFb] = useState<'KEYWORD' | 'GROUP'>('KEYWORD');
+  const [targetFb, setTargetFb] = useState<string>('');
+  const [cazaAsyncActiva, setCazaAsyncActiva] = useState<boolean>(false);
+  const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   const cargarDatos = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
@@ -63,6 +71,29 @@ export default function CazadorPage() {
     cargarDatos();
   }, [cargarDatos]);
 
+  // Limpiar timer de polling al desmontar
+  useEffect(() => {
+    return () => {
+      if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+    };
+  }, []);
+
+  const iniciarPollingAutoRefresco = useCallback(() => {
+    setCazaAsyncActiva(true);
+    let intentos = 0;
+    if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+
+    pollingTimerRef.current = setInterval(async () => {
+      intentos += 1;
+      await cargarDatos();
+      if (intentos >= 7) {
+        // 7 intentos cada 5s = 35 segundos
+        if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+        setCazaAsyncActiva(false);
+      }
+    }, 5000);
+  }, [cargarDatos]);
+
   const filtrados = useMemo(() => {
     if (municipio === 'TODOS') return prospectos;
     return prospectos.filter((p) =>
@@ -77,14 +108,28 @@ export default function CazadorPage() {
     return filtrados.slice(start, start + PAGE_SIZE);
   }, [filtrados, paginaActual]);
 
-  const handleCazarLote = async (fuente: 'INEGI' | 'APIFY') => {
+  const handleCazarLote = async (fuente: 'INEGI' | 'APIFY' | 'FACEBOOK') => {
     setCazando(fuente);
-    const res = await fetchVpsPost('/api/cazar_lote_10', { municipio, fuente });
+    const body: Record<string, any> = { municipio, fuente };
+    if (fuente === 'FACEBOOK') {
+      body.modo = modoFb;
+      body.target = targetFb.trim();
+    }
+
+    const res = await fetchVpsPost('/api/cazar_lote_10', body);
     setCazando(null);
     if (res.ok === false || res.vpsOffline) {
       toast.error(res.error || 'No se pudo conectar al VPS para cazar lote.');
       return;
     }
+
+    if (res.async) {
+      toast.info(res.mensaje || 'Cazando en Facebook en segundo plano. Los prospectos se actualizarán automáticamente.');
+      setMostrarModalFb(false);
+      iniciarPollingAutoRefresco();
+      return;
+    }
+
     toast.success(`Lote de 10 prospectos (${fuente}) actualizado.`);
     await cargarDatos();
   };
@@ -124,7 +169,7 @@ export default function CazadorPage() {
       destino = `52${destino}`;
     }
 
-    const msg = `Hola! Soy de *Mallas Tlaxcalli*. Vimos su tortillería "${p.nombre}" en ${p.municipio}. Tenemos el *Paquete Completo* de malla + bandas en *$1,713 MXN* con envío gratis y pago contra entrega. ¿Le gustaría recibir detalles para su máquina?`;
+    const msg = `Hola! Soy de *Mallas Tlaxcalli*. Vimos su negocio "${p.nombre}" en ${p.municipio}. Tenemos el *Paquete Completo* de malla + bandas en *$1,713 MXN* con envío gratis y pago contra entrega. ¿Le gustaría recibir detalles para su máquina?`;
     return `https://wa.me/${destino}?text=${encodeURIComponent(msg)}`;
   };
 
@@ -134,13 +179,13 @@ export default function CazadorPage() {
         <div>
           <div className="flex items-center gap-2 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-1">
             <Crosshair className="w-4 h-4" />
-            Módulo 1 • Prospección Automatizada
+            Módulo 1 • Prospección Multi-Fuente
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
-            Cazador DENUE / Apify (Lotes de 10)
+            Cazador INEGI / Apify Maps / Facebook
           </h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Filtra tortillerías por municipio, verifica en Google Maps si operan y envía el pitch por WhatsApp.
+            Filtra negocios por municipio, verifica su estado y envía el pitch de venta por WhatsApp con Andrea.
           </p>
         </div>
 
@@ -150,8 +195,8 @@ export default function CazadorPage() {
             disabled={loading}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 text-sm transition-colors disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Actualizar
+            <RefreshCw className={`w-4 h-4 ${loading || cazaAsyncActiva ? 'animate-spin text-blue-400' : ''}`} />
+            {cazaAsyncActiva ? 'Auto-refrescando...' : 'Actualizar'}
           </button>
           <button
             onClick={() => handleCazarLote('INEGI')}
@@ -169,8 +214,94 @@ export default function CazadorPage() {
             <Map className="w-4 h-4" />
             {cazando === 'APIFY' ? 'Cazando...' : '+10 Apify Maps'}
           </button>
+          <button
+            onClick={() => setMostrarModalFb(true)}
+            disabled={cazando !== null}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors disabled:opacity-50 shadow-sm"
+          >
+            <Share2 className="w-4 h-4" />
+            +15 Facebook Grupos
+          </button>
         </div>
       </div>
+
+      {/* Modal / Selector Híbrido de Facebook */}
+      {mostrarModalFb && (
+        <div className="p-4 rounded-xl bg-zinc-900/90 border border-indigo-500/40 space-y-3 animate-in fade-in">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-wider">
+              <Share2 className="w-4 h-4" />
+              Cazador en Facebook (Modo Híbrido)
+            </div>
+            <button
+              onClick={() => setMostrarModalFb(false)}
+              className="text-zinc-500 hover:text-zinc-300 text-xs"
+            >
+              ✕ Cerrar
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-zinc-400 mb-1">Estrategia de Búsqueda</label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setModoFb('KEYWORD')}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold border transition-all ${
+                    modoFb === 'KEYWORD'
+                      ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300'
+                      : 'bg-zinc-950 border-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  Por Palabra Clave
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModoFb('GROUP')}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold border transition-all ${
+                    modoFb === 'GROUP'
+                      ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300'
+                      : 'bg-zinc-950 border-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  URL de Grupo Público
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-zinc-400 mb-1">
+                {modoFb === 'KEYWORD' ? 'Término o Giro Comercial (opcional)' : 'Enlace directo del Grupo de Facebook'}
+              </label>
+              <input
+                type="text"
+                value={targetFb}
+                onChange={(e) => setTargetFb(e.target.value)}
+                placeholder={
+                  modoFb === 'KEYWORD'
+                    ? `Ej: tortilleria maquinaria refacciones ${municipio !== 'TODOS' ? municipio : 'Edomex'}`
+                    : 'https://www.facebook.com/groups/...'
+                }
+                className="w-full px-3 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-100 text-xs focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              onClick={() => setMostrarModalFb(false)}
+              className="px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-300 text-xs font-medium hover:bg-zinc-700"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => handleCazarLote('FACEBOOK')}
+              disabled={cazando !== null}
+              className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-sm"
+            >
+              {cazando === 'FACEBOOK' ? 'Extrayendo con IA...' : 'Iniciar Caza en Facebook'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {vpsOffline && (
         <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-sm">
@@ -208,24 +339,21 @@ export default function CazadorPage() {
 
         <div>
           <label className="block text-xs font-medium text-zinc-400 mb-1.5">
-            Teléfono de Prueba (Override WA)
+            WhatsApp de Prueba (Opcional)
           </label>
-          <div className="relative">
-            <Phone className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              value={telPrueba}
-              onChange={(e) => setTelPrueba(e.target.value)}
-              placeholder="Ej: 5512345678 (10 dígitos)"
-              className="w-full pl-9 pr-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-100 text-sm focus:outline-none focus:border-blue-500"
-            />
-          </div>
+          <input
+            type="text"
+            value={telPrueba}
+            onChange={(e) => setTelPrueba(e.target.value)}
+            placeholder="Ej: 5512345678 (redirige los clics aquí)"
+            className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-100 text-sm focus:outline-none focus:border-blue-500 font-mono"
+          />
         </div>
 
-        <div className="flex items-end justify-between gap-2">
+        <div className="flex items-end justify-between lg:justify-end gap-3">
           <div className="text-xs text-zinc-400">
-            Mostrando <span className="text-white font-semibold">{loteVisible.length}</span> de{' '}
-            <span className="text-white font-semibold">{filtrados.length}</span> prospectos
+            Total filtrados:{' '}
+            <span className="font-bold text-white text-sm">{filtrados.length}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <button
@@ -234,9 +362,9 @@ export default function CazadorPage() {
               className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 text-xs font-medium disabled:opacity-40"
             >
               <ChevronLeft className="w-4 h-4" />
-              10 Ant.
+              Ant.
             </button>
-            <span className="text-xs text-zinc-400 px-2">
+            <span className="text-xs text-zinc-400 px-2 font-mono">
               {paginaActual + 1} / {totalPaginas}
             </span>
             <button
@@ -260,7 +388,7 @@ export default function CazadorPage() {
                 <th className="py-3 px-4">Tortillería / Fuente</th>
                 <th className="py-3 px-4">Municipio / Dirección</th>
                 <th className="py-3 px-4">Teléfono</th>
-                <th className="py-3 px-4">Verificación Maps</th>
+                <th className="py-3 px-4">Verificación / Enlace</th>
                 <th className="py-3 px-4 text-right">Acción WhatsApp</th>
               </tr>
             </thead>
@@ -274,13 +402,15 @@ export default function CazadorPage() {
               ) : loteVisible.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-12 text-center text-zinc-500">
-                    No hay prospectos registrados para este filtro. Usa +10 INEGI o +10 Apify Maps.
+                    No hay prospectos registrados para este filtro. Usa +10 INEGI, +10 Apify Maps o +15 Facebook Grupos.
                   </td>
                 </tr>
               ) : (
                 loteVisible.map((p, idx) => {
                   const isDescartada = p.estatus_maps === 'CERRADA_DESCARTADA';
                   const isVerificada = p.estatus_maps === 'ABIERTA_VERIFICADA';
+                  const isFacebook = (p.fuente || '').toUpperCase().includes('FACEBOOK');
+
                   return (
                     <tr
                       key={`${p.telefono}-${idx}`}
@@ -291,7 +421,13 @@ export default function CazadorPage() {
                       <td className="py-3.5 px-4">
                         <div className="font-medium text-white">{p.nombre}</div>
                         <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[11px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
+                          <span
+                            className={`text-[11px] px-2 py-0.5 rounded font-medium ${
+                              isFacebook
+                                ? 'bg-indigo-950/80 text-indigo-300 border border-indigo-700/50'
+                                : 'bg-zinc-800 text-zinc-300'
+                            }`}
+                          >
                             {p.fuente || 'DENUE'}
                           </span>
                           {p.segmento_cliente && (
@@ -310,7 +446,17 @@ export default function CazadorPage() {
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          {p.google_maps_url && (
+                          {isFacebook && p.google_maps_url ? (
+                            <a
+                              href={p.google_maps_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-950/70 border border-indigo-800/60 hover:bg-indigo-900 text-indigo-200 text-xs transition-colors"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5 text-indigo-400" />
+                              Ver Post
+                            </a>
+                          ) : p.google_maps_url ? (
                             <a
                               href={p.google_maps_url}
                               target="_blank"
@@ -320,7 +466,8 @@ export default function CazadorPage() {
                               <MapPin className="w-3.5 h-3.5 text-blue-400" />
                               Maps
                             </a>
-                          )}
+                          ) : null}
+
                           <button
                             onClick={() => handleMarcarMaps(p.telefono, 'ABIERTA_VERIFICADA')}
                             className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
