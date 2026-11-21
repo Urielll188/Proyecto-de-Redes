@@ -1890,6 +1890,12 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
+            try:
+                import modulo_1b_cazador_facebook as motor_fb
+                ultimo_fb = motor_fb.ESTADO_ULTIMA_CORRIDA_FB
+            except Exception:
+                ultimo_fb = None
+
             self._send_json({
                 "cliente": perfil["nombre_empresa"],
                 "municipios_autorizados": perfil["cobertura_logistica"]["municipios_edomex_autorizados"],
@@ -1900,6 +1906,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 "fotos_negocio_pau": fotos_pau,
                 "cola_paola": COLA_MENSAJES_PAOLA[-10:],
                 "n8n_live_url": n8n_url,
+                "last_fb_run_status": ultimo_fb,
                 "seguridad": {
                     "inegi_conectado": bool(env.get("INEGI_DENUE_TOKEN")),
                     "apify_conectado": bool(env.get("APIFY_API_TOKEN")),

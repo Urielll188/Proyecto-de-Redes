@@ -6,10 +6,15 @@ MÓDULO 1B: CAZADOR DE LEADS EN FACEBOOK (GRUPOS Y PUBLICACIONES PÚBLICAS)
 Agencia Blitzr / Mallas Tlaxcalli
 ================================================================================
 - Desacoplado al 100% de modulo_1_motor_cazador.py (CERO regresiones en INEGI/Maps).
-- Extrae posts públicos mediante el Actor de Apify (cero cookies personales, cero riesgo IP).
+- Modo Dual Inteligente:
+  1. Si recibe URL directa (grupo o página), extrae con Actor de Facebook / SERP.
+  2. Si recibe búsqueda/palabra clave o municipio, realiza Google SERP Dorking
+     con Apify (`apify~google-search-scraper`) indexando publicaciones y páginas
+     públicas de Facebook con teléfonos, sin bloqueos de login de Meta.
 - Pre-filtro estricto con RegEx para extraer teléfonos mexicanos (+52 / 10 dígitos).
 - Clasificación estructurada JSON con Gemini (usando el pool infinito de modelos y llaves).
 - Inserción limpia en cazador_agencia.db con fuente='FACEBOOK' y enlace directo al post.
+- Registra el último estado en ESTADO_ULTIMA_CORRIDA_FB para auditoría y Dashboard.
 ================================================================================
 """
 
@@ -28,10 +33,21 @@ ENV_PATH = os.path.join(BASE_DIR, ".env")
 DB_PATH = os.path.join(DATA_DIR, "cazador_agencia.db")
 SSL_CTX = ssl._create_unverified_context()
 
-# Patrón robusto para detectar números de teléfono de México (celulares y fijos)
+# Patrón robusto para detectar números de teléfono de México
 PATRON_TEL_MEX = re.compile(
     r"(?:(?:\+?52\s*(?:1\s*)?)?(?:\(?\d{2,3}\)?[\s.-]*)?\d{3,4}[\s.-]*\d{4}|\b\d{10}\b)"
 )
+
+ESTADO_ULTIMA_CORRIDA_FB = {
+    "timestamp": "",
+    "target": "",
+    "status": "INACTIVO",
+    "posts_extraidos": 0,
+    "con_telefono": 0,
+    "aprobados_ia": 0,
+    "guardados_bd": 0,
+    "mensaje": "Sin ejecuciones recientes."
+}
 
 
 def cargar_env() -> dict:
@@ -74,34 +90,31 @@ def extraer_posibles_telefonos(texto: str) -> list:
     return encontrados
 
 
-def extraer_apify_facebook(query_o_url: str, max_posts: int = 20, apify_token: str = "") -> list:
+def extraer_facebook_apify(query_o_url: str, max_posts: int = 20, apify_token: str = "") -> list:
     """
-    Invoca el scraper de Facebook en Apify para grupos o publicaciones públicas.
-    Soporta:
-    1. URL directa de grupo público (ej: https://www.facebook.com/groups/...)
-    2. Palabra clave de búsqueda comercial (ej: tortilleria maquinaria Ecatepec)
+    Extracción robusta de publicaciones públicas de Facebook mediante Apify.
+    Usa Google SERP Indexing (apify~google-search-scraper) para capturar posts y grupos de Facebook
+    con números visibles, evitando el muro de autenticación privado de Meta.
     """
     if not apify_token:
         print("   [!] Error en Cazador Facebook: Falta APIFY_API_TOKEN.")
         return []
 
-    # Usamos el actor estándar de Apify para publicaciones de Facebook
-    url = f"https://api.apify.com/v2/acts/apify~facebook-posts-scraper/run-sync-get-dataset-items?token={apify_token}"
-
-    query_o_url = query_o_url.strip()
-    es_url = query_o_url.startswith("http://") or query_o_url.startswith("https://")
-
-    payload = {
-        "maxPosts": min(max(max_posts, 5), 30),
-        "scrapeComments": False,
-    }
+    target = query_o_url.strip()
+    es_url = target.startswith("http://") or target.startswith("https://")
 
     if es_url:
-        payload["startUrls"] = [{"url": query_o_url}]
+        search_query = f'site:{target} ("55" OR "cel" OR "whatsapp" OR "tel" OR "52")'
     else:
-        # Búsqueda por palabra clave en publicaciones públicas
-        query_encoded = urllib.parse.quote(query_o_url)
-        payload["startUrls"] = [{"url": f"https://www.facebook.com/search/posts?q={query_encoded}"}]
+        search_query = f'site:facebook.com "{target}" ("55" OR "cel" OR "whatsapp" OR "tel")'
+
+    payload = {
+        "queries": search_query,
+        "maxPagesPerQuery": 1,
+        "resultsPerPage": min(max(max_posts, 10), 30),
+    }
+
+    url = f"https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token={apify_token}"
 
     try:
         req = urllib.request.Request(
@@ -110,69 +123,61 @@ def extraer_apify_facebook(query_o_url: str, max_posts: int = 20, apify_token: s
             headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
         )
         with urllib.request.urlopen(req, context=SSL_CTX, timeout=90) as resp:
-            items = json.loads(resp.read().decode("utf-8"))
-            if not isinstance(items, list):
+            data = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(data, list) or not data:
                 return []
 
-            posts_extraidos = []
-            for it in items:
-                texto = str(it.get("text") or it.get("postText") or it.get("message") or "").strip()
-                post_url = str(it.get("url") or it.get("postUrl") or it.get("canonicalUrl") or "").strip()
-                autor = str(it.get("author") or it.get("user") or {}).strip()
-                if isinstance(it.get("author"), dict):
-                    autor = str(it.get("author", {}).get("name") or "Usuario Facebook")
-                elif not autor or autor.startswith("{"):
-                    autor = "Contacto Facebook"
+            posts = []
+            organic = data[0].get("organicResults", [])
+            for res in organic:
+                item_url = str(res.get("url") or "").strip()
+                title = str(res.get("title") or "Tortillería Facebook").strip()
+                snippet = str(res.get("description") or "").strip()
+                texto_completo = f"{title}. {snippet}"
 
-                if not texto:
+                if "facebook.com" not in item_url:
                     continue
 
-                posts_extraidos.append({
-                    "id_post": str(it.get("id") or it.get("postId") or "")[:20],
-                    "autor": autor,
-                    "texto": texto,
-                    "url": post_url or f"https://facebook.com/{query_encoded if not es_url else ''}",
-                    "fecha": it.get("time") or datetime.now().isoformat(),
+                posts.append({
+                    "id_post": item_url.split("/")[-1][:30],
+                    "autor": title.split("|")[0].split("-")[0].strip(),
+                    "texto": texto_completo,
+                    "url": item_url,
+                    "fecha": datetime.now().isoformat(),
                 })
-            return posts_extraidos
+            return posts
     except Exception as e:
-        print(f"   [!] Aviso extracción Apify Facebook: {e}")
+        print(f"   [!] Error extrayendo Facebook vía Apify SERP: {e}")
         return []
 
 
 def clasificar_post_gemini(texto_post: str, autor: str, municipio_fallback: str, llaves: list, modelos: list) -> dict:
-    """
-    Clasifica un post mediante Gemini con salida JSON estricta:
-    - Descarta memes, quejas, ofertas de empleo de repartidor, etc.
-    - Confirma si es un negocio/taller real del gremio o prospecto calificado.
-    - Identifica nombre comercial, teléfono y municipio.
-    """
-    prompt = f"""Analiza esta publicación de Facebook y determina si es un NEGOCIO, TALLER, TORTILLERÍA o CLIENTE REAL potencial para refacciones y mallas antiadherentes de tortilladoras.
+    """Clasifica un post mediante Gemini con salida JSON estricta."""
+    prompt = f"""Analiza este contenido público de Facebook y determina si es un NEGOCIO, TALLER, TORTILLERÍA o CLIENTE POTENCIAL para mallas antiadherentes y refacciones de tortilladoras.
 
-REGLAS ESTRICTAS:
-1. Si es meme, queja política, oferta de empleo para repartidor/chofer, o no tiene relación comercial con tortillas, maíz o maquinaria, marca "es_negocio_valido": false.
+REGLAS:
+1. Si es meme, queja política o empleo para repartidor/chofer, marca "es_negocio_valido": false.
 2. Si es una tortillería, molino de nixtamal, técnico o taller de maquinaria de maíz, marca "es_negocio_valido": true.
-3. Extrae el nombre comercial más apropiado (o el nombre del autor si no hay nombre de local).
+3. Extrae el nombre comercial (o el nombre más formal del local).
 4. Si menciona municipio o colonia en el texto, extráelo; de lo contrario usa "{municipio_fallback}".
 
-Texto del post:
+Texto:
 \"\"\"{texto_post}\"\"\"
-Autor: {autor}
+Autor/Título: {autor}
 
 Responde ÚNICAMENTE con este JSON válido (sin markdown, sin bloques ```):
 {{
   "es_negocio_valido": true,
   "nombre_comercial": "Nombre del Negocio",
   "municipio": "Municipio detectado",
-  "segmento": "TORTILLERIA" o "MECANICO_MAQUINARIA",
-  "resumen_oferta": "Breve nota de lo que vende u ofrece"
+  "segmento": "TORTILLERIA" o "MECANICO_MAQUINARIA"
 }}"""
 
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 200,
+            "maxOutputTokens": 180,
             "responseMimeType": "application/json",
         },
     }
@@ -195,25 +200,32 @@ Responde ÚNICAMENTE con este JSON válido (sin markdown, sin bloques ```):
             except Exception:
                 continue
 
-    # Fallback heurístico si fallaran todos los modelos
-    es_valido = any(k in texto_post.lower() for k in ["tortill", "nixtamal", "molino", "malla", "teflon", "maquin"])
+    # Fallback heurístico
+    es_valido = any(k in texto_post.lower() for k in ["tortill", "nixtamal", "molino", "malla", "teflon", "maquin", "celorio"])
     return {
         "es_negocio_valido": es_valido,
         "nombre_comercial": autor or f"Tortillería Facebook ({municipio_fallback})",
         "municipio": municipio_fallback,
         "segmento": "TORTILLERIA",
-        "resumen_oferta": "Contacto extraído desde publicación de Facebook",
     }
 
 
 def ejecutar_caza_facebook(target: str, municipio_default: str = "Ecatepec", max_posts: int = 20) -> dict:
-    """
-    Función orquestadora de Facebook:
-    1. Extrae posts públicos con Apify.
-    2. Aplica filtro RegEx para solo procesar los que tengan teléfono mexicano.
-    3. Clasifica con Gemini usando la cascada de modelos/llaves.
-    4. Guarda los leads aprobados en cazador_agencia.db con estatus 'PENDIENTE_ENVIO'.
-    """
+    """Función orquestadora de Facebook con métricas para auditoría."""
+    global ESTADO_ULTIMA_CORRIDA_FB
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    ESTADO_ULTIMA_CORRIDA_FB = {
+        "timestamp": ahora,
+        "target": target,
+        "status": "EJECUTANDO",
+        "posts_extraidos": 0,
+        "con_telefono": 0,
+        "aprobados_ia": 0,
+        "guardados_bd": 0,
+        "mensaje": f"Iniciando extracción en Facebook para '{target}'..."
+    }
+
     env = cargar_env()
     apify_token = env.get("APIFY_API_TOKEN", "")
 
@@ -235,22 +247,31 @@ def ejecutar_caza_facebook(target: str, municipio_default: str = "Ecatepec", max
         "gemini-2.5-flash",
     ]
 
-    posts = extraer_apify_facebook(target, max_posts=max_posts, apify_token=apify_token)
-    if not posts:
-        return {"ok": True, "extraidos": 0, "guardados": 0, "mensaje": "No se encontraron posts nuevos."}
+    posts = extraer_facebook_apify(target, max_posts=max_posts, apify_token=apify_token)
+    ESTADO_ULTIMA_CORRIDA_FB["posts_extraidos"] = len(posts)
 
-    leads_guardados = 0
+    if not posts:
+        ESTADO_ULTIMA_CORRIDA_FB["status"] = "SIN_RESULTADOS"
+        ESTADO_ULTIMA_CORRIDA_FB["mensaje"] = "Apify no devolvió resultados para la búsqueda."
+        return ESTADO_ULTIMA_CORRIDA_FB
+
+    con_tel = 0
+    aprobados = 0
+    guardados = 0
+
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     for p in posts:
         telefonos = extraer_posibles_telefonos(p["texto"])
         if not telefonos:
-            continue  # Filtro RegEx: descarta posts sin teléfono, ahorra tokens
+            continue
+        con_tel += 1
 
         clasif = clasificar_post_gemini(p["texto"], p["autor"], municipio_default, llaves, modelos)
         if not clasif.get("es_negocio_valido", False):
             continue
+        aprobados += 1
 
         tel_principal = telefonos[0]
         nombre = str(clasif.get("nombre_comercial") or p["autor"]).strip()
@@ -282,33 +303,38 @@ def ejecutar_caza_facebook(target: str, municipio_default: str = "Ecatepec", max
                 "PAQUETE_MALLAS_1713",
                 "ENTREGA_A_DOMICILIO_GRATIS",
                 "APROBADO_FACEBOOK",
-                85,  # Score alto para leads activos en redes
+                85,
                 "FACEBOOK",
                 "PENDIENTE_ENVIO",
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                ahora,
                 post_link,
                 "",
                 ""
             ))
             if cur.rowcount > 0:
-                leads_guardados += 1
+                guardados += 1
         except Exception as e:
             print(f"   [!] Error insertando lead Facebook: {e}")
 
     conn.commit()
     conn.close()
 
-    print(f"✅ [CAZADOR FACEBOOK] Completado: {len(posts)} posts analizados, {leads_guardados} leads guardados en BD.")
-    return {
-        "ok": True,
-        "posts_analizados": len(posts),
-        "leads_guardados": leads_guardados,
-    }
+    ESTADO_ULTIMA_CORRIDA_FB["con_telefono"] = con_tel
+    ESTADO_ULTIMA_CORRIDA_FB["aprobados_ia"] = aprobados
+    ESTADO_ULTIMA_CORRIDA_FB["guardados_bd"] = guardados
+    ESTADO_ULTIMA_CORRIDA_FB["status"] = "COMPLETADO"
+    ESTADO_ULTIMA_CORRIDA_FB["mensaje"] = (
+        f"Apify extrajo {len(posts)} publicaciones -> {con_tel} con teléfono -> "
+        f"{aprobados} aprobados por IA -> {guardados} leads nuevos guardados en BD."
+    )
+
+    print(f"✅ [CAZADOR FACEBOOK] {ESTADO_ULTIMA_CORRIDA_FB['mensaje']}")
+    return ESTADO_ULTIMA_CORRIDA_FB
 
 
 if __name__ == "__main__":
     import sys
-    target_arg = sys.argv[1] if len(sys.argv) > 1 else "tortilleria maquinaria Ecatepec"
+    target_arg = sys.argv[1] if len(sys.argv) > 1 else "tortilleria ecatepec"
     muni_arg = sys.argv[2] if len(sys.argv) > 2 else "Ecatepec"
-    res = ejecutar_caza_facebook(target_arg, muni_arg, max_posts=10)
+    res = ejecutar_caza_facebook(target_arg, muni_arg, max_posts=15)
     print(json.dumps(res, indent=2))
