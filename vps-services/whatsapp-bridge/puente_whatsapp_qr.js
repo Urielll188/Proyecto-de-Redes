@@ -411,11 +411,10 @@ async function resolverJidWhatsApp(telRaw) {
 }
 
 function esHorarioComercialMexico() {
-  // Hora Ciudad de México fija (UTC-6), lunes a sábado de 09:00 a 19:59 hrs
+  // Hora Ciudad de México fija (UTC-6), lunes a domingo de 07:00 a 21:29 hrs (horario real de tortillerías)
   const ahoraMx = new Date(Date.now() - 6 * 3600 * 1000);
-  if (ahoraMx.getUTCDay() === 0) return false; // Bloquea envíos en frío los domingos
-  const horaMx = ahoraMx.getUTCHours();
-  return horaMx >= 9 && horaMx < 20;
+  const minutosMx = ahoraMx.getUTCHours() * 60 + ahoraMx.getUTCMinutes();
+  return minutosMx >= 7 * 60 && minutosMx <= 21 * 60 + 29;
 }
 
 async function activarCircuitBreakerFrio(motivoDetalle) {
@@ -486,8 +485,8 @@ async function revisarYEnviarUno50Diarios() {
       });
 
       ultimoEnvio50Ms = Date.now();
-      // Próximo envío entre 9 y 14 minutos aleatorios (anti-bloqueo estricto)
-      proximoIntervalo50Ms = (540 + Math.floor(Math.random() * 300)) * 1000;
+      // Próximo envío entre 8.5 y 12 minutos aleatorios (anti-bloqueo estricto)
+      proximoIntervalo50Ms = (510 + Math.floor(Math.random() * 210)) * 1000;
       console.log(`📤 [FRÍO] Enviado #${conf.enviados_hoy || '?'} a ${cand.nombre} (${waCheck.jid})`);
 
       // Si fue disparo inicial tras activar, avisar al dueño en su chat
@@ -495,7 +494,7 @@ async function revisarYEnviarUno50Diarios() {
         const propio = obtenerPropioJid();
         if (propio) {
           await enviarMensajeSeguro(propio, {
-            text: `🚀 *1er Envío Automático Realizado (${conf.enviados_hoy || 1}/${cand.meta_diaria || 25} hoy):*\n📍 *${cand.nombre}* (${cand.municipio})\n📱 Teléfono verificado: ${waCheck.numero}\n⏱️ El siguiente saldrá en 9-14 min para cuidar tu chip.`
+            text: `🚀 *1er Envío Automático Realizado (${conf.enviados_hoy || 1}/${cand.meta_diaria || 30} hoy):*\n📍 *${cand.nombre}* (${cand.municipio})\n📱 Teléfono verificado: ${waCheck.numero}\n⏱️ El siguiente saldrá en 8.5-12 min para cuidar tu chip.`
           }).catch(() => {});
         }
       }
@@ -931,9 +930,9 @@ async function iniciarPuenteWhatsApp() {
             await postJsonPython('/api/control_motor', { activo: true }).catch(() => {});
             await enviarMensajeSeguro(jid, {
               text: '🚀 *¡Motor Comercial y Auto-Respuestas ACTIVADOS!*\n\n' +
-                    '• Envíos en frío a tortillerías: *EN MARCHA* (cadencia segura de 9 a 14 min, meta 25/día)\n' +
-                    '• Auto-respuestas de Andrea a clientes: *ACTIVAS*\n' +
-                    '• Horario estricto: Lunes a Sábado 09:00–19:59 CDMX.\n\n' +
+                    '• Envíos en frío a tortillerías: *EN MARCHA* (cadencia segura de 8.5 a 12 min, meta 30/día)\n' +
+                    '• Auto-respuestas de Andrea a clientes: *ACTIVAS 24/7*\n' +
+                    '• Horario envíos en frío: Lunes a Domingo 07:00–21:29 CDMX.\n\n' +
                     '🔔 Te notificaré aquí mismo en cuanto un cliente conteste pidiendo cotización.'
             });
             setTimeout(() => { revisarYEnviarUno50Diarios(); }, 2000);

@@ -228,12 +228,12 @@ def guardar_config(clave: str, valor: str):
 
 inicializar_tablas_ecosistema()
 
-META_DIARIA_FRIO = int(os.environ.get("META_DIARIA_FRIO", "25"))
+META_DIARIA_FRIO = int(os.environ.get("META_DIARIA_FRIO", "30"))
 
 ESTADO_MOTOR_50_DIARIOS = {
     "activo": leer_config("motor_50_activo", "0") == "1",
     "meta_diaria": META_DIARIA_FRIO,
-    "intervalo_minutos": f"9 a 14 minutos entre cada mensaje (Meta: {META_DIARIA_FRIO} diarios)",
+    "intervalo_minutos": f"8.5 a 12 minutos entre cada mensaje (Meta: {META_DIARIA_FRIO} diarios)",
     "ultimo_negocio_contactado": leer_config("ultimo_negocio_contactado", "Ninguno todavía")
 }
 EXCEL_VIVO_PATH = os.path.join(BASE_DIR, "data", "EXCEL_VIVO_MALLAS_TLAXCALLI.csv")
