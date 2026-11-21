@@ -136,6 +136,7 @@ let proximoIntervalo50Ms = 540000;
 let enviando50EnCurso = false;
 let motorPausadoLocal = true;
 let forzarAhoraPendiente = false;
+let erroresConsecutivosEnvio = 0;
 const idsMensajesBot = new Set();
 const modoClienteForzadoSet = new Set();
 const chatsConFotoEnviadaSet = new Set();
@@ -410,10 +411,24 @@ async function resolverJidWhatsApp(telRaw) {
 }
 
 function esHorarioComercialMexico() {
-  // Hora Ciudad de México fija (UTC-6)
-  const ahoraUtc = new Date();
-  const horaMx = new Date(ahoraUtc.getTime() - 6 * 3600 * 1000).getUTCHours();
-  return horaMx >= 8 && horaMx < 21;
+  // Hora Ciudad de México fija (UTC-6), lunes a sábado de 09:00 a 19:59 hrs
+  const ahoraMx = new Date(Date.now() - 6 * 3600 * 1000);
+  if (ahoraMx.getUTCDay() === 0) return false; // Bloquea envíos en frío los domingos
+  const horaMx = ahoraMx.getUTCHours();
+  return horaMx >= 9 && horaMx < 20;
+}
+
+async function activarCircuitBreakerFrio(motivoDetalle) {
+  motorPausadoLocal = true;
+  forzarAhoraPendiente = false;
+  await postJsonPython('/api/control_motor', { activo: false }).catch(() => {});
+  console.error(`🚨 [CIRCUIT BREAKER ACTIVADO] 3 errores consecutivos de envío (${motivoDetalle}). Motor en frío PAUSADO automáticamente (Andrea sigue activa).`);
+  const propio = obtenerPropioJid();
+  if (propio) {
+    await enviarMensajeSeguro(propio, {
+      text: `🚨 *ALERTA CIRCUIT BREAKER:* Se detectaron 3 errores consecutivos al enviar mensajes en frío (${motivoDetalle}).\n\n• Motor de envíos en frío: *PAUSADO AUTOMÁTICAMENTE*\n• Auto-respuestas de Andrea: *ACTIVAS* (sigue atendiendo clientes)`
+    }).catch(() => {});
+  }
 }
 
 async function revisarYEnviarUno50Diarios() {
@@ -447,7 +462,22 @@ async function revisarYEnviarUno50Diarios() {
 
       await sockActual.sendPresenceUpdate('composing', waCheck.jid);
       await new Promise((r) => setTimeout(r, 3000 + Math.floor(Math.random() * 2000)));
-      await enviarMensajeSeguro(waCheck.jid, { text: cand.mensaje });
+      const resEnvio = await enviarMensajeSeguro(waCheck.jid, { text: cand.mensaje });
+      if (!resEnvio) {
+        erroresConsecutivosEnvio++;
+        await postJsonPython('/api/confirmar_envio_50', {
+          id: cand.id,
+          enviado: false,
+          motivo: 'ERROR_ENVIO_WA'
+        }).catch(() => {});
+        console.error(`❌ [CIRCUIT BREAKER] Error #${erroresConsecutivosEnvio}/3 enviando a ${cand.nombre} (${waCheck.jid})`);
+        if (erroresConsecutivosEnvio >= 3) {
+          await activarCircuitBreakerFrio(`fallo de envío a ${waCheck.jid}`);
+        }
+        break;
+      }
+      erroresConsecutivosEnvio = 0;
+
       const conf = await postJsonPython('/api/confirmar_envio_50', {
         id: cand.id,
         enviado: true,
@@ -456,23 +486,27 @@ async function revisarYEnviarUno50Diarios() {
       });
 
       ultimoEnvio50Ms = Date.now();
-      // Próximo envío entre 8.5 y 10.5 minutos (anti-bloqueo realista)
-      proximoIntervalo50Ms = (510 + Math.floor(Math.random() * 120)) * 1000;
-      console.log(`📤 [50/DÍA] Enviado #${conf.enviados_hoy || '?'} a ${cand.nombre} (${waCheck.jid})`);
+      // Próximo envío entre 9 y 14 minutos aleatorios (anti-bloqueo estricto)
+      proximoIntervalo50Ms = (540 + Math.floor(Math.random() * 300)) * 1000;
+      console.log(`📤 [FRÍO] Enviado #${conf.enviados_hoy || '?'} a ${cand.nombre} (${waCheck.jid})`);
 
       // Si fue disparo inicial tras activar, avisar al dueño en su chat
       if (esForzado) {
         const propio = obtenerPropioJid();
         if (propio) {
           await enviarMensajeSeguro(propio, {
-            text: `🚀 *1er Envío Automático Realizado (${conf.enviados_hoy || 1}/80 hoy):*\n📍 *${cand.nombre}* (${cand.municipio})\n📱 Teléfono verificado: ${waCheck.numero}\n⏱️ El siguiente saldrá en ~9 min para cuidar tu chip.`
+            text: `🚀 *1er Envío Automático Realizado (${conf.enviados_hoy || 1}/${cand.meta_diaria || 25} hoy):*\n📍 *${cand.nombre}* (${cand.municipio})\n📱 Teléfono verificado: ${waCheck.numero}\n⏱️ El siguiente saldrá en 9-14 min para cuidar tu chip.`
           }).catch(() => {});
         }
       }
       break;
     }
   } catch (err) {
-    console.error('⚠️ Error en motor 50/día:', err.message);
+    erroresConsecutivosEnvio++;
+    console.error(`⚠️ Error en motor frío (${erroresConsecutivosEnvio}/3):`, err.message);
+    if (erroresConsecutivosEnvio >= 3) {
+      await activarCircuitBreakerFrio(err.message);
+    }
   } finally {
     enviando50EnCurso = false;
   }
@@ -892,13 +926,14 @@ async function iniciarPuenteWhatsApp() {
           if (pideActivar) {
             pausaRespuestasGeneral = false;
             motorPausadoLocal = false;
+            erroresConsecutivosEnvio = 0;
             forzarAhoraPendiente = true;
             await postJsonPython('/api/control_motor', { activo: true }).catch(() => {});
             await enviarMensajeSeguro(jid, {
               text: '🚀 *¡Motor Comercial y Auto-Respuestas ACTIVADOS!*\n\n' +
-                    '• Envíos masivos a tortillerías: *EN MARCHA* (cadencia segura de 8 a 11 min)\n' +
-                    '• Auto-respuestas a clientes interesados: *ACTIVAS*\n' +
-                    '• Filtro estricto: Tortillerías activas de DENUE y Google Maps con WhatsApp real.\n\n' +
+                    '• Envíos en frío a tortillerías: *EN MARCHA* (cadencia segura de 9 a 14 min, meta 25/día)\n' +
+                    '• Auto-respuestas de Andrea a clientes: *ACTIVAS*\n' +
+                    '• Horario estricto: Lunes a Sábado 09:00–19:59 CDMX.\n\n' +
                     '🔔 Te notificaré aquí mismo en cuanto un cliente conteste pidiendo cotización.'
             });
             setTimeout(() => { revisarYEnviarUno50Diarios(); }, 2000);
@@ -906,7 +941,7 @@ async function iniciarPuenteWhatsApp() {
           }
 
           // -------------------------------------------------------------
-          // COMANDO 2: PAUSAR MOTOR DE ENVÍOS Y AUTO-RESPUESTAS
+          // COMANDO 2: PAUSAR MOTOR DE ENVÍOS (DESACOPLADO DE AUTO-RESPUESTAS)
           // -------------------------------------------------------------
           const pidePausar =
             lowCmd.includes('pausa') || lowCmd.includes('pausar') || lowCmd.includes('deten') || lowCmd.includes('detener') ||
@@ -914,16 +949,15 @@ async function iniciarPuenteWhatsApp() {
             lowCmd.includes('cancela los envios') || lowCmd.includes('frena') || lowCmd === 'alto' || lowCmd === 'stop';
 
           if (pidePausar) {
-            pausaRespuestasGeneral = true;
+            const pausarTodo = lowCmd.includes('todo') || lowCmd.includes('andrea') || lowCmd.includes('respuestas');
+            pausaRespuestasGeneral = pausarTodo;
             motorPausadoLocal = true;
             forzarAhoraPendiente = false;
             await postJsonPython('/api/control_motor', { activo: false }).catch(() => {});
             await enviarMensajeSeguro(jid, {
-              text: '🛑 *Motor Comercial y Auto-Respuestas PAUSADOS*\n\n' +
-                    '• Envíos masivos a tortillerías: *DETENIDOS*\n' +
-                    '• Auto-respuestas a clientes: *EN PAUSA*\n' +
-                    '• Chat Directo contigo: *100% OPERATIVO*\n\n' +
-                    '📌 Puedes seguir pidiéndome flyers, videos o reportes. Cuando quieras que retome los envíos a clientes, solo dime:\n👉 *"Activa los envíos"*'
+              text: pausarTodo
+                ? '🛑 *Motor en Frío y Auto-Respuestas PAUSADOS*\n\n• Envíos en frío: *DETENIDOS*\n• Auto-respuestas de Andrea: *EN PAUSA*\n• Chat Directo contigo: *100% OPERATIVO*'
+                : '🛑 *Envíos en Frío PAUSADOS (Andrea sigue activa)*\n\n• Envíos en frío a prospectos: *DETENIDOS*\n• Auto-respuestas de Andrea a clientes que escriben: *100% ACTIVAS*\n• Chat Directo contigo: *100% OPERATIVO*\n\n📌 Cuando quieras retomar los envíos en frío, dime: *"Activa los envíos"*'
             });
             continue;
           }
@@ -1243,18 +1277,30 @@ const serverHttpInterno = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && req.url === '/control_motor') {
       const data = await leerBody();
-      if (data.accion === 'pausar') {
+      const accion = String(data.accion || '').toLowerCase();
+      if (accion === 'pausar_frio' || accion === 'pausar') {
+        motorPausadoLocal = true;
+        pausaRespuestasGeneral = false;
+        forzarAhoraPendiente = false;
+        console.log('🛑 [MOTOR FRÍO] Envío en frío pausado (Andrea sigue respondiendo)');
+      } else if (accion === 'reanudar_frio' || accion === 'activar') {
+        motorPausadoLocal = false;
+        pausaRespuestasGeneral = false;
+        erroresConsecutivosEnvio = 0;
+        console.log('▶️ [MOTOR FRÍO] Envío en frío reanudado y Andrea activa');
+      } else if (accion === 'pausar_todo') {
         motorPausadoLocal = true;
         pausaRespuestasGeneral = true;
         forzarAhoraPendiente = false;
-        console.log('🛑 [MOTOR 50/DÍA] Pausado por orden administrativa');
-      } else if (data.accion === 'activar') {
+        console.log('🛑 [MOTOR TOTAL] Envío en frío y respuestas de Andrea pausados');
+      } else if (accion === 'reanudar_todo') {
         motorPausadoLocal = false;
         pausaRespuestasGeneral = false;
-        console.log('▶️ [MOTOR 50/DÍA] Activado por orden administrativa');
+        erroresConsecutivosEnvio = 0;
+        console.log('▶️ [MOTOR TOTAL] Envío en frío y respuestas de Andrea reanudados');
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ ok: true, motorPausadoLocal, pausaRespuestasGeneral }));
+      return res.end(JSON.stringify({ ok: true, motorPausadoLocal, pausaRespuestasGeneral, erroresConsecutivosEnvio }));
     }
 
     if (req.method === 'POST' && req.url === '/activar_motor_ahora') {

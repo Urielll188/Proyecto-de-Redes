@@ -34,7 +34,7 @@ import time
 import urllib.parse
 import urllib.request
 import wave
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
 import modulo_1_motor_cazador as motor_m1
@@ -228,10 +228,12 @@ def guardar_config(clave: str, valor: str):
 
 inicializar_tablas_ecosistema()
 
+META_DIARIA_FRIO = int(os.environ.get("META_DIARIA_FRIO", "25"))
+
 ESTADO_MOTOR_50_DIARIOS = {
     "activo": leer_config("motor_50_activo", "0") == "1",
-    "meta_diaria": 80,
-    "intervalo_minutos": "5 a 8 minutos entre cada mensaje (Meta: 80 diarios)",
+    "meta_diaria": META_DIARIA_FRIO,
+    "intervalo_minutos": f"9 a 14 minutos entre cada mensaje (Meta: {META_DIARIA_FRIO} diarios)",
     "ultimo_negocio_contactado": leer_config("ultimo_negocio_contactado", "Ninguno todavía")
 }
 EXCEL_VIVO_PATH = os.path.join(BASE_DIR, "data", "EXCEL_VIVO_MALLAS_TLAXCALLI.csv")
@@ -856,11 +858,32 @@ COLA_MENSAJES_PAOLA = []
 
 
 def _mensaje_saliente_prospecto(pid: int, nombre: str, municipio: str) -> str:
-    # Mensaje cálido, educado y respetuoso para dueños de tortillerías mexicanas (CERO spam agresivo)
+    # Saludo dinámico según hora real en CDMX (UTC-6) + 6 variantes naturales anti-huella
+    ahora_mx = datetime.now(timezone.utc) - timedelta(hours=6)
+    hora_mx = ahora_mx.hour
+    if hora_mx < 12:
+        saludo_hora = "Buenos días"
+    elif hora_mx < 19:
+        saludo_hora = "Buenas tardes"
+    else:
+        saludo_hora = "Buenas noches"
+
+    mun = (municipio or "su zona").strip()
+    nom_raw = (nombre or "").strip()
+    nombre_valido = (
+        nom_raw
+        and len(nom_raw) >= 3
+        and not any(x in nom_raw.upper() for x in ("SIN NOMBRE", "N/A", "DESCONOCIDO", "PROSPECTO"))
+    )
+    ref_negocio = f"*{nom_raw}*" if nombre_valido else f"su negocio en *{mun}*"
+
     saludos = [
-        f"Buenas tardes, disculpe la molestia 👋 Le saluda Paola de *Mallas Tlaxcalli*. Somos fabricantes directos de mallas y refacciones para tortilladora aquí en el área metropolitana y andamos por su rumbo en *{municipio}* entregando material a varias tortillerías. Les queríamos dejar nuestro contacto directo para cualquier urgencia de mallas o baleros sin que tengan que frenar su turno en la máquina. ¿Gusta que le comparta la foto de nuestro paquete completo con envío gratis? Buen turno y un cordial saludo.",
-        f"Qué tal, muy buenas tardes, disculpe interrumpir su turno 👋 Le escribe Paola de *Mallas Tlaxcalli*. Fabricamos mallas para tortilladora y baleros aquí cerca y seguido entregamos pedidos por la zona de *{municipio}*. Les dejamos nuestro contacto por si algún día se les llega a romper una malla a media producción y necesitan refacción urgente directo de fábrica sin pagar de más en refaccionaria. ¿Le gustaría que le mande la foto del paquete completo con entrega a domicilio? Que tengan muy buena venta hoy.",
-        f"Buenas tardes, disculpe que le escriba durante el trabajo 👋 Le saluda Paola del taller de *Mallas Tlaxcalli*. Somos fabricantes de mallas reforzadas y baleros para máquina tortilladora aquí en el Estado y Ciudad de México. Andamos organizando ruta de entrega por *{municipio}* y queríamos ponernos a su orden para cuando ocupen cambio de malla testalera o transportadora con entrega directa en su local y pago al recibir. ¿Gusta que le envíe fotos del paquete de mantenimiento? Un saludo y mucho éxito en el turno."
+        f"{saludo_hora}, disculpe la molestia 👋 Le saluda Paola de *Mallas Tlaxcalli*. Somos fabricantes directos de mallas y refacciones para tortilladora y andamos armando ruta por *{mun}*. Queríamos dejarle nuestro contacto para {ref_negocio} por si llegan a ocupar mallas o baleros sin frenar su turno. Si gusta le paso foto del paquete con envío gratis, sin compromiso. ¡Excelente jornada!",
+        f"Qué tal, muy {saludo_hora.lower()}, disculpe interrumpir el turno 👋 Le escribe Paola de *Mallas Tlaxcalli*. Fabricamos mallas reforzadas para tortilladora y baleros, y seguido entregamos pedidos en *{mun}*. Les compartimos nuestro contacto directo para {ref_negocio} por si en algún momento necesitan refacción directo de fábrica. ¿Le gustaría ver la foto del paquete completo? Sin presión, aquí quedamos a la orden.",
+        f"{saludo_hora}, disculpe que le escriba en horario de trabajo 👋 Soy Paola del taller *Mallas Tlaxcalli*. Hacemos mallas testaleras, transportadoras y baleros para máquina tortilladora con entrega directa en *{mun}* y pago al recibir. Si en {ref_negocio} llegan a requerir cambio, con gusto le mando fotos de referencia cuando tenga un chance. ¡Mucho éxito hoy!",
+        f"Hola, {saludo_hora.lower()} 👋 Le saluda Paola de *Mallas Tlaxcalli*. Andamos visitando y entregando pedidos de mallas y baleros para tortilladora en la zona de *{mun}*. Le dejo este mensaje breve por si en {ref_negocio} buscan proveedor directo de taller con envío sin costo. Si le interesa, me responde y le mando el catálogo rápido. ¡Que tenga muy buena venta!",
+        f"{saludo_hora}, un saludo cordial hasta *{mun}* 👋 Le escribe Paola de *Mallas Tlaxcalli*. Nos dedicamos a fabricar mallas de acero y refacciones para tortilladora, entregando directo en su local. Quedamos a la orden para {ref_negocio} para cuando necesiten mantenimiento preventivo o alguna urgencia. ¿Quiere que le comparta precios y fotos de nuestro paquete? Quedo pendiente sin compromiso.",
+        f"Qué tal, {saludo_hora.lower()}, mucho gusto 👋 Soy Paola de *Mallas Tlaxcalli*. Somos taller fabricante de mallas y baleros para tortilladora y esta semana traemos ruta por *{mun}*. Le dejamos nuestro WhatsApp por si en {ref_negocio} ocupan cotizar refacciones directo de fábrica y con pago contra entrega. Si gusta le envío fotos del kit cuando guste. ¡Saludos!"
     ]
     return saludos[pid % len(saludos)]
 
