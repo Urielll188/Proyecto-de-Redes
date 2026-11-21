@@ -411,10 +411,10 @@ async function resolverJidWhatsApp(telRaw) {
 }
 
 function esHorarioComercialMexico() {
-  // Hora Ciudad de México fija (UTC-6), lunes a domingo de 07:00 a 21:29 hrs (horario real de tortillerías)
+  // Hora Ciudad de México fija (UTC-6): envíos en frío permitidos de 06:00 AM a 10:59 PM (cola nocturna diferida hasta 06:00 AM)
   const ahoraMx = new Date(Date.now() - 6 * 3600 * 1000);
-  const minutosMx = ahoraMx.getUTCHours() * 60 + ahoraMx.getUTCMinutes();
-  return minutosMx >= 7 * 60 && minutosMx <= 21 * 60 + 29;
+  const horaMx = ahoraMx.getUTCHours();
+  return horaMx >= 6 && horaMx < 23;
 }
 
 async function activarCircuitBreakerFrio(motivoDetalle) {
@@ -932,7 +932,7 @@ async function iniciarPuenteWhatsApp() {
               text: '🚀 *¡Motor Comercial y Auto-Respuestas ACTIVADOS!*\n\n' +
                     '• Envíos en frío a tortillerías: *EN MARCHA* (cadencia segura de 8.5 a 12 min, meta 30/día)\n' +
                     '• Auto-respuestas de Andrea a clientes: *ACTIVAS 24/7*\n' +
-                    '• Horario envíos en frío: Lunes a Domingo 07:00–21:29 CDMX.\n\n' +
+                    '• Horario envíos en frío: Lunes a Domingo 06:00–22:59 CDMX (cola nocturna 23:00–05:59 sale a las 06:00 AM).\n\n' +
                     '🔔 Te notificaré aquí mismo en cuanto un cliente conteste pidiendo cotización.'
             });
             setTimeout(() => { revisarYEnviarUno50Diarios(); }, 2000);
@@ -1362,6 +1362,28 @@ const serverHttpInterno = http.createServer(async (req, res) => {
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, destino: propioJid, audio_enviado: audioOk, mimetype_audio: mime }));
+      } catch (err) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: err.message }));
+      }
+    }
+
+    if (req.method === 'POST' && req.url === '/notificar_dueno') {
+      const data = await leerBody();
+      try {
+        const propioJid = obtenerPropioJid();
+        if (!sockActual || !estadoActual.conectado || !propioJid) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, motivo: 'WHATSAPP_NO_CONECTADO' }));
+        }
+        const texto = String(data.mensaje || '').trim();
+        if (!texto) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, motivo: 'MENSAJE_VACIO' }));
+        }
+        const resEnvio = await enviarMensajeSeguro(propioJid, { text: texto });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: Boolean(resEnvio), destino: propioJid }));
       } catch (err) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: false, error: err.message }));

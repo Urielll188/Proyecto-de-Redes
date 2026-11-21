@@ -30,6 +30,7 @@ import os
 import re
 import sqlite3
 import ssl
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -1930,6 +1931,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 "cola_paola": COLA_MENSAJES_PAOLA[-10:],
                 "n8n_live_url": n8n_url,
                 "last_fb_run_status": ultimo_fb,
+                "cazador_24_7": ESTADO_CAZADOR_24_7,
                 "seguridad": {
                     "inegi_conectado": bool(env.get("INEGI_DENUE_TOKEN")),
                     "apify_conectado": bool(env.get("APIFY_API_TOKEN")),
@@ -3278,8 +3280,163 @@ def generar_html_publico_seguro() -> str:
 </html>"""
 
 
+CAZADOR_INTERVALO_MIN = max(5, int(os.environ.get("CAZADOR_INTERVALO_MIN", "45")))
+_CAZADOR_24_7_LOCK = threading.Lock()
+_CAZADOR_24_7_INICIADO = False
+ESTADO_CAZADOR_24_7 = {
+    "activo": False,
+    "intervalo_min": CAZADOR_INTERVALO_MIN,
+    "ciclos_completados": 0,
+    "ultimo_ciclo": None,
+    "ultima_fuente": None,
+    "ultimo_municipio": None,
+    "ultimos_nuevos": 0,
+    "ultimo_error": None
+}
+
+
+def _notificar_dueno_wa(mensaje: str) -> bool:
+    try:
+        payload = json.dumps({"mensaje": mensaje}).encode("utf-8")
+        req = urllib.request.Request(
+            "http://127.0.0.1:8095/notificar_dueno",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return bool(data.get("ok"))
+    except Exception:
+        return False
+
+
+def _ejecutar_ciclo_cazador_24_7(ciclo_idx: int) -> None:
+    fuentes = ["INEGI", "APIFY", "FACEBOOK"]
+    fuente = fuentes[ciclo_idx % len(fuentes)]
+
+    with open(PERFIL_PATH, "r", encoding="utf-8") as f:
+        perfil = json.load(f)
+    municipios = perfil.get("cobertura_logistica", {}).get("municipios_edomex_autorizados", []) or ["Ecatepec"]
+    muni = municipios[ciclo_idx % len(municipios)]
+    env = motor_m1.cargar_env()
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT COALESCE(MAX(id), 0) FROM prospectos_cazador")
+    max_id_antes = cur.fetchone()[0]
+    conn.close()
+
+    if fuente == "FACEBOOK":
+        try:
+            import modulo_1b_cazador_facebook as motor_fb
+        except ImportError:
+            from scripts import modulo_1b_cazador_facebook as motor_fb
+        motor_fb.ejecutar_caza_facebook(
+            f"tortilleria maquinaria refacciones {muni}",
+            municipio_default=muni,
+            max_posts=15
+        )
+    elif fuente == "APIFY":
+        estado_q = "Ciudad de Mexico" if "CDMX" in muni.upper() else "Estado de Mexico"
+        nuevos = motor_m1.extraer_apify_google_maps(
+            f"Tortilleria en {muni}, {estado_q}, Mexico",
+            10,
+            env.get("APIFY_API_TOKEN", "")
+        )
+        clasificados = [motor_m1.clasificar_negocio(r, perfil) for r in nuevos]
+        motor_m1.guardar_y_exportar(clasificados, perfil["id_cliente"])
+    else:
+        clave_ent = "09" if "CDMX" in muni.upper() else "15"
+        termino = "tortilleria cdmx" if clave_ent == "09" else f"tortilleria {muni.lower()}"
+        ini = OFFSET_EXTRACCION_INEGI["actual"]
+        OFFSET_EXTRACCION_INEGI["actual"] += 10
+        nuevos = motor_m1.extraer_inegi_por_municipio(
+            termino,
+            clave_ent,
+            10,
+            env.get("INEGI_DENUE_TOKEN", ""),
+            reg_ini=ini
+        )
+        clasificados = [motor_m1.clasificar_negocio(r, perfil) for r in nuevos]
+        motor_m1.guardar_y_exportar(clasificados, perfil["id_cliente"])
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE prospectos_cazador
+        SET estatus_contacto_wa = 'PENDIENTE_ENVIO'
+        WHERE id > ? AND (estatus_contacto_wa IS NULL OR estatus_contacto_wa IN ('', 'PENDIENTE'))
+    """, (max_id_antes,))
+    conn.commit()
+    cur.execute("""
+        SELECT id, nombre, telefono, municipio
+        FROM prospectos_cazador
+        WHERE id > ?
+        ORDER BY id ASC
+    """, (max_id_antes,))
+    nuevos_bd = cur.fetchall()
+    conn.close()
+
+    ahora_mx = datetime.now(timezone.utc) - timedelta(hours=6)
+    hora_mx = ahora_mx.hour
+    en_ventana_envio = (6 <= hora_mx < 23)
+
+    ESTADO_CAZADOR_24_7["ciclos_completados"] += 1
+    ESTADO_CAZADOR_24_7["ultimo_ciclo"] = ahora_mx.strftime("%Y-%m-%d %H:%M:%S CDMX")
+    ESTADO_CAZADOR_24_7["ultima_fuente"] = fuente
+    ESTADO_CAZADOR_24_7["ultimo_municipio"] = muni
+    ESTADO_CAZADOR_24_7["ultimos_nuevos"] = len(nuevos_bd)
+    ESTADO_CAZADOR_24_7["ultimo_error"] = None
+
+    if len(nuevos_bd) >= 1:
+        resumen_lista = "\n".join(
+            f"• *{n[1]}* ({n[3]}) — `{n[2]}`" for n in nuevos_bd[:5]
+        )
+        extra_txt = f"\n_...y {len(nuevos_bd) - 5} más._" if len(nuevos_bd) > 5 else ""
+        estado_cola = (
+            "🚀 *Despacho inmediato activo (06:00–22:59 CDMX):* pasan directo a la cola de primer contacto."
+            if en_ventana_envio
+            else "🌙 *Cola nocturna (23:00–05:59 CDMX):* quedan retenidos en `PENDIENTE_ENVIO` y salen automáticamente a partir de las *06:00 AM*."
+        )
+        msg_dueno = (
+            f"🕵️ *Cazador 24/7 — {len(nuevos_bd)} Prospecto(s) Nuevo(s)*\n"
+            f"📡 Fuente: *{fuente}* | 📍 Zona: *{muni}*\n\n"
+            f"{resumen_lista}{extra_txt}\n\n"
+            f"{estado_cola}"
+        )
+        _notificar_dueno_wa(msg_dueno)
+        print(f"🕵️ [CAZADOR 24/7] Ciclo #{ESTADO_CAZADOR_24_7['ciclos_completados']} ({fuente}/{muni}): +{len(nuevos_bd)} nuevos prospectos -> PENDIENTE_ENVIO")
+
+
+def _bucle_cazador_24_7() -> None:
+    time.sleep(60)
+    ciclo_idx = 0
+    while True:
+        try:
+            _ejecutar_ciclo_cazador_24_7(ciclo_idx)
+        except Exception as err:
+            ESTADO_CAZADOR_24_7["ultimo_error"] = str(err)
+            print(f"⚠️ [CAZADOR 24/7] Error en ciclo #{ciclo_idx}: {err}")
+        ciclo_idx += 1
+        time.sleep(CAZADOR_INTERVALO_MIN * 60)
+
+
+def iniciar_worker_cazador_24_7() -> None:
+    global _CAZADOR_24_7_INICIADO
+    with _CAZADOR_24_7_LOCK:
+        if _CAZADOR_24_7_INICIADO:
+            return
+        _CAZADOR_24_7_INICIADO = True
+        ESTADO_CAZADOR_24_7["activo"] = True
+        hilo = threading.Thread(target=_bucle_cazador_24_7, name="Cazador24x7Worker", daemon=True)
+        hilo.start()
+        print(f"🕵️ Worker Cazador 24/7 iniciado (intervalo cada {CAZADOR_INTERVALO_MIN} min, cola nocturna diferida 23:00-05:59 CDMX).")
+
+
 if __name__ == "__main__":
     puerto = 8090
+    iniciar_worker_cazador_24_7()
     print(f"Servidor Público Blindado v3.0 (5 Módulos Completos) activo en puerto {puerto}")
     server = ThreadingHTTPServer(("127.0.0.1", puerto), PublicSafeHandler)
     server.serve_forever()
