@@ -16,6 +16,7 @@ import { Sparkles, Send, Copy, Palette, Check } from 'lucide-react'
 import { InstagramMockup } from './mockups/InstagramMockup'
 import { createClient } from '@/utils/supabase/client'
 import { toBlob } from 'html-to-image'
+import { useNicho } from '@/context/NichoContext'
 
 const NICHE_OPTIONS = [
   'Producto Físico',
@@ -92,6 +93,7 @@ interface EmpresaStepperProps {
 
 export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   const router = useRouter()
+  const { isMallasOwner, syncNichoFromIdea } = useNicho()
   const hasInitialCampaign = Boolean(initialData?.copies || initialData?.strategyData)
 
   // Paso 1: Ingesta | Paso 2: Centro de Mando | Paso 3: Generación Visual de Estudio
@@ -341,6 +343,39 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         setBadgeText(niche.toUpperCase())
       }
 
+      // Sincronizar automáticamente el perfil del negocio con perfiles_nicho en SQLite para usuarios nuevos
+      if (!isMallasOwner) {
+        const avatarText = data.cmoAnalysis?.avatar || data.estrategia?.avatar_cliente || ''
+        const offerText =
+          data.cmoAnalysis?.irresistibleOffer ||
+          data.estrategia?.oferta_irresistible ||
+          waText ||
+          productDesc.trim().slice(0, 180)
+        const angleText = data.cmoAnalysis?.angle || data.estrategia?.angulo_gancho || ''
+        const catalogoPrompt = [
+          `Producto / Idea: ${productDesc.trim()}`,
+          `Nicho: ${niche} | Objetivo: ${goal}`,
+          avatarText ? `Cliente Objetivo: ${avatarText}` : '',
+          offerText ? `Oferta Gancho: ${offerText}` : '',
+          angleText ? `Ángulo de Venta: ${angleText}` : '',
+          waText ? `Guion WhatsApp: ${waText}` : '',
+          igText ? `Copy Comercial: ${igText}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+          .slice(0, 2500)
+
+        syncNichoFromIdea({
+          nombre_negocio: headlineText,
+          giro_objetivo: avatarText ? `${niche} — ${avatarText.slice(0, 110)}` : niche,
+          niche,
+          productDesc: productDesc.trim(),
+          oferta_gancho: offerText,
+          catalogo_prompt: catalogoPrompt,
+          nombre_agente: 'Andrea',
+        })
+      }
+
       // Si mode === 'fast' (o !data.cmoAnalysis), avanzar directamente al paso del Estudio Visual (Step 3)
       if (mode === 'fast' || !data.cmoAnalysis) {
         setCmoAnalysis(null)
@@ -550,8 +585,37 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     }
   }
 
-  // Transición asistida a Paso 3 (dispara rembg en segundo plano si es imagen)
+  // Transición asistida a Paso 3 (dispara rembg en segundo plano si es imagen y sincroniza estrategia editada)
   const goToStep3 = () => {
+    if (!isMallasOwner && productDesc.trim()) {
+      const avatarText = cmoAnalysis?.avatar || campaignData?.estrategia?.avatar_cliente || ''
+      const offerText =
+        cmoAnalysis?.irresistibleOffer ||
+        campaignData?.estrategia?.oferta_irresistible ||
+        editableWaText ||
+        productDesc.trim().slice(0, 180)
+      const catalogoPrompt = [
+        `Producto / Idea: ${productDesc.trim()}`,
+        `Nicho: ${niche} | Objetivo: ${goal}`,
+        avatarText ? `Cliente Objetivo: ${avatarText}` : '',
+        offerText ? `Oferta Gancho: ${offerText}` : '',
+        editableWaText ? `Guion WhatsApp: ${editableWaText}` : '',
+        editableIgCopy ? `Copy Comercial: ${editableIgCopy}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 2500)
+
+      syncNichoFromIdea({
+        nombre_negocio: headline || productDesc.trim().slice(0, 40),
+        giro_objetivo: avatarText ? `${niche} — ${avatarText.slice(0, 110)}` : niche,
+        niche,
+        productDesc: productDesc.trim(),
+        oferta_gancho: offerText,
+        catalogo_prompt: catalogoPrompt,
+        nombre_agente: 'Andrea',
+      })
+    }
     setStep(3)
     if (!isVideoMedia && imageUrl && !cutoutProductUrl && !isRemovingBg) {
       handleRemoveBackground(imageUrl)

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   Truck,
   DollarSign,
@@ -11,32 +12,50 @@ import {
   CheckCircle2,
   RefreshCw,
   AlertTriangle,
+  ArrowRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchVpsGet, fetchVpsPost, PedidoVps } from '@/lib/vps/types';
+import { useNicho } from '@/context/NichoContext';
 
 export default function LogisticaPage() {
+  const { ownerEmail, isMallasOwner, tienePerfil, nicho, loadingNicho } = useNicho();
+
   const [pedidos, setPedidos] = useState<PedidoVps[]>([]);
   const [loading, setLoading] = useState(true);
   const [vpsOffline, setVpsOffline] = useState(false);
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
 
   const cargarDatos = useCallback(async () => {
+    if (!ownerEmail) return;
+    if (!isMallasOwner && !tienePerfil) {
+      setPedidos([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
-    const data = await fetchVpsGet('/api/datos_seguros');
+    const data = await fetchVpsGet('/api/datos_seguros', {
+      email: ownerEmail,
+      ...(nicho?.cliente_id ? { cliente_id: nicho.cliente_id } : {}),
+    });
     setVpsOffline(Boolean(data.vpsOffline || data.ok === false));
     if (Array.isArray(data.pedidos)) {
       setPedidos(data.pedidos);
+    } else {
+      setPedidos([]);
     }
     setLoading(false);
-  }, []);
+  }, [ownerEmail, isMallasOwner, tienePerfil, nicho?.cliente_id]);
 
   useEffect(() => {
-    cargarDatos();
-  }, [cargarDatos]);
+    if (!loadingNicho) {
+      cargarDatos();
+    }
+  }, [cargarDatos, loadingNicho]);
 
   const stats = useMemo(() => {
-    const setupBase = 2500;
+    const setupBase = isMallasOwner ? 2500 : 0;
     const ventasTotales = pedidos.reduce((acc, p) => acc + Number(p.monto_venta || 0), 0);
     const comisionesPedidos = pedidos.reduce(
       (acc, p) => acc + Number(p.comision_agencia || 0),
@@ -48,11 +67,15 @@ export default function LogisticaPage() {
       ventasTotales,
       tusComisiones: setupBase + comisionesPedidos,
     };
-  }, [pedidos]);
+  }, [pedidos, isMallasOwner]);
 
   const handleConfirmarPago = async (id: number) => {
     setConfirmingId(id);
-    const res = await fetchVpsPost('/api/confirmar_entrega_comision', { id });
+    const res = await fetchVpsPost('/api/confirmar_entrega_comision', {
+      id,
+      owner_email: ownerEmail,
+      cliente_id: nicho?.cliente_id || (isMallasOwner ? 'mallas_tlaxcalli' : ''),
+    });
     setConfirmingId(null);
     if (res.ok === false || res.vpsOffline) {
       toast.error(res.error || 'No se pudo confirmar la entrega en el VPS.');
@@ -64,8 +87,12 @@ export default function LogisticaPage() {
     toast.success('Entrega y pago confirmados.');
   };
 
+  const nombreMarca = isMallasOwner
+    ? 'MALLAS TLAXCALLI'
+    : (nicho?.nombre_negocio || 'MI NEGOCIO').toUpperCase();
+
   const buildRutaChoferUrl = (p: PedidoVps) => {
-    const msg = `🚚 *RUTA DE ENTREGA MALLAS TLAXCALLI*\nFolio: ${p.folio}\nCliente: ${p.cliente_tortilleria}\nTel: ${p.telefono}\nMunicipio: ${p.municipio}\nDirección: ${p.direccion_gps}\nHorario: ${p.horario_recepcion}\nCobrar (${p.metodo_pago}): $${p.monto_venta} MXN\nMaps: ${p.google_maps_url || 'N/A'}`;
+    const msg = `🚚 *RUTA DE ENTREGA ${nombreMarca}*\nFolio: ${p.folio}\nCliente: ${p.cliente_tortilleria}\nTel: ${p.telefono}\nMunicipio: ${p.municipio}\nDirección: ${p.direccion_gps}\nHorario: ${p.horario_recepcion}\nCobrar (${p.metodo_pago}): $${p.monto_venta} MXN\nMaps: ${p.google_maps_url || 'N/A'}`;
     return `https://wa.me/?text=${encodeURIComponent(msg)}`;
   };
 
@@ -81,7 +108,7 @@ export default function LogisticaPage() {
             Hoja de Ruta para Repartidores
           </h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Control de entregas contra pago, despacho de rutas por WhatsApp y cálculo de comisiones ($2,500 MXN setup + $200 MXN/pedido).
+            Control de entregas contra pago, despacho de rutas por WhatsApp y cálculo de comisiones.
           </p>
         </div>
 
@@ -94,6 +121,21 @@ export default function LogisticaPage() {
           Actualizar Ruta
         </button>
       </div>
+
+      {!loadingNicho && !isMallasOwner && !tienePerfil && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-xl bg-zinc-900/80 border border-cyan-500/30 text-sm">
+          <div className="text-zinc-300">
+            Configura primero tu producto en <strong className="text-cyan-400">01 • IDEA</strong> para habilitar el registro y seguimiento de pedidos de tu negocio.
+          </div>
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-zinc-950 font-bold text-xs shrink-0 transition-colors"
+          >
+            Ir a 01 • IDEA
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+      )}
 
       {vpsOffline && (
         <div className="flex items-center gap-3 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-xs">
@@ -116,7 +158,7 @@ export default function LogisticaPage() {
 
         <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4">
           <div className="flex items-center justify-between text-zinc-400 text-xs mb-2">
-            <span>Paquetes Cerrados</span>
+            <span>Pedidos Cerrados</span>
             <PackageCheck className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-2xl font-bold text-white">{stats.paquetesCerrados}</div>

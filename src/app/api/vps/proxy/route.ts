@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic'
 const ALLOWED_GET_ENDPOINTS = [
   '/api/datos_seguros',
   '/api/nichos',
+  '/api/mi-nicho',
   '/api/estatus_whatsapp',
   '/api/imagen_pau',
   '/excel_mallas_tlaxcalli.csv',
@@ -15,6 +16,7 @@ const ALLOWED_POST_ENDPOINTS = [
   '/api/cazar_lote_10',
   '/api/nichos',
   '/api/nichos/toggle',
+  '/api/mi-nicho',
   '/api/marcar_maps',
   '/api/marcar_lote_wa',
   '/api/chat',
@@ -56,8 +58,12 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const userEmail = (user.email || '').toLowerCase().trim()
     const queryParams = new URLSearchParams(req.nextUrl.searchParams)
     queryParams.delete('endpoint')
+    if (userEmail) {
+      queryParams.set('email', userEmail)
+    }
     const qs = queryParams.toString()
     const targetUrl = `${vpsBase}${cleanEndpoint}${qs ? `?${qs}` : ''}`
 
@@ -125,8 +131,13 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const userEmail = (user.email || '').toLowerCase().trim()
     const payload = { ...body }
     delete payload.endpoint
+    if (userEmail) {
+      payload.owner_email = userEmail
+      payload.email = userEmail
+    }
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

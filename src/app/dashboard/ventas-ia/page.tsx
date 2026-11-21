@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import {
   Bot,
   Send,
@@ -11,9 +12,11 @@ import {
   MapPin,
   Clock,
   CreditCard,
+  ArrowRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchVpsPost } from '@/lib/vps/types';
+import { useNicho } from '@/context/NichoContext';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -21,7 +24,7 @@ interface ChatMessage {
   audioUrl?: string;
 }
 
-const TEST_CHIPS = [
+const MALLAS_TEST_CHIPS = [
   { label: 'No sé qué máquina tengo', prompt: 'Hola, no sé qué modelo de máquina tortilladora tengo.' },
   { label: 'Trampa ¿qué máquina te dije?', prompt: 'Oye, ¿qué máquina te dije hace rato que tenía?' },
   { label: 'Pedir fotos', prompt: '¿Me puedes mandar fotos reales de la malla y las bandas?' },
@@ -42,13 +45,10 @@ const MUNICIPIOS = [
 ];
 
 export default function VentasIaPage() {
+  const { ownerEmail, isMallasOwner, tienePerfil, nicho, loadingNicho } = useNicho();
+
   const [sessionId] = useState(() => `web_${Date.now()}`);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: 'assistant',
-      text: '¡Hola! Bienvenido a Mallas Tlaxcalli. Soy tu asesora en línea. Tenemos el Paquete Completo (malla + bandas) en $1,713 MXN con envío gratis y pago contra entrega. ¿Qué modelo de máquina tortilladora manejas?',
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputMsg, setInputMsg] = useState('');
   const [incluirVoz, setIncluirVoz] = useState(true);
   const [sending, setSending] = useState(false);
@@ -66,6 +66,35 @@ export default function VentasIaPage() {
   );
   const [registrando, setRegistrando] = useState(false);
 
+  const welcomeMessageText = useMemo(() => {
+    if (isMallasOwner) {
+      return '¡Hola! Bienvenido a Mallas Tlaxcalli. Soy tu asesora en línea. Tenemos el Paquete Completo (malla + bandas) en $1,713 MXN con envío gratis y pago contra entrega. ¿Qué modelo de máquina tortilladora manejas?';
+    }
+    if (tienePerfil && nicho) {
+      return `¡Hola! Bienvenido a ${nicho.nombre_negocio}. Soy ${nicho.nombre_agente || 'Andrea'}, tu asesora en línea. Tenemos disponible: ${nicho.oferta_gancho}. ¿Te gustaría conocer los detalles o precios?`;
+    }
+    return '';
+  }, [isMallasOwner, tienePerfil, nicho]);
+
+  useEffect(() => {
+    if (welcomeMessageText) {
+      setMessages([{ role: 'assistant', text: welcomeMessageText }]);
+    } else {
+      setMessages([]);
+    }
+  }, [welcomeMessageText]);
+
+  const activeChips = useMemo(() => {
+    if (isMallasOwner) return MALLAS_TEST_CHIPS;
+    const prodName = nicho?.nombre_negocio || 'tu producto';
+    return [
+      { label: 'Pedir precio y promoción', prompt: `Hola, ¿me das información y precio de ${prodName}?` },
+      { label: '¿Cómo es la entrega?', prompt: '¿Cómo funciona la entrega a domicilio y formas de pago?' },
+      { label: 'Objeción de precio', prompt: 'Se me hace un poco caro, ¿qué beneficio incluye?' },
+      { label: 'Precio de mayoreo', prompt: '¿Manejan descuento por volumen o mayoreo?' },
+    ];
+  }, [isMallasOwner, nicho?.nombre_negocio]);
+
   const playAudio = (url?: string) => {
     if (!url) return;
     try {
@@ -81,6 +110,7 @@ export default function VentasIaPage() {
   };
 
   const handlePlayWelcome = async () => {
+    if (!messages[0]?.text) return;
     setPlayingWelcome(true);
     const res = await fetchVpsPost('/api/tts_voz_mujer', {
       texto: messages[0].text,
@@ -107,6 +137,8 @@ export default function VentasIaPage() {
       session_id: sessionId,
       mensaje: content,
       incluir_voz: incluirVoz,
+      owner_email: ownerEmail,
+      cliente_id: nicho?.cliente_id || (isMallasOwner ? 'mallas_tlaxcalli' : ''),
     });
     setSending(false);
 
@@ -139,12 +171,14 @@ export default function VentasIaPage() {
   const handleRegistrarPedido = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cliente.trim() || !telefono.trim() || !direccion.trim()) {
-      toast.error('Completa nombre de tortillería, teléfono y dirección.');
+      toast.error('Completa nombre del cliente/negocio, teléfono y dirección.');
       return;
     }
 
     setRegistrando(true);
     const res = await fetchVpsPost('/api/registrar_pedido', {
+      owner_email: ownerEmail,
+      cliente_id: nicho?.cliente_id || (isMallasOwner ? 'mallas_tlaxcalli' : ''),
       cliente_tortilleria: cliente.trim(),
       telefono: telefono.trim(),
       direccion_gps: direccion.trim(),
@@ -165,6 +199,57 @@ export default function VentasIaPage() {
     setDireccion('');
   };
 
+  // Estado vacío limpio para usuarios nuevos que aún no definen su idea en 01 • IDEA
+  if (!loadingNicho && !isMallasOwner && !tienePerfil) {
+    return (
+      <div className="space-y-6">
+        <div className="border-b border-zinc-800 pb-5">
+          <div className="flex items-center gap-2 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-1">
+            <Bot className="w-4 h-4" />
+            Módulo 2 • Inteligencia Comercial
+          </div>
+          <h1 className="text-2xl font-bold text-white tracking-tight">
+            Cerradora IA de Ventas
+          </h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            Simulador de asesora en línea con voz femenina natural y registro directo de cierres hacia Logística.
+          </p>
+        </div>
+
+        <div className="p-8 rounded-2xl bg-zinc-900/60 border border-zinc-800 text-center max-w-2xl mx-auto space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center mx-auto text-cyan-400">
+            <Bot className="w-6 h-6" />
+          </div>
+          <h2 className="text-xl font-bold text-white">
+            Entrena a Andrea con la idea de tu negocio
+          </h2>
+          <p className="text-sm text-zinc-400 leading-relaxed">
+            Ve al paso <span className="text-cyan-400 font-semibold">01 • IDEA</span>, describe tu
+            producto u oferta y presiona{' '}
+            <span className="text-white font-semibold">&ldquo;Dar inicio a mi idea&rdquo;</span>.
+            Andrea adoptará automáticamente el catálogo, precios y discurso de cierre de tu negocio.
+          </p>
+          <div className="pt-2">
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-zinc-950 font-bold text-sm transition-colors shadow-lg"
+            >
+              Configurar mi producto en 01 • IDEA
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const tituloNegocio = isMallasOwner
+    ? 'Ventas Mallas Tlaxcalli'
+    : nicho?.nombre_negocio || 'Mi Negocio';
+  const nombreAsesora = isMallasOwner
+    ? 'Ventas Mallas Tlaxcalli (Asesora en Línea)'
+    : `${nicho?.nombre_agente || 'Andrea'} — ${tituloNegocio} (Asesora en Línea)`;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-zinc-800 pb-5">
@@ -174,7 +259,7 @@ export default function VentasIaPage() {
             Módulo 2 • Inteligencia Comercial
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
-            Cerradora IA &ldquo;Ventas Mallas Tlaxcalli&rdquo;
+            Cerradora IA &ldquo;{tituloNegocio}&rdquo;
           </h1>
           <p className="text-sm text-zinc-400 mt-1">
             Simulador de asesora en línea con voz femenina natural y registro directo de cierres hacia Logística.
@@ -193,7 +278,7 @@ export default function VentasIaPage() {
           </label>
           <button
             onClick={handlePlayWelcome}
-            disabled={playingWelcome}
+            disabled={playingWelcome || !messages[0]?.text}
             className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-medium transition-colors disabled:opacity-50"
           >
             <Volume2 className="w-4 h-4 text-blue-400" />
@@ -208,16 +293,14 @@ export default function VentasIaPage() {
           <div className="px-4 py-3 bg-zinc-950/80 border-b border-zinc-800 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-sm font-semibold text-white">
-                Ventas Mallas Tlaxcalli (Asesora en Línea)
-              </span>
+              <span className="text-sm font-semibold text-white">{nombreAsesora}</span>
             </div>
             <span className="text-[11px] text-zinc-500 font-mono">Session: {sessionId}</span>
           </div>
 
           {/* Chips de prueba rápida */}
           <div className="px-4 py-2.5 bg-zinc-950/40 border-b border-zinc-800/80 flex flex-wrap gap-1.5">
-            {TEST_CHIPS.map((chip) => (
+            {activeChips.map((chip) => (
               <button
                 key={chip.label}
                 onClick={() => enviarMensaje(chip.prompt)}
@@ -278,7 +361,11 @@ export default function VentasIaPage() {
               type="text"
               value={inputMsg}
               onChange={(e) => setInputMsg(e.target.value)}
-              placeholder="Escribe como si fueras el dueño de la tortillería..."
+              placeholder={
+                isMallasOwner
+                  ? 'Escribe como si fueras el dueño de la tortillería...'
+                  : `Escribe como un cliente interesado en ${tituloNegocio}...`
+              }
               className="flex-1 px-3.5 py-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
             />
             <button
@@ -307,7 +394,9 @@ export default function VentasIaPage() {
             <form onSubmit={handleRegistrarPedido} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                  1. Nombre de Tortillería / Cliente
+                  {isMallasOwner
+                    ? '1. Nombre de Tortillería / Cliente'
+                    : '1. Nombre del Negocio / Cliente'}
                 </label>
                 <div className="relative">
                   <UserCheck className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
@@ -315,7 +404,11 @@ export default function VentasIaPage() {
                     type="text"
                     value={cliente}
                     onChange={(e) => setCliente(e.target.value)}
-                    placeholder="Ej: Tortillería La Guadalupana"
+                    placeholder={
+                      isMallasOwner
+                        ? 'Ej: Tortillería La Guadalupana'
+                        : `Ej: Cliente de ${tituloNegocio}`
+                    }
                     className="w-full pl-9 pr-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500"
                   />
                 </div>
@@ -354,7 +447,7 @@ export default function VentasIaPage() {
 
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                  3. Dirección Exacta / Referencia GPS
+                  3. Dirección Completa / Referencia GPS
                 </label>
                 <div className="relative">
                   <MapPin className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
@@ -362,7 +455,7 @@ export default function VentasIaPage() {
                     type="text"
                     value={direccion}
                     onChange={(e) => setDireccion(e.target.value)}
-                    placeholder="Av. Central #45, Col. Jardines"
+                    placeholder="Calle, Número, Colonia"
                     className="w-full pl-9 pr-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500"
                   />
                 </div>
@@ -383,6 +476,7 @@ export default function VentasIaPage() {
                     />
                   </div>
                 </div>
+
                 <div>
                   <label className="block text-xs font-medium text-zinc-300 mb-1.5">
                     Método de Pago
@@ -403,9 +497,7 @@ export default function VentasIaPage() {
                       <option value="TRANSFERENCIA_CONTRA_ENTREGA">
                         Transferencia Contra Entrega
                       </option>
-                      <option value="TERMINAL_MERCADO_PAGO">
-                        Terminal Mercado Pago
-                      </option>
+                      <option value="TERMINAL_MERCADO_PAGO">Terminal Mercado Pago</option>
                     </select>
                   </div>
                 </div>
@@ -414,13 +506,21 @@ export default function VentasIaPage() {
               <button
                 type="submit"
                 disabled={registrando}
-                className="w-full mt-2 py-2.5 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+                className="w-full mt-2 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors disabled:opacity-50"
               >
-                {registrando
-                  ? 'Enviando a Logística...'
-                  : 'Cerrar Pedido ($1,713 MXN) -> Módulo 3'}
+                <CheckCircle2 className="w-4 h-4" />
+                {registrando ? 'Registrando Pedido...' : 'Confirmar y Enviar a Logística'}
               </button>
             </form>
+          </div>
+
+          <div className="mt-6 pt-4 border-t border-zinc-800/80 flex items-center justify-between text-xs text-zinc-500">
+            <span>Oferta activa:</span>
+            <span className="text-emerald-400 font-semibold truncate max-w-[240px]">
+              {isMallasOwner
+                ? '$1,713 MXN • Envío Gratis'
+                : nicho?.oferta_gancho || 'Promoción Activa'}
+            </span>
           </div>
         </div>
       </div>

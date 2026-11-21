@@ -23,6 +23,7 @@ MÓDULO 5: Director de Marketing Realista (Estudio de Mejora Fotográfica que
 
 import base64
 import csv
+import hashlib
 import io
 import json
 import mimetypes
@@ -49,6 +50,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 PERFIL_PATH = os.path.join(SCRIPTS_DIR, "perfil_mallas_tlaxcalli.json")
 PROMPT_PATH = os.path.join(PROMPTS_DIR, "system_prompt_tlaxcalli.md")
 DB_PATH = os.path.join(DATA_DIR, "cazador_agencia.db")
+OWNER_EMAIL_MALLAS = "ferrergbryanu10@gmail.com"
 
 RUTAS_IMAGENES_PAU = [
     r"C:\Users\Hugo\Desktop\imágenes negocio pau",
@@ -139,6 +141,17 @@ def inicializar_tablas_ecosistema():
     """)
     # Limpiar los 2 pedidos demo anteriores para que el Agente CDO NUNCA invente ventas que no han ocurrido
     cur.execute("DELETE FROM pedidos_comisiones WHERE folio IN ('TLX-ORD-001', 'TLX-ORD-002')")
+    cur.execute("PRAGMA table_info(pedidos_comisiones)")
+    cols_ped = [row[1] for row in cur.fetchall()]
+    if "id_cliente_agencia" not in cols_ped:
+        cur.execute("ALTER TABLE pedidos_comisiones ADD COLUMN id_cliente_agencia TEXT DEFAULT 'mallas_tlaxcalli'")
+    cur.execute("""
+        UPDATE pedidos_comisiones
+        SET id_cliente_agencia = 'mallas_tlaxcalli'
+        WHERE id_cliente_agencia IS NULL
+           OR TRIM(id_cliente_agencia) = ''
+           OR LOWER(TRIM(id_cliente_agencia)) = 'mallas_tlaxcalli'
+    """)
 
     # Tabla Módulo 4: Seguimiento 24h/72h + Desbloqueo VIP Baleros ($26 MXN) a los 15 días
     cur.execute("""
@@ -151,10 +164,22 @@ def inicializar_tablas_ecosistema():
             ultimo_mensaje_cliente TEXT,
             dias_transcurridos INTEGER,
             mensaje_ia_sugerido TEXT,
-            estatus TEXT
+            estatus TEXT,
+            id_cliente_agencia TEXT DEFAULT 'mallas_tlaxcalli'
         )
     """)
     cur.execute("DELETE FROM seguimiento_clientes WHERE telefono IN ('525533445566', '525566778899', '525541239876')")
+    cur.execute("PRAGMA table_info(seguimiento_clientes)")
+    cols_seg = [row[1] for row in cur.fetchall()]
+    if "id_cliente_agencia" not in cols_seg:
+        cur.execute("ALTER TABLE seguimiento_clientes ADD COLUMN id_cliente_agencia TEXT DEFAULT 'mallas_tlaxcalli'")
+    cur.execute("""
+        UPDATE seguimiento_clientes
+        SET id_cliente_agencia = 'mallas_tlaxcalli'
+        WHERE id_cliente_agencia IS NULL
+           OR TRIM(id_cliente_agencia) = ''
+           OR LOWER(TRIM(id_cliente_agencia)) = 'mallas_tlaxcalli'
+    """)
 
     # Tabla Bitácora Real de Mensajes Enviados por WhatsApp (Control de 50 diarios anti-bloqueo)
     cur.execute("""
@@ -257,6 +282,13 @@ def inicializar_tablas_ecosistema():
         json.dumps(municipios_tlax_default, ensure_ascii=False)
     ))
     cur.execute("UPDATE perfiles_nicho SET protegido = 1 WHERE cliente_id = 'mallas_tlaxcalli'")
+    cur.execute("PRAGMA table_info(perfiles_nicho)")
+    cols_nicho = [row[1] for row in cur.fetchall()]
+    if "owner_email" not in cols_nicho:
+        cur.execute("ALTER TABLE perfiles_nicho ADD COLUMN owner_email TEXT DEFAULT ''")
+    cur.execute("UPDATE perfiles_nicho SET owner_email = '' WHERE LOWER(TRIM(owner_email)) = ? AND cliente_id != 'mallas_tlaxcalli'", (OWNER_EMAIL_MALLAS,))
+    cur.execute("UPDATE perfiles_nicho SET owner_email = ?, protegido = 1 WHERE cliente_id = 'mallas_tlaxcalli'", (OWNER_EMAIL_MALLAS,))
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_perfiles_owner_email ON perfiles_nicho(owner_email) WHERE owner_email IS NOT NULL AND owner_email != ''")
 
     # Tabla de Números Autorizados como Dueños (Ing. Paola / Ing. Rocha) para usar su Agente CDO directo en WhatsApp
     cur.execute("""
@@ -556,6 +588,226 @@ def resolver_cliente_id_por_telefono_o_sesion(session_id: str, cliente_id_explic
         except Exception:
             pass
     return motor_m1.normalizar_cliente_id(leer_config("nicho_activo_default", "mallas_tlaxcalli"))
+
+
+def obtener_nicho_por_email(email_raw: str) -> dict | None:
+    email_norm = str(email_raw or "").strip().lower()
+    if not email_norm:
+        return None
+
+    todos = obtener_lista_nichos_con_metricas()
+    mapa_metricas = {n["cliente_id"].lower(): n for n in todos}
+
+    if email_norm == OWNER_EMAIL_MALLAS:
+        base_mallas = mapa_metricas.get("mallas_tlaxcalli") or obtener_nicho_bd("mallas_tlaxcalli")
+        base_mallas["owner_email"] = OWNER_EMAIL_MALLAS
+        base_mallas["es_mallas"] = True
+        base_mallas["tiene_perfil"] = True
+        return base_mallas
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
+               codigo_scian_inegi, keywords_busqueda, oferta_gancho,
+               catalogo_y_reglas, system_prompt, protegido, activo,
+               fecha_creacion, COALESCE(owner_email, '')
+        FROM perfiles_nicho
+        WHERE LOWER(TRIM(COALESCE(owner_email, ''))) = ?
+          AND LOWER(cliente_id) != 'mallas_tlaxcalli'
+        LIMIT 1
+    """, (email_norm,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+
+    cid = row[0]
+    m_info = mapa_metricas.get(cid.lower(), {})
+    return {
+        "cliente_id": cid,
+        "nombre_negocio": row[1],
+        "nombre_agente": row[2] or "Andrea",
+        "giro_objetivo": row[3] or "",
+        "codigo_scian_inegi": row[4] or "",
+        "keywords_busqueda": row[5] or "",
+        "oferta_gancho": row[6] or "",
+        "catalogo_y_reglas": row[7] or "",
+        "system_prompt": row[8] or "",
+        "protegido": bool(row[9]),
+        "activo": bool(row[10]),
+        "fecha_creacion": row[11] or "",
+        "owner_email": row[12] or email_norm,
+        "es_mallas": False,
+        "tiene_perfil": True,
+        "total_prospectos": m_info.get("total_prospectos", 0),
+        "enviados_wa": m_info.get("enviados_wa", 0)
+    }
+
+
+def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict]:
+    email_norm = str(owner_email_raw or "").strip().lower()
+    if not email_norm or "@" not in email_norm:
+        return 400, {"ok": False, "error": "Correo de propietario (owner_email) inválido."}
+
+    req_cid = str(data.get("cliente_id") or "").strip().lower()
+    if email_norm != OWNER_EMAIL_MALLAS and req_cid == "mallas_tlaxcalli":
+        return 403, {
+            "ok": False,
+            "error": "Acceso denegado: El perfil mallas_tlaxcalli está protegido exclusivamente para su propietario."
+        }
+
+    if email_norm == OWNER_EMAIL_MALLAS:
+        return 200, {
+            "ok": True,
+            "tiene_perfil": True,
+            "es_mallas": True,
+            "owner_email": OWNER_EMAIL_MALLAS,
+            "nicho": obtener_nicho_por_email(OWNER_EMAIL_MALLAS)
+        }
+
+    existente = obtener_nicho_por_email(email_norm)
+    if existente and existente.get("cliente_id") and existente["cliente_id"].lower() != "mallas_tlaxcalli":
+        cid = existente["cliente_id"]
+    else:
+        user_slug = re.sub(r"[^a-z0-9]", "_", email_norm.split("@")[0])[:18].strip("_") or "tenant"
+        short_hash = hashlib.md5(email_norm.encode("utf-8")).hexdigest()[:6]
+        cid = f"nicho_{user_slug}_{short_hash}"
+
+    nombre_negocio = str(
+        data.get("nombre_negocio")
+        or data.get("headline")
+        or (existente or {}).get("nombre_negocio")
+        or ""
+    ).strip()[:80]
+    raw_idea = str(data.get("productDesc") or data.get("idea") or data.get("catalogo_prompt") or "").strip()
+    if not nombre_negocio and raw_idea:
+        nombre_negocio = raw_idea.split(".")[0].split("\n")[0].strip()[:48] or "Mi Negocio"
+    if not nombre_negocio:
+        nombre_negocio = "Mi Negocio"
+
+    nombre_agente = str(
+        data.get("nombre_agente")
+        or (existente or {}).get("nombre_agente")
+        or "Andrea"
+    ).strip() or "Andrea"
+
+    giro_objetivo = str(
+        data.get("giro_objetivo")
+        or data.get("niche")
+        or (existente or {}).get("giro_objetivo")
+        or "Comercios y Clientes Potenciales"
+    ).strip()[:160]
+
+    keywords = str(
+        data.get("keywords_busqueda")
+        or (existente or {}).get("keywords_busqueda")
+        or ""
+    ).strip()
+    if not keywords:
+        fuente_kw = f"{nombre_negocio} {giro_objetivo} {raw_idea[:120]}"
+        palabras = [
+            w for w in re.split(r"[^a-záéíóúñ0-9]+", fuente_kw.lower())
+            if len(w) >= 4 and w not in ("para", "con", "los", "las", "una", "uno", "del", "por", "que", "como", "producto", "fisico", "servicio", "local", "venta", "inmediata")
+        ]
+        vistos_kw = []
+        for p_kw in palabras:
+            if p_kw not in vistos_kw:
+                vistos_kw.append(p_kw)
+        keywords = ", ".join(vistos_kw[:6]) or giro_objetivo
+
+    codigo_scian = str(
+        data.get("codigo_scian_inegi")
+        or (existente or {}).get("codigo_scian_inegi")
+        or ""
+    ).strip()
+
+    oferta_gancho = str(
+        data.get("oferta_gancho")
+        or data.get("irresistibleOffer")
+        or (existente or {}).get("oferta_gancho")
+        or raw_idea[:180]
+        or f"Promoción especial de {nombre_negocio}"
+    ).strip()[:240]
+
+    catalogo_reglas = str(
+        data.get("catalogo_prompt")
+        or data.get("catalogo_y_reglas")
+        or raw_idea
+        or (existente or {}).get("catalogo_y_reglas")
+        or f"Negocio: {nombre_negocio}. Giro: {giro_objetivo}. Oferta: {oferta_gancho}."
+    ).strip()[:2500]
+
+    system_prompt_custom = str(data.get("system_prompt") or "").strip()[:2500]
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO perfiles_nicho (
+            cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
+            codigo_scian_inegi, keywords_busqueda, oferta_gancho,
+            catalogo_y_reglas, system_prompt, saludos_frio_json,
+            municipios_json, protegido, activo, fecha_creacion, owner_email
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', 0, 1, datetime('now'), ?)
+        ON CONFLICT(cliente_id) DO UPDATE SET
+            nombre_negocio = excluded.nombre_negocio,
+            nombre_agente = excluded.nombre_agente,
+            giro_objetivo = excluded.giro_objetivo,
+            codigo_scian_inegi = excluded.codigo_scian_inegi,
+            keywords_busqueda = excluded.keywords_busqueda,
+            oferta_gancho = excluded.oferta_gancho,
+            catalogo_y_reglas = excluded.catalogo_y_reglas,
+            system_prompt = CASE WHEN excluded.system_prompt != '' THEN excluded.system_prompt ELSE perfiles_nicho.system_prompt END,
+            owner_email = excluded.owner_email,
+            activo = 1
+        WHERE perfiles_nicho.protegido = 0
+    """, (
+        cid, nombre_negocio, nombre_agente, giro_objetivo,
+        codigo_scian, keywords, oferta_gancho,
+        catalogo_reglas, system_prompt_custom, email_norm
+    ))
+    conn.commit()
+    conn.close()
+
+    nicho_actualizado = obtener_nicho_por_email(email_norm)
+    return 200, {
+        "ok": True,
+        "tiene_perfil": True,
+        "es_mallas": False,
+        "owner_email": email_norm,
+        "cliente_id": cid,
+        "nicho": nicho_actualizado
+    }
+
+
+def resolver_contexto_tenant_request(email_raw: str = "", cliente_id_raw: str = "") -> tuple[str | None, dict | None, bool]:
+    """
+    Resuelve de forma estricta el tenant (cliente_id, nicho_dict, es_mallas) según owner_email.
+    CANDADO DE AISLAMIENTO:
+    - Si viene email != ferrergbryanu10@gmail.com, NUNCA hace fallback a mallas_tlaxcalli.
+      Si ese email aún no tiene perfil en perfiles_nicho, devuelve (None, None, False).
+    """
+    email_norm = str(email_raw or "").strip().lower()
+    cid_clean = str(cliente_id_raw or "").strip()
+
+    if email_norm:
+        if email_norm == OWNER_EMAIL_MALLAS:
+            nicho_m = obtener_nicho_por_email(OWNER_EMAIL_MALLAS)
+            return "mallas_tlaxcalli", nicho_m, True
+        nicho_u = obtener_nicho_por_email(email_norm)
+        if not nicho_u:
+            return None, None, False
+        return nicho_u["cliente_id"], nicho_u, False
+
+    if cid_clean:
+        if cid_clean == "__SIN_PERFIL__":
+            return None, None, False
+        cid_norm = motor_m1.normalizar_cliente_id(cid_clean)
+        nicho_c = obtener_nicho_bd(cid_norm)
+        return cid_norm, nicho_c, (cid_norm == "mallas_tlaxcalli")
+
+    nicho_def = obtener_nicho_bd("mallas_tlaxcalli")
+    return "mallas_tlaxcalli", nicho_def, True
 
 
 # ==============================================================================
@@ -1991,6 +2243,14 @@ Devuelve SOLO un objeto JSON válido con esas llaves."""
 # ==============================================================================
 
 def obtener_datos_completos_bd(id_cliente: str) -> dict:
+    if not id_cliente or str(id_cliente).strip() == "__SIN_PERFIL__":
+        return {
+            "prospectos": [],
+            "pedidos": [],
+            "seguimientos": [],
+            "bitacora_total": 0,
+            "bitacora_hoy": 0
+        }
     es_todos = str(id_cliente or "").upper() == "TODOS"
     cid_norm = "TODOS" if es_todos else motor_m1.normalizar_cliente_id(id_cliente)
     _, aprobados_db, _ = motor_m1.guardar_y_exportar([], cid_norm)
@@ -2029,14 +2289,24 @@ def obtener_datos_completos_bd(id_cliente: str) -> dict:
         )
         bit_hoy = cur.fetchone()[0]
 
-    # Módulo 3: Pedidos y Comisiones
-    cur.execute("""
-        SELECT id, folio, cliente_tortilleria, telefono, direccion_gps, municipio,
-               horario_recepcion, metodo_pago, tipo_pedido, monto_venta,
-               comision_agencia, estatus_entrega, google_maps_url, fecha_cierre
-        FROM pedidos_comisiones
-        ORDER BY id DESC
-    """)
+    # Módulo 3: Pedidos y Comisiones (aislados por id_cliente_agencia)
+    if es_todos:
+        cur.execute("""
+            SELECT id, folio, cliente_tortilleria, telefono, direccion_gps, municipio,
+                   horario_recepcion, metodo_pago, tipo_pedido, monto_venta,
+                   comision_agencia, estatus_entrega, google_maps_url, fecha_cierre
+            FROM pedidos_comisiones
+            ORDER BY id DESC
+        """)
+    else:
+        cur.execute("""
+            SELECT id, folio, cliente_tortilleria, telefono, direccion_gps, municipio,
+                   horario_recepcion, metodo_pago, tipo_pedido, monto_venta,
+                   comision_agencia, estatus_entrega, google_maps_url, fecha_cierre
+            FROM pedidos_comisiones
+            WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)
+            ORDER BY id DESC
+        """, (cid_norm,))
     pedidos = []
     for r in cur.fetchall():
         pedidos.append({
@@ -2056,13 +2326,22 @@ def obtener_datos_completos_bd(id_cliente: str) -> dict:
             "fecha_cierre": r[13]
         })
 
-    # Módulo 4: Seguimiento
-    cur.execute("""
-        SELECT id, nombre_tortilleria, telefono, municipio, etapa_seguimiento,
-               ultimo_mensaje_cliente, dias_transcurridos, mensaje_ia_sugerido, estatus
-        FROM seguimiento_clientes
-        ORDER BY id ASC
-    """)
+    # Módulo 4: Seguimiento (aislado por id_cliente_agencia)
+    if es_todos:
+        cur.execute("""
+            SELECT id, nombre_tortilleria, telefono, municipio, etapa_seguimiento,
+                   ultimo_mensaje_cliente, dias_transcurridos, mensaje_ia_sugerido, estatus
+            FROM seguimiento_clientes
+            ORDER BY id ASC
+        """)
+    else:
+        cur.execute("""
+            SELECT id, nombre_tortilleria, telefono, municipio, etapa_seguimiento,
+                   ultimo_mensaje_cliente, dias_transcurridos, mensaje_ia_sugerido, estatus
+            FROM seguimiento_clientes
+            WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)
+            ORDER BY id ASC
+        """, (cid_norm,))
     seguimientos = []
     for r in cur.fetchall():
         seguimientos.append({
@@ -2247,7 +2526,57 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        if parsed.path == "/api/mi-nicho":
+            qs = urllib.parse.parse_qs(parsed.query)
+            email_q = (qs.get("email", [""])[0] or "").strip().lower()
+            if not email_q:
+                self._send_json({
+                    "ok": True,
+                    "tiene_perfil": False,
+                    "es_mallas": False,
+                    "owner_email": "",
+                    "nicho": None,
+                    "total_prospectos": 0,
+                    "enviados_wa": 0
+                })
+                return
+
+            nicho_u = obtener_nicho_por_email(email_q)
+            if not nicho_u:
+                self._send_json({
+                    "ok": True,
+                    "tiene_perfil": False,
+                    "es_mallas": False,
+                    "owner_email": email_q,
+                    "nicho": None,
+                    "total_prospectos": 0,
+                    "enviados_wa": 0
+                })
+                return
+
+            self._send_json({
+                "ok": True,
+                "tiene_perfil": True,
+                "es_mallas": (email_q == OWNER_EMAIL_MALLAS),
+                "owner_email": email_q,
+                "cliente_id": nicho_u["cliente_id"],
+                "nicho": nicho_u,
+                "total_prospectos": nicho_u.get("total_prospectos", 0),
+                "enviados_wa": nicho_u.get("enviados_wa", 0)
+            })
+            return
+
         if parsed.path == "/api/nichos":
+            qs = urllib.parse.parse_qs(parsed.query)
+            email_q = (qs.get("email", [""])[0] or "").strip().lower()
+            if email_q and email_q != OWNER_EMAIL_MALLAS:
+                nicho_u = obtener_nicho_por_email(email_q)
+                self._send_json({
+                    "ok": True,
+                    "nicho_default": nicho_u["cliente_id"] if nicho_u else "",
+                    "nichos": [nicho_u] if nicho_u else []
+                })
+                return
             nichos = obtener_lista_nichos_con_metricas()
             self._send_json({
                 "ok": True,
@@ -2258,15 +2587,53 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/datos_seguros":
             qs = urllib.parse.parse_qs(parsed.query)
+            email_query = (qs.get("email", [""])[0] or "").strip().lower()
             cid_query = (qs.get("cliente_id", [""])[0] or "").strip()
-            cid_target = "TODOS" if cid_query.upper() == "TODOS" else motor_m1.normalizar_cliente_id(cid_query or "mallas_tlaxcalli")
 
             env = motor_m1.cargar_env()
-            perfil = construir_perfil_motor_desde_nicho("mallas_tlaxcalli" if cid_target == "TODOS" else cid_target)
+            cid_target, nicho_ctx, es_mallas = resolver_contexto_tenant_request(email_query, cid_query)
 
+            # Si es un correo externo que aún no ha creado su idea en 01 • IDEA, devolver pizarra 100% en blanco
+            if not cid_target or not nicho_ctx:
+                self._send_json({
+                    "ok": True,
+                    "tiene_perfil": False,
+                    "es_mallas": False,
+                    "cliente": "",
+                    "cliente_id_activo": "",
+                    "nicho_activo": None,
+                    "nichos": [],
+                    "municipios_autorizados": [
+                        "Ecatepec", "Tultitlán", "Coacalco", "Naucalpan",
+                        "Tlalnepantla", "Cuautitlán Izcalli", "Atizapán",
+                        "Cuautitlán", "Tepotzotlán"
+                    ],
+                    "total_reales_bd": 0,
+                    "bitacora_total": 0,
+                    "bitacora_hoy": 0,
+                    "meta_diaria_frio": ESTADO_MOTOR_50_DIARIOS["meta_diaria"],
+                    "prospectos": [],
+                    "pedidos": [],
+                    "seguimientos": [],
+                    "fotos_negocio_pau": [],
+                    "cola_paola": [],
+                    "n8n_live_url": "",
+                    "last_fb_run_status": None,
+                    "cazador_24_7": ESTADO_CAZADOR_24_7,
+                    "seguridad": {
+                        "inegi_conectado": bool(env.get("INEGI_DENUE_TOKEN")),
+                        "apify_conectado": bool(env.get("APIFY_API_TOKEN")),
+                        "ia_pool_conectado": len(obtener_llaves_ia_backend()) > 0,
+                        "modelos_en_rotacion": len(MODELOS_POOL_INFINITO),
+                        "estadisticas_pool": ESTADISTICAS_POOL
+                    }
+                })
+                return
+
+            perfil = construir_perfil_motor_desde_nicho(cid_target)
             bd_info = obtener_datos_completos_bd(cid_target)
-            fotos_pau = listar_imagenes_pau()
-            nichos_lista = obtener_lista_nichos_con_metricas()
+            fotos_pau = listar_imagenes_pau() if es_mallas else []
+            nichos_lista = obtener_lista_nichos_con_metricas() if es_mallas else [nicho_ctx]
 
             n8n_url = "https://agencia-topdiegozc-vsc-server.ngssgr.easypanel.host/proxy/5678/"
             if os.path.exists("/tmp/cf_n8n_vps.log"):
@@ -2285,8 +2652,12 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 ultimo_fb = None
 
             self._send_json({
+                "ok": True,
+                "tiene_perfil": True,
+                "es_mallas": es_mallas,
                 "cliente": perfil["nombre_empresa"],
                 "cliente_id_activo": cid_target,
+                "nicho_activo": nicho_ctx,
                 "nichos": nichos_lista,
                 "municipios_autorizados": perfil["cobertura_logistica"]["municipios_edomex_autorizados"],
                 "total_reales_bd": len(bd_info["prospectos"]),
@@ -2297,7 +2668,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 "pedidos": bd_info["pedidos"],
                 "seguimientos": bd_info["seguimientos"],
                 "fotos_negocio_pau": fotos_pau,
-                "cola_paola": COLA_MENSAJES_PAOLA[-10:],
+                "cola_paola": COLA_MENSAJES_PAOLA[-10:] if es_mallas else [],
                 "n8n_live_url": n8n_url,
                 "last_fb_run_status": ultimo_fb,
                 "cazador_24_7": ESTADO_CAZADOR_24_7,
@@ -2324,7 +2695,19 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
         data = json.loads(raw)
 
+        if self.path == "/api/mi-nicho":
+            owner_email = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            status_code, payload_res = guardar_nicho_por_email(owner_email, data)
+            self._send_json(payload_res, status=status_code)
+            return
+
         if self.path == "/api/nichos":
+            owner_email = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            if owner_email and owner_email != OWNER_EMAIL_MALLAS:
+                status_code, payload_res = guardar_nicho_por_email(owner_email, data)
+                self._send_json(payload_res, status=status_code)
+                return
+
             nombre_negocio = str(data.get("nombre_negocio") or "").strip()
             raw_cid = str(data.get("cliente_id") or nombre_negocio).strip()
             cid = motor_m1.normalizar_cliente_id(raw_cid)
@@ -2405,7 +2788,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
             cur.execute("UPDATE perfiles_nicho SET activo = ? WHERE LOWER(cliente_id) = LOWER(?)", (activo, cid))
-            cur.execute("UPDATE perfiles_nicho SET protegido = 1 WHERE cliente_id = 'mallas_tlaxcalli'")
+            cur.execute("UPDATE perfiles_nicho SET protegido = 1, owner_email = ? WHERE cliente_id = 'mallas_tlaxcalli'", (OWNER_EMAIL_MALLAS,))
             conn.commit()
             conn.close()
             self._send_json({"ok": True, "cliente_id": cid, "activo": bool(activo), "nichos": obtener_lista_nichos_con_metricas()})
@@ -2413,12 +2796,26 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/chat":
             session_id = data.get("session_id", "default_session")
-            cid_chat = str(data.get("cliente_id") or "").strip()
+            email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            cid_req = str(data.get("cliente_id") or "").strip()
+
+            if email_req:
+                cid_resolved, nicho_ctx, _ = resolver_contexto_tenant_request(email_req, cid_req)
+                if not cid_resolved or not nicho_ctx:
+                    self._send_json({
+                        "ok": False,
+                        "error": "Primero configura tu producto o negocio en '01 • IDEA' para activar a tu asesora IA."
+                    })
+                    return
+                cid_chat = cid_resolved
+            else:
+                cid_chat = cid_req
+
             if data.get("reset"):
                 SESIONES_CHAT[session_id] = []
                 nicho_r = obtener_nicho_bd(resolver_cliente_id_por_telefono_o_sesion(session_id, cid_chat))
                 self._send_json({
-                    "respuesta": f"¡Hola, qué tal! Buen día 😊 Le atiende {nicho_r.get('nombre_agente', 'Andrea')} de {nicho_r.get('nombre_negocio', 'Mallas Tlaxcalli')}. ¿En qué le podemos apoyar hoy?"
+                    "respuesta": f"¡Hola, qué tal! Buen día 😊 Le atiende {nicho_r.get('nombre_agente', 'Andrea')} de {nicho_r.get('nombre_negocio', 'nuestro equipo')}. ¿En qué le podemos apoyar hoy?"
                 })
                 return
             msg = data.get("mensaje", "")
@@ -2444,61 +2841,80 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/registrar_pedido":
-            cliente = data.get("cliente", "Tortillería Cliente")
+            email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            cid_req = str(data.get("cliente_id") or "").strip()
+            cid_resolved, nicho_ctx, es_mallas = resolver_contexto_tenant_request(email_req, cid_req)
+            if not cid_resolved or not nicho_ctx:
+                self._send_json({
+                    "ok": False,
+                    "error": "Primero configura tu negocio en '01 • IDEA' antes de registrar pedidos."
+                })
+                return
+
+            cliente = str(data.get("cliente") or data.get("cliente_tortilleria") or "Cliente").strip()
             tel = re.sub(r"\D", "", str(data.get("telefono", "525500000000")))
             if len(tel) == 10:
                 tel = "52" + tel
             elif tel.startswith("521") and len(tel) == 13:
                 tel = "52" + tel[3:]
-            direccion = data.get("direccion", "Dirección en cobertura")
-            muni = data.get("municipio", "Ecatepec")
-            horario = data.get("horario", "9:00 AM a 4:00 PM")
-            pago = data.get("metodo_pago", "TRANSFERENCIA_CONTRA_ENTREGA")
-            tipo = data.get("tipo_pedido", "1 Paquete Completo Mallas Tlaxcalli ($1,713)")
-            monto = float(data.get("monto", 1713.0))
-            comision = float(data.get("comision", 200.0))
+            direccion = str(data.get("direccion") or data.get("direccion_gps") or "Dirección en cobertura").strip()
+            muni = str(data.get("municipio") or "Ecatepec").strip()
+            horario = str(data.get("horario") or data.get("horario_recepcion") or "9:00 AM a 4:00 PM").strip()
+            pago = str(data.get("metodo_pago") or "TRANSFERENCIA_CONTRA_ENTREGA").strip()
+            default_tipo = "1 Paquete Completo Mallas Tlaxcalli ($1,713)" if es_mallas else (nicho_ctx.get("oferta_gancho") or f"Pedido {nicho_ctx.get('nombre_negocio', '')}")
+            tipo = str(data.get("tipo_pedido") or default_tipo).strip()
+            monto = float(data.get("monto", 1713.0 if es_mallas else 0.0) or 0.0)
+            comision = float(data.get("comision", 200.0) or 200.0)
 
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
             hoy_pref = datetime.now().strftime("%Y-%m-%d")
             cur.execute(
-                "SELECT id FROM pedidos_comisiones WHERE telefono = ? AND fecha_cierre LIKE ? ORDER BY id DESC LIMIT 1",
-                (tel, f"{hoy_pref}%")
+                "SELECT id FROM pedidos_comisiones WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?) AND telefono = ? AND fecha_cierre LIKE ? ORDER BY id DESC LIMIT 1",
+                (cid_resolved, tel, f"{hoy_pref}%")
             )
             ya_existe = cur.fetchone()
             if not ya_existe:
                 cur.execute("SELECT COUNT(*) FROM pedidos_comisiones")
                 n = cur.fetchone()[0] + 1
-                folio = f"TLX-ORD-{n:03d}"
+                pref_folio = "TLX" if es_mallas else cid_resolved[:4].upper()
+                folio = f"{pref_folio}-ORD-{n:03d}"
                 maps_url = motor_m1.construir_link_google_maps(cliente, direccion, muni)
                 cur.execute("""
                     INSERT INTO pedidos_comisiones (
                         folio, cliente_tortilleria, telefono, direccion_gps, municipio,
                         horario_recepcion, metodo_pago, tipo_pedido, monto_venta,
-                        comision_agencia, estatus_entrega, google_maps_url, fecha_cierre
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        comision_agencia, estatus_entrega, google_maps_url, fecha_cierre,
+                        id_cliente_agencia
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     folio, cliente, tel, direccion, muni, horario, pago, tipo,
-                    monto, comision, "EN_RUTA_REPARTIDOR", maps_url, datetime.now().strftime("%Y-%m-%d %H:%M")
+                    monto, comision, "EN_RUTA_REPARTIDOR", maps_url,
+                    datetime.now().strftime("%Y-%m-%d %H:%M"), cid_resolved
                 ))
                 conn.commit()
             conn.close()
-            with open(PERFIL_PATH, "r", encoding="utf-8") as f:
-                perfil = json.load(f)
-            bd_info = obtener_datos_completos_bd(perfil["id_cliente"])
-            self._send_json({"ok": True, "pedidos": bd_info["pedidos"], "duplicado": bool(ya_existe)})
+            bd_info = obtener_datos_completos_bd(cid_resolved)
+            self._send_json({"ok": True, "cliente_id": cid_resolved, "pedidos": bd_info["pedidos"], "duplicado": bool(ya_existe)})
             return
 
         if self.path == "/api/confirmar_entrega_comision":
             pedido_id = int(data.get("id", 0))
+            email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            cid_req = str(data.get("cliente_id") or "").strip()
+            cid_resolved, _, _ = resolver_contexto_tenant_request(email_req, cid_req)
+            if not cid_resolved:
+                self._send_json({"ok": False, "error": "Perfil no encontrado."})
+                return
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
-            cur.execute("UPDATE pedidos_comisiones SET estatus_entrega = 'ENTREGADO_Y_PAGADO' WHERE id = ?", (pedido_id,))
+            cur.execute(
+                "UPDATE pedidos_comisiones SET estatus_entrega = 'ENTREGADO_Y_PAGADO' WHERE id = ? AND LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)",
+                (pedido_id, cid_resolved)
+            )
             conn.commit()
             conn.close()
-            with open(PERFIL_PATH, "r", encoding="utf-8") as f:
-                perfil = json.load(f)
-            bd_info = obtener_datos_completos_bd(perfil["id_cliente"])
+            bd_info = obtener_datos_completos_bd(cid_resolved)
             self._send_json({"ok": True, "pedidos": bd_info["pedidos"]})
             return
 
@@ -2779,10 +3195,17 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             if muni == "TODOS":
                 muni = "Ecatepec"
             fuente = data.get("fuente", "INEGI")
-            cid = motor_m1.normalizar_cliente_id(data.get("cliente_id", "mallas_tlaxcalli"))
-            nicho = obtener_nicho_bd(cid)
+            email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            cid_req = str(data.get("cliente_id") or "").strip()
+            cid, nicho, es_tlaxcalli = resolver_contexto_tenant_request(email_req, cid_req)
+            if not cid or not nicho:
+                self._send_json({
+                    "ok": False,
+                    "error": "Primero define tu producto o idea en '01 • IDEA' para activar la búsqueda de prospectos de tu negocio."
+                }, status=400)
+                return
+
             perfil = construir_perfil_motor_desde_nicho(cid)
-            es_tlaxcalli = (cid == "mallas_tlaxcalli")
             env = motor_m1.cargar_env()
 
             kws_nicho = (perfil.get("busqueda", {}) or {}).get("palabras_clave_maps") or []

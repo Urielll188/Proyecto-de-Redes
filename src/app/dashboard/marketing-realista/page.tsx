@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchVpsGet, fetchVpsPost, FotoPauVps } from '@/lib/vps/types';
+import { useNicho } from '@/context/NichoContext';
 
 type FiltroCss = 'natural' | 'contraste' | 'calido' | 'original';
 
@@ -35,12 +36,17 @@ const FILTROS: Record<FiltroCss, { label: string; style: string }> = {
 };
 
 export default function MarketingRealistaPage() {
+  const { ownerEmail, isMallasOwner, tienePerfil, nicho, loadingNicho } = useNicho();
   const [fotos, setFotos] = useState<FotoPauVps[]>([]);
   const [selectedFotoUrl, setSelectedFotoUrl] = useState<string>('');
   const [filtro, setFiltro] = useState<FiltroCss>('natural');
   const [uploading, setUploading] = useState(false);
 
-  const [enfoque, setEnfoque] = useState('Paquete Completo ($1,713 MXN) + Envío Gratis');
+  const [enfoque, setEnfoque] = useState(
+    isMallasOwner
+      ? 'Paquete Completo ($1,713 MXN) + Envío Gratis'
+      : nicho?.oferta_gancho || 'Promoción Principal + Entrega Rápida'
+  );
   const [zona, setZona] = useState('Norte CDMX y Edomex (Ecatepec, Tultitlán, Coacalco, Naucalpan)');
   const [contenido, setContenido] = useState('');
   const [generando, setGenerando] = useState(false);
@@ -48,17 +54,30 @@ export default function MarketingRealistaPage() {
   const [vpsOffline, setVpsOffline] = useState(false);
 
   const cargarFotos = useCallback(async () => {
-    const data = await fetchVpsGet('/api/datos_seguros');
+    if (!ownerEmail) return;
+    if (!isMallasOwner && !tienePerfil) {
+      setFotos([]);
+      setSelectedFotoUrl('');
+      return;
+    }
+    const data = await fetchVpsGet('/api/datos_seguros', {
+      email: ownerEmail,
+      ...(nicho?.cliente_id ? { cliente_id: nicho.cliente_id } : {}),
+    });
     setVpsOffline(Boolean(data.vpsOffline || data.ok === false));
     if (Array.isArray(data.fotos_negocio_pau) && data.fotos_negocio_pau.length > 0) {
       setFotos(data.fotos_negocio_pau);
       setSelectedFotoUrl((prev) => prev || data.fotos_negocio_pau![0].url);
+    } else {
+      setFotos([]);
     }
-  }, []);
+  }, [ownerEmail, isMallasOwner, tienePerfil, nicho?.cliente_id]);
 
   useEffect(() => {
-    cargarFotos();
-  }, [cargarFotos]);
+    if (!loadingNicho) {
+      cargarFotos();
+    }
+  }, [cargarFotos, loadingNicho]);
 
   const resolveImageSrc = (url: string) => {
     if (!url) return '';
@@ -211,7 +230,9 @@ export default function MarketingRealistaPage() {
                 />
                 <div className="absolute bottom-3 left-3 right-3 px-3 py-2 rounded-lg bg-black/75 backdrop-blur-md border border-white/10 text-center">
                   <span className="text-[11px] sm:text-xs font-bold tracking-wider text-white">
-                    ⚙️ MALLAS TLAXCALLI • ENVÍO GRATIS ($1,713 MXN)
+                    {isMallasOwner
+                      ? '⚙️ MALLAS TLAXCALLI • ENVÍO GRATIS ($1,713 MXN)'
+                      : `✨ ${(nicho?.nombre_negocio || 'MI NEGOCIO').toUpperCase()} • ${(nicho?.oferta_gancho || 'OFERTA EXCLUSIVA').slice(0, 42).toUpperCase()}`}
                   </span>
                 </div>
               </>

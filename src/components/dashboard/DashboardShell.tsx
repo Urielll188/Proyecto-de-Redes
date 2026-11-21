@@ -18,6 +18,7 @@ import {
   Menu,
 } from 'lucide-react'
 import { CinematicWarpTransition } from '@/components/transitions/CinematicWarpTransition'
+import { NichoProvider, OWNER_EMAIL_MALLAS } from '@/context/NichoContext'
 
 interface ShellProps {
   children: React.ReactNode
@@ -207,7 +208,9 @@ export function DashboardShell({
           {/* Separador Módulos VPS */}
           <div className="mt-6 pt-5 border-t border-white/10">
             <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-              Módulos VPS Tlaxcalli
+              {(userEmail || '').toLowerCase().trim() === OWNER_EMAIL_MALLAS
+                ? 'Módulos VPS Tlaxcalli'
+                : 'Módulos Operativos IA'}
             </p>
             <nav className="space-y-1">
               {vpsModuleItems.map((item) => {
@@ -297,17 +300,19 @@ export function DashboardShell({
       />
 
       {/* ================= 4. CONTENIDO PRINCIPAL ================= */}
-      <main
-        className={`w-full h-full relative transition-all duration-700 ${
-          showArrivalWarp ? 'opacity-90 scale-[0.98]' : 'opacity-100 scale-100'
-        } ${
-          isRootDashboard
-            ? 'overflow-y-auto overflow-x-hidden lg:overflow-hidden'
-            : 'overflow-y-auto pt-24 pb-12 px-4 md:px-8 max-w-6xl mx-auto'
-        }`}
-      >
-        {children}
-      </main>
+      <NichoProvider userEmail={userEmail}>
+        <main
+          className={`w-full h-full relative transition-all duration-700 ${
+            showArrivalWarp ? 'opacity-90 scale-[0.98]' : 'opacity-100 scale-100'
+          } ${
+            isRootDashboard
+              ? 'overflow-y-auto overflow-x-hidden lg:overflow-hidden'
+              : 'overflow-y-auto pt-24 pb-12 px-4 md:px-8 max-w-6xl mx-auto'
+          }`}
+        >
+          {children}
+        </main>
+      </NichoProvider>
     </div>
   )
 }

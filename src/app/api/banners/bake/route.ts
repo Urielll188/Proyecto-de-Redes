@@ -86,8 +86,8 @@ export async function POST(request: NextRequest) {
     if (clientFinalBannerUrl) {
       if (publicationId && typeof publicationId === 'string') {
         try {
-          await prisma.contentVault.update({
-            where: { id: publicationId },
+          await prisma.contentVault.updateMany({
+            where: { id: publicationId, userId: dbUser.id },
             data: { bannerUrl: clientFinalBannerUrl },
           })
         } catch (dbErr) {

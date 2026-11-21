@@ -169,12 +169,8 @@ Responde ÚNICAMENTE con un JSON válido (sin markdown, sin bloques \`\`\`) con 
       }
 
       if (!dbUserId) {
-        const activeSocialUser = await prisma.user.findFirst({
-          where: { socialAccounts: { some: { isActive: true } } },
-          select: { id: true },
-        })
-        const fallbackUser = activeSocialUser || (await prisma.user.findFirst({ select: { id: true } }))
-        dbUserId = fallbackUser?.id || null
+        // Aislamiento estricto por usuario: prohibido usar findFirst() sobre otro usuario
+        dbUserId = null
       }
 
       if (dbUserId) {

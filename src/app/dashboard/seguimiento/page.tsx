@@ -10,8 +10,10 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchVpsGet, fetchVpsPost, SeguimientoVps } from '@/lib/vps/types';
+import { useNicho } from '@/context/NichoContext';
 
 export default function SeguimientoPage() {
+  const { ownerEmail, isMallasOwner, tienePerfil, nicho, loadingNicho } = useNicho();
   const [seguimientos, setSeguimientos] = useState<SeguimientoVps[]>([]);
   const [loading, setLoading] = useState(true);
   const [vpsOffline, setVpsOffline] = useState(false);
@@ -19,18 +21,31 @@ export default function SeguimientoPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const cargarDatos = useCallback(async () => {
+    if (!ownerEmail) return;
+    if (!isMallasOwner && !tienePerfil) {
+      setSeguimientos([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    const data = await fetchVpsGet('/api/datos_seguros');
+    const data = await fetchVpsGet('/api/datos_seguros', {
+      email: ownerEmail,
+      ...(nicho?.cliente_id ? { cliente_id: nicho.cliente_id } : {}),
+    });
     setVpsOffline(Boolean(data.vpsOffline || data.ok === false));
     if (Array.isArray(data.seguimientos)) {
       setSeguimientos(data.seguimientos);
+    } else {
+      setSeguimientos([]);
     }
     setLoading(false);
-  }, []);
+  }, [ownerEmail, isMallasOwner, tienePerfil, nicho?.cliente_id]);
 
   useEffect(() => {
-    cargarDatos();
-  }, [cargarDatos]);
+    if (!loadingNicho) {
+      cargarDatos();
+    }
+  }, [cargarDatos, loadingNicho]);
 
   const handleGenerarNotaVoz = async (texto: string, idx: number) => {
     setTtsLoadingIdx(idx);
