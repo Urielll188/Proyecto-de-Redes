@@ -45,7 +45,9 @@ const MUNICIPIOS = [
 ];
 
 export default function VentasIaPage() {
-  const { ownerEmail, isMallasOwner, tienePerfil, nicho, loadingNicho } = useNicho();
+  const { ownerEmail, isMallasOwner, tienePerfil, nicho, modeloNegocio, loadingNicho } = useNicho();
+  const isServiciosB2B = !isMallasOwner && modeloNegocio === 'SERVICIOS_B2B';
+  const isB2C = !isMallasOwner && modeloNegocio === 'EMPRENDEDOR_B2C';
 
   const [sessionId] = useState(() => `web_${Date.now()}`);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -55,8 +57,9 @@ export default function VentasIaPage() {
   const [playingWelcome, setPlayingWelcome] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Formulario de cierre de pedido (4 datos -> Módulo 3)
+  // Formulario de cierre de pedido / servicio (4 datos -> Módulo 3)
   const [cliente, setCliente] = useState('');
+  const [alcanceServicio, setAlcanceServicio] = useState('');
   const [telefono, setTelefono] = useState('');
   const [direccion, setDireccion] = useState('');
   const [municipio, setMunicipio] = useState('Ecatepec');
@@ -71,10 +74,13 @@ export default function VentasIaPage() {
       return '¡Hola! Bienvenido a Mallas Tlaxcalli. Soy tu asesora en línea. Tenemos el Paquete Completo (malla + bandas) en $1,713 MXN con envío gratis y pago contra entrega. ¿Qué modelo de máquina tortilladora manejas?';
     }
     if (tienePerfil && nicho) {
+      if (isServiciosB2B) {
+        return `¡Hola! Bienvenido a ${nicho.nombre_negocio}. Soy ${nicho.nombre_agente || 'Andrea'}, asesora de proyectos y servicios técnicos. Atendemos: ${nicho.oferta_gancho}. ¿Qué requerimiento o instalación necesitas cotizar para tu empresa?`;
+      }
       return `¡Hola! Bienvenido a ${nicho.nombre_negocio}. Soy ${nicho.nombre_agente || 'Andrea'}, tu asesora en línea. Tenemos disponible: ${nicho.oferta_gancho}. ¿Te gustaría conocer los detalles o precios?`;
     }
     return '';
-  }, [isMallasOwner, tienePerfil, nicho]);
+  }, [isMallasOwner, tienePerfil, nicho, isServiciosB2B]);
 
   useEffect(() => {
     if (welcomeMessageText) {
@@ -87,13 +93,21 @@ export default function VentasIaPage() {
   const activeChips = useMemo(() => {
     if (isMallasOwner) return MALLAS_TEST_CHIPS;
     const prodName = nicho?.nombre_negocio || 'tu producto';
+    if (isServiciosB2B) {
+      return [
+        { label: 'Cotizar instalación / proyecto', prompt: `Hola, necesitamos cotizar un servicio de ${prodName} para nuestra oficina.` },
+        { label: 'Agendar levantamiento técnico', prompt: '¿Pueden venir a hacer una visita o levantamiento técnico esta semana?' },
+        { label: 'Garantía y factura', prompt: '¿Qué garantía ofrecen en el servicio y dan factura para empresas?' },
+        { label: 'Tiempos de ejecución', prompt: '¿En cuánto tiempo realizan la instalación una vez aprobada?' },
+      ];
+    }
     return [
       { label: 'Pedir precio y promoción', prompt: `Hola, ¿me das información y precio de ${prodName}?` },
       { label: '¿Cómo es la entrega?', prompt: '¿Cómo funciona la entrega a domicilio y formas de pago?' },
       { label: 'Objeción de precio', prompt: 'Se me hace un poco caro, ¿qué beneficio incluye?' },
       { label: 'Precio de mayoreo', prompt: '¿Manejan descuento por volumen o mayoreo?' },
     ];
-  }, [isMallasOwner, nicho?.nombre_negocio]);
+  }, [isMallasOwner, nicho?.nombre_negocio, isServiciosB2B]);
 
   const playAudio = (url?: string) => {
     if (!url) return;
@@ -171,7 +185,11 @@ export default function VentasIaPage() {
   const handleRegistrarPedido = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cliente.trim() || !telefono.trim() || !direccion.trim()) {
-      toast.error('Completa nombre del cliente/negocio, teléfono y dirección.');
+      toast.error(
+        isServiciosB2B
+          ? 'Completa nombre de la empresa/cliente, teléfono y ubicación del sitio.'
+          : 'Completa nombre del cliente/negocio, teléfono y dirección.'
+      );
       return;
     }
 
@@ -185,16 +203,24 @@ export default function VentasIaPage() {
       municipio,
       horario_recepcion: horario.trim(),
       metodo_pago: metodoPago,
+      ...(isServiciosB2B && alcanceServicio.trim()
+        ? { tipo_pedido: alcanceServicio.trim() }
+        : {}),
     });
     setRegistrando(false);
 
     if (res.ok === false || res.vpsOffline) {
-      toast.error(res.error || 'No se pudo registrar el pedido en el VPS.');
+      toast.error(res.error || 'No se pudo registrar en el VPS.');
       return;
     }
 
-    toast.success('Pedido cerrado y enviado a Módulo 3 (Logística).');
+    toast.success(
+      isServiciosB2B
+        ? 'Visita / Servicio agendado y enviado a Módulo 3 (Agenda Técnica).'
+        : 'Pedido cerrado y enviado a Módulo 3 (Logística).'
+    );
     setCliente('');
+    setAlcanceServicio('');
     setTelefono('');
     setDireccion('');
   };
@@ -384,11 +410,21 @@ export default function VentasIaPage() {
           <div>
             <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold uppercase tracking-wider mb-1">
               <CheckCircle2 className="w-4 h-4" />
-              Cierre Directo a Módulo 3
+              {isServiciosB2B
+                ? 'Agenda Técnica / Cierre de Servicio'
+                : isB2C
+                ? 'Cierre de Pedido Particular B2C'
+                : 'Cierre Directo a Módulo 3'}
             </div>
-            <h2 className="text-lg font-bold text-white">Registrar Pedido Cerrado</h2>
+            <h2 className="text-lg font-bold text-white">
+              {isServiciosB2B
+                ? 'Agendar Visita o Servicio Técnico'
+                : 'Registrar Pedido Cerrado'}
+            </h2>
             <p className="text-xs text-zinc-400 mt-1 mb-5">
-              Captura los 4 datos de entrega para enviar la orden a la Hoja de Ruta de entregas.
+              {isServiciosB2B
+                ? 'Captura los datos de la empresa, alcance técnico, ubicación del sitio y horario de visita o instalación.'
+                : 'Captura los 4 datos de entrega para enviar la orden a la Hoja de Ruta de entregas.'}
             </p>
 
             <form onSubmit={handleRegistrarPedido} className="space-y-4">
@@ -396,6 +432,8 @@ export default function VentasIaPage() {
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">
                   {isMallasOwner
                     ? '1. Nombre de Tortillería / Cliente'
+                    : isServiciosB2B
+                    ? '1. Nombre de Empresa / Cliente'
                     : '1. Nombre del Negocio / Cliente'}
                 </label>
                 <div className="relative">
@@ -407,6 +445,8 @@ export default function VentasIaPage() {
                     placeholder={
                       isMallasOwner
                         ? 'Ej: Tortillería La Guadalupana'
+                        : isServiciosB2B
+                        ? 'Ej: Corporativo / Oficina Cliente'
                         : `Ej: Cliente de ${tituloNegocio}`
                     }
                     className="w-full pl-9 pr-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500"
@@ -414,10 +454,25 @@ export default function VentasIaPage() {
                 </div>
               </div>
 
+              {isServiciosB2B && (
+                <div>
+                  <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                    2. Alcance / Servicio Cotizado
+                  </label>
+                  <input
+                    type="text"
+                    value={alcanceServicio}
+                    onChange={(e) => setAlcanceServicio(e.target.value)}
+                    placeholder="Ej: Instalación de 12 nodos de red y 3 Access Points WiFi"
+                    className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                    2. Teléfono WhatsApp
+                    {isServiciosB2B ? 'Teléfono de Contacto' : '2. Teléfono WhatsApp'}
                   </label>
                   <input
                     type="text"
@@ -447,7 +502,9 @@ export default function VentasIaPage() {
 
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                  3. Dirección Completa / Referencia GPS
+                  {isServiciosB2B
+                    ? '3. Ubicación del Sitio / Instalación'
+                    : '3. Dirección Completa / Referencia GPS'}
                 </label>
                 <div className="relative">
                   <MapPin className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
@@ -455,7 +512,11 @@ export default function VentasIaPage() {
                     type="text"
                     value={direccion}
                     onChange={(e) => setDireccion(e.target.value)}
-                    placeholder="Calle, Número, Colonia"
+                    placeholder={
+                      isServiciosB2B
+                        ? 'Dirección de oficina, bodega o sucursal a visitar'
+                        : 'Calle, Número, Colonia'
+                    }
                     className="w-full pl-9 pr-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500"
                   />
                 </div>
@@ -464,7 +525,9 @@ export default function VentasIaPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                    4. Horario de Recepción
+                    {isServiciosB2B
+                      ? '4. Fecha / Horario de Visita o Instalación'
+                      : '4. Horario de Recepción'}
                   </label>
                   <div className="relative">
                     <Clock className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
@@ -479,7 +542,7 @@ export default function VentasIaPage() {
 
                 <div>
                   <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                    Método de Pago
+                    {isServiciosB2B ? 'Modalidad de Cobro' : 'Método de Pago'}
                   </label>
                   <div className="relative">
                     <CreditCard className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
@@ -495,7 +558,9 @@ export default function VentasIaPage() {
                       className="w-full pl-9 pr-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500"
                     >
                       <option value="TRANSFERENCIA_CONTRA_ENTREGA">
-                        Transferencia Contra Entrega
+                        {isServiciosB2B
+                          ? 'Transferencia / Anticipo y Finiquito'
+                          : 'Transferencia Contra Entrega'}
                       </option>
                       <option value="TERMINAL_MERCADO_PAGO">Terminal Mercado Pago</option>
                     </select>
@@ -509,7 +574,11 @@ export default function VentasIaPage() {
                 className="w-full mt-2 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors disabled:opacity-50"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                {registrando ? 'Registrando Pedido...' : 'Confirmar y Enviar a Logística'}
+                {registrando
+                  ? 'Registrando...'
+                  : isServiciosB2B
+                  ? 'Agendar Visita / Servicio en Módulo 3'
+                  : 'Confirmar y Enviar a Logística'}
               </button>
             </form>
           </div>

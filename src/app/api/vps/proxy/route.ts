@@ -21,6 +21,7 @@ const ALLOWED_POST_ENDPOINTS = [
   '/api/nichos',
   '/api/nichos/toggle',
   '/api/mi-nicho',
+  '/api/diagnosticar-modelo',
   '/api/marcar_maps',
   '/api/marcar_lote_wa',
   '/api/chat',

@@ -166,6 +166,7 @@ function obtenerOCrearEstadoSesion(clienteId) {
       pairingCode: '',
       ultimoError: '',
       erroresConsecutivos: 0,
+      modelo_negocio: 'DISTRIBUIDOR_B2B',
       motorPausadoLocal: cid === 'mallas_tlaxcalli' ? true : false,
       pausaRespuestasGeneral: false,
       enviandoFrioEnCurso: false,
@@ -1368,8 +1369,35 @@ async function enviarMensajeSeguroSesion(sesion, jid, contenido) {
   }
 }
 
+async function sincronizarModeloNegocioTenant(sesion) {
+  if (!sesion || sesion.cliente_id === 'mallas_tlaxcalli') return;
+  try {
+    await new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:8090/api/mi-nicho?cliente_id=${encodeURIComponent(sesion.cliente_id)}`, (res) => {
+        let raw = '';
+        res.on('data', (c) => (raw += c));
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(raw || '{}');
+            if (parsed?.modelo_negocio) {
+              sesion.modelo_negocio = String(parsed.modelo_negocio).toUpperCase();
+            }
+          } catch (_) {}
+          resolve();
+        });
+      });
+      req.on('error', () => resolve());
+      req.setTimeout(4000, () => {
+        req.destroy();
+        resolve();
+      });
+    });
+  } catch (_) {}
+}
+
 async function revisarYEnviarFrioTenant(sesion) {
   if (!sesion || sesion.cliente_id === 'mallas_tlaxcalli') return;
+  if (sesion.modelo_negocio === 'EMPRENDEDOR_B2C') return;
   if (sesion.enviandoFrioEnCurso || !sesion.sock || !sesion.conectado) return;
   if (sesion.motorPausadoLocal && !sesion.forzarAhoraPendiente) return;
 
@@ -1389,6 +1417,12 @@ async function revisarYEnviarFrioTenant(sesion) {
         cliente_id: sesion.cliente_id,
         forzar: esForzado && intento === 0,
       });
+      if (cand?.modelo_negocio) {
+        sesion.modelo_negocio = String(cand.modelo_negocio).toUpperCase();
+      }
+      if (sesion.modelo_negocio === 'EMPRENDEDOR_B2C' || cand?.motivo === 'MODO_B2C_INBOUND_ONLY') {
+        break;
+      }
       if (!cand || !cand.ok || !cand.telefono) break;
 
       const waCheck = await resolverJidWhatsAppConSock(sesion.sock, cand.telefono);
@@ -1464,6 +1498,7 @@ async function iniciarSesionTenant(clienteIdRaw, telefonoPairing = '') {
   }
 
   const sesion = obtenerOCrearEstadoSesion(cid);
+  sincronizarModeloNegocioTenant(sesion).catch(() => {});
   if (sesion.vinculando) {
     return sesion;
   }
@@ -1696,6 +1731,7 @@ function obtenerPayloadEstatusTenant(clienteIdRaw) {
     return {
       ok: true,
       cliente_id: 'mallas_tlaxcalli',
+      modelo_negocio: 'DISTRIBUIDOR_B2B',
       carpeta_sesion: 'sesion_whatsapp_tlaxcalli/',
       conectado: Boolean(estadoActual.conectado),
       vinculando: false,
@@ -1712,9 +1748,11 @@ function obtenerPayloadEstatusTenant(clienteIdRaw) {
     };
   }
   const s = sesiones.get(cid);
+  const modNeg = s?.modelo_negocio || 'DISTRIBUIDOR_B2B';
   return {
     ok: true,
     cliente_id: cid,
+    modelo_negocio: modNeg,
     carpeta_sesion: `sesiones_wa/${cid}/`,
     conectado: Boolean(s?.conectado),
     vinculando: Boolean(s?.vinculando),
@@ -1724,8 +1762,8 @@ function obtenerPayloadEstatusTenant(clienteIdRaw) {
     codigo_8_digitos: s?.pairingCode || '',
     pairingCode: s?.pairingCode || '',
     ultimoError: s?.ultimoError || '',
-    motor_50_activo: s ? !s.motorPausadoLocal : false,
-    motorPausadoLocal: s ? Boolean(s.motorPausadoLocal) : true,
+    motor_50_activo: modNeg === 'EMPRENDEDOR_B2C' ? false : (s ? !s.motorPausadoLocal : false),
+    motorPausadoLocal: modNeg === 'EMPRENDEDOR_B2C' ? true : (s ? Boolean(s.motorPausadoLocal) : true),
     pausaRespuestasGeneral: s ? Boolean(s.pausaRespuestasGeneral) : false,
     erroresConsecutivos: s?.erroresConsecutivos || 0,
     fecha: new Date().toISOString(),

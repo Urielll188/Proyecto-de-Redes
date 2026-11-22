@@ -1,7 +1,13 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { fetchVpsGet, fetchVpsPost, NichoVps } from '@/lib/vps/types';
+import {
+  DiagnosticoModeloIA,
+  fetchVpsGet,
+  fetchVpsPost,
+  ModeloNegocioType,
+  NichoVps,
+} from '@/lib/vps/types';
 
 export const OWNER_EMAIL_MALLAS = 'ferrergbryanu10@gmail.com';
 
@@ -21,6 +27,7 @@ export const PROTECTED_MALLAS_NICHO: NichoVps = {
   activo: true,
   total_prospectos: 303,
   enviados_wa: 11,
+  modelo_negocio: 'DISTRIBUIDOR_B2B',
 };
 
 interface NichoContextValue {
@@ -28,9 +35,15 @@ interface NichoContextValue {
   isMallasOwner: boolean;
   tienePerfil: boolean;
   nicho: NichoVps | null;
+  modeloNegocio: ModeloNegocioType;
   loadingNicho: boolean;
   refreshNicho: () => Promise<void>;
   syncNichoFromIdea: (payload: Record<string, unknown>) => Promise<NichoVps | null>;
+  diagnosticarModelo: (payload: {
+    descripcion_idea: string;
+    nicho_categoria?: string;
+    objetivo?: string;
+  }) => Promise<DiagnosticoModeloIA | null>;
 }
 
 const NichoContext = createContext<NichoContextValue>({
@@ -38,9 +51,11 @@ const NichoContext = createContext<NichoContextValue>({
   isMallasOwner: false,
   tienePerfil: false,
   nicho: null,
+  modeloNegocio: 'DISTRIBUIDOR_B2B',
   loadingNicho: true,
   refreshNicho: async () => {},
   syncNichoFromIdea: async () => null,
+  diagnosticarModelo: async () => null,
 });
 
 export function NichoProvider({
@@ -128,17 +143,57 @@ export function NichoProvider({
     [ownerEmail, isMallasOwner, nicho]
   );
 
+  const diagnosticarModelo = useCallback(
+    async (payload: {
+      descripcion_idea: string;
+      nicho_categoria?: string;
+      objetivo?: string;
+    }): Promise<DiagnosticoModeloIA | null> => {
+      try {
+        const res = await fetchVpsPost('/api/diagnosticar-modelo', payload);
+        if (res && res.modelo_recomendado) {
+          return res as DiagnosticoModeloIA;
+        }
+      } catch (err) {
+        console.warn('[NichoContext] Aviso al diagnosticar modelo:', err);
+      }
+      return null;
+    },
+    []
+  );
+
+  const modeloNegocio: ModeloNegocioType = useMemo(() => {
+    if (isMallasOwner) return 'DISTRIBUIDOR_B2B';
+    const m = nicho?.modelo_negocio;
+    if (m === 'SERVICIOS_B2B' || m === 'EMPRENDEDOR_B2C' || m === 'DISTRIBUIDOR_B2B') {
+      return m;
+    }
+    return 'DISTRIBUIDOR_B2B';
+  }, [isMallasOwner, nicho]);
+
   const value = useMemo(
     () => ({
       ownerEmail,
       isMallasOwner,
       tienePerfil,
       nicho,
+      modeloNegocio,
       loadingNicho,
       refreshNicho,
       syncNichoFromIdea,
+      diagnosticarModelo,
     }),
-    [ownerEmail, isMallasOwner, tienePerfil, nicho, loadingNicho, refreshNicho, syncNichoFromIdea]
+    [
+      ownerEmail,
+      isMallasOwner,
+      tienePerfil,
+      nicho,
+      modeloNegocio,
+      loadingNicho,
+      refreshNicho,
+      syncNichoFromIdea,
+      diagnosticarModelo,
+    ]
   );
 
   return <NichoContext.Provider value={value}>{children}</NichoContext.Provider>;

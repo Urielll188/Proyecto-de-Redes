@@ -19,7 +19,8 @@ import { fetchVpsGet, fetchVpsPost, PedidoVps } from '@/lib/vps/types';
 import { useNicho } from '@/context/NichoContext';
 
 export default function LogisticaPage() {
-  const { ownerEmail, isMallasOwner, tienePerfil, nicho, loadingNicho } = useNicho();
+  const { ownerEmail, isMallasOwner, tienePerfil, nicho, modeloNegocio, loadingNicho } = useNicho();
+  const isServiciosB2B = !isMallasOwner && modeloNegocio === 'SERVICIOS_B2B';
 
   const [pedidos, setPedidos] = useState<PedidoVps[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,7 +93,10 @@ export default function LogisticaPage() {
     : (nicho?.nombre_negocio || 'MI NEGOCIO').toUpperCase();
 
   const buildRutaChoferUrl = (p: PedidoVps) => {
-    const msg = `🚚 *RUTA DE ENTREGA ${nombreMarca}*\nFolio: ${p.folio}\nCliente: ${p.cliente_tortilleria}\nTel: ${p.telefono}\nMunicipio: ${p.municipio}\nDirección: ${p.direccion_gps}\nHorario: ${p.horario_recepcion}\nCobrar (${p.metodo_pago}): $${p.monto_venta} MXN\nMaps: ${p.google_maps_url || 'N/A'}`;
+    const headerTxt = isServiciosB2B
+      ? `🛠️ *ORDEN DE VISITA / INSTALACIÓN ${nombreMarca}*`
+      : `🚚 *RUTA DE ENTREGA ${nombreMarca}*`;
+    const msg = `${headerTxt}\nFolio: ${p.folio}\nCliente: ${p.cliente_tortilleria}\nTel: ${p.telefono}\nMunicipio: ${p.municipio}\nSitio/Dirección: ${p.direccion_gps}\nHorario: ${p.horario_recepcion}\nCobrar (${p.metodo_pago}): $${p.monto_venta} MXN\nMaps: ${p.google_maps_url || 'N/A'}`;
     return `https://wa.me/?text=${encodeURIComponent(msg)}`;
   };
 
@@ -102,13 +106,19 @@ export default function LogisticaPage() {
         <div>
           <div className="flex items-center gap-2 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-1">
             <Truck className="w-4 h-4" />
-            Módulo 3 • Logística y Comisiones
+            {isServiciosB2B
+              ? 'Módulo 3 • Agenda de Visitas e Instalaciones Técnicas'
+              : 'Módulo 3 • Logística y Comisiones'}
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
-            Hoja de Ruta para Repartidores
+            {isServiciosB2B
+              ? 'Agenda de Servicios y Levantamientos en Sitio'
+              : 'Hoja de Ruta para Repartidores'}
           </h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Control de entregas contra pago, despacho de rutas por WhatsApp y cálculo de comisiones.
+            {isServiciosB2B
+              ? 'Control de visitas técnicas agendadas, ubicación GPS de empresas y seguimiento de instalaciones.'
+              : 'Control de entregas contra pago, despacho de rutas por WhatsApp y cálculo de comisiones.'}
           </p>
         </div>
 
@@ -118,7 +128,7 @@ export default function LogisticaPage() {
           className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 text-sm transition-colors disabled:opacity-50"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Actualizar Ruta
+          {isServiciosB2B ? 'Actualizar Agenda' : 'Actualizar Ruta'}
         </button>
       </div>
 
@@ -192,10 +202,10 @@ export default function LogisticaPage() {
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-950/60 text-[11px] uppercase tracking-wider text-zinc-400">
                 <th className="py-3 px-4">Folio</th>
-                <th className="py-3 px-4">Cliente / Tel</th>
-                <th className="py-3 px-4">Dirección / Maps</th>
-                <th className="py-3 px-4">Horario</th>
-                <th className="py-3 px-4">Método Pago</th>
+                <th className="py-3 px-4">{isServiciosB2B ? 'Empresa / Cliente' : 'Cliente / Tel'}</th>
+                <th className="py-3 px-4">{isServiciosB2B ? 'Ubicación del Sitio / Maps' : 'Dirección / Maps'}</th>
+                <th className="py-3 px-4">{isServiciosB2B ? 'Fecha / Horario Visita' : 'Horario'}</th>
+                <th className="py-3 px-4">{isServiciosB2B ? 'Modalidad Cobro' : 'Método Pago'}</th>
                 <th className="py-3 px-4">Venta / Comisión</th>
                 <th className="py-3 px-4 text-right">Estatus / Acciones</th>
               </tr>

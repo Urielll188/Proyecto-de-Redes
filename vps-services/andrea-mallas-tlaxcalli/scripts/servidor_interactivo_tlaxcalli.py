@@ -286,8 +286,17 @@ def inicializar_tablas_ecosistema():
     cols_nicho = [row[1] for row in cur.fetchall()]
     if "owner_email" not in cols_nicho:
         cur.execute("ALTER TABLE perfiles_nicho ADD COLUMN owner_email TEXT DEFAULT ''")
+    if "modelo_negocio" not in cols_nicho:
+        cur.execute("ALTER TABLE perfiles_nicho ADD COLUMN modelo_negocio TEXT DEFAULT 'DISTRIBUIDOR_B2B'")
+    if "diagnostico_ia" not in cols_nicho:
+        cur.execute("ALTER TABLE perfiles_nicho ADD COLUMN diagnostico_ia TEXT DEFAULT '{}'")
+    cur.execute("""
+        UPDATE perfiles_nicho
+        SET modelo_negocio = 'DISTRIBUIDOR_B2B'
+        WHERE modelo_negocio IS NULL OR TRIM(modelo_negocio) = ''
+    """)
     cur.execute("UPDATE perfiles_nicho SET owner_email = '' WHERE LOWER(TRIM(owner_email)) = ? AND cliente_id != 'mallas_tlaxcalli'", (OWNER_EMAIL_MALLAS,))
-    cur.execute("UPDATE perfiles_nicho SET owner_email = ?, protegido = 1 WHERE cliente_id = 'mallas_tlaxcalli'", (OWNER_EMAIL_MALLAS,))
+    cur.execute("UPDATE perfiles_nicho SET owner_email = ?, protegido = 1, modelo_negocio = 'DISTRIBUIDOR_B2B' WHERE cliente_id = 'mallas_tlaxcalli'", (OWNER_EMAIL_MALLAS,))
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_perfiles_owner_email ON perfiles_nicho(owner_email) WHERE owner_email IS NOT NULL AND owner_email != ''")
 
     # Tabla de Números Autorizados como Dueños (Ing. Paola / Ing. Rocha) para usar su Agente CDO directo en WhatsApp
@@ -419,6 +428,205 @@ def cargar_system_prompt() -> str:
     return "Eres la encargada de Ventas de Mallas Tlaxcalli."
 
 
+MODELOS_NEGOCIO_VALIDOS = ("DISTRIBUIDOR_B2B", "SERVICIOS_B2B", "EMPRENDEDOR_B2C")
+
+
+def normalizar_modelo_negocio(val: str) -> str:
+    v = str(val or "").strip().upper()
+    if v in MODELOS_NEGOCIO_VALIDOS:
+        return v
+    if "SERVICIO" in v or "INSTALACION" in v:
+        return "SERVICIOS_B2B"
+    if "B2C" in v or "PARTICULAR" in v or "EMPRENDEDOR" in v:
+        return "EMPRENDEDOR_B2C"
+    return "DISTRIBUIDOR_B2B"
+
+
+def diagnosticar_modelo_heuristico(descripcion_idea: str, nicho_categoria: str = "", objetivo: str = "") -> dict:
+    texto_full = motor_m1.quitar_acentos(f"{descripcion_idea} {nicho_categoria} {objetivo}").lower()
+
+    kws_b2c = [
+        "tupper", "tupperware", "catalogo", "comida", "postre", "postres", "ropa",
+        "cosmetico", "cosmeticos", "maquillaje", "perfume", "perfumes", "venta directa",
+        "colonia", "vecinos", "particular", "consumidor final", "avon", "mary kay",
+        "shein", "zapatos", "tenis", "joyeria", "bisuteria", "pastel", "pasteles",
+        "antojitos", "snacks", "bazar", "tienda de ropa", "menudeo"
+    ]
+    kws_servicios = [
+        "instalacion", "instalaciones", "redes", "cableado", "estructurado", "wifi",
+        "cctv", "camaras", "mantenimiento", "servicio", "servicios", "reparacion",
+        "consultoria", "soporte tecnico", "soporte", "configuracion", "fibra optica",
+        "conmutador", "servidor", "servidores", "arquitectura", "construccion",
+        "electricista", "plomeria", "fumigacion", "limpieza industrial", "climatizacion",
+        "aire acondicionado", "agencia", "desarrollo web", "software"
+    ]
+
+    hits_b2c = sum(1 for k in kws_b2c if k in texto_full)
+    hits_serv = sum(1 for k in kws_servicios if k in texto_full)
+
+    if hits_b2c > 0 and hits_b2c >= hits_serv:
+        modelo = "EMPRENDEDOR_B2C"
+        scores = {"distribuidor": 35, "servicios": 25, "particular": 94}
+        titulo = "Modelo Recomendado: Particular / Emprendedor B2C (Inbound Seguro)"
+        explicacion = (
+            "Tu producto se vende directo al consumidor final (B2C). En WhatsApp, enviar mensajes masivos en frío a personas desconocidas "
+            "provoca reportes y bloqueos de chip. Conviene operar en Modo Inbound 24/7: atraes interesados con flyers y videos de 03 • ESTUDIO "
+            "en tus redes/grupos y Andrea cierra cada venta 24/7 en cuanto te escriben."
+        )
+        clientes_obj = "Consumidores finales, vecinos de tu zona, grupos locales de compra-venta y seguidores de redes sociales"
+        kws_sug = [
+            "clientes interesados en catálogo",
+            "ofertas de temporada",
+            "pedidos a domicilio",
+            "entregas locales",
+            "promoción especial",
+            "catálogo digital"
+        ]
+        enfoque_andrea = "Atención inbound de catálogo, envío de promociones y cierre rápido de pedido a domicilio o punto de entrega"
+    elif hits_serv > 0:
+        modelo = "SERVICIOS_B2B"
+        scores = {"distribuidor": 58, "servicios": 96, "particular": 30}
+        titulo = "Modelo Recomendado: Servicios Técnicos / Instalaciones B2B"
+        explicacion = (
+            "Ofreces servicios profesionales o instalaciones técnicas. El mayor retorno está en prospectar empresas, oficinas, escuelas, "
+            "clínicas y comercios establecidos (B2B) mediante el Cazador INEGI/Maps, donde Andrea contacta con enfoque consultivo "
+            "y agenda levantamientos técnicos o visitas de cotización."
+        )
+        clientes_obj = "Oficinas corporativas, bodegas industriales, escuelas privadas, clínicas, hoteles y comercios en expansión"
+        kws_sug = [
+            "oficinas corporativas",
+            "bodegas industriales",
+            "colegios privados",
+            "clinicas y consultorios",
+            "hoteles y plazas comerciales",
+            "restaurantes y franquicias"
+        ]
+        enfoque_andrea = "Diagnóstico consultivo de necesidades técnicas, cotización de proyecto y agenda de visita o levantamiento en sitio"
+    else:
+        modelo = "DISTRIBUIDOR_B2B"
+        scores = {"distribuidor": 95, "servicios": 52, "particular": 32}
+        titulo = "Modelo Recomendado: Distribuidor / Proveedor Mayorista B2B"
+        explicacion = (
+            "Tu producto tiene alto potencial como proveedor directo de negocios establecidos (B2B). El Cazador 24/7 localiza comercios "
+            "que consumen tu insumo o mercancía de forma recurrente en INEGI/Google Maps y Andrea cierra paquetes o pedidos por volumen "
+            "sin riesgo de spam al dirigirte a teléfonos comerciales."
+        )
+        clientes_obj = "Negocios establecidos, talleres, tiendas minoristas, restaurantes o distribuidores regionales de tu giro"
+        palabras_base = [
+            w for w in re.split(r"[^a-z0-9]+", texto_full)
+            if len(w) >= 4 and w not in ("vendo", "ofrezco", "para", "como", "producto", "fisico", "servicio", "local", "venta", "inmediata", "clientes")
+        ]
+        kws_sug = list(dict.fromkeys(palabras_base[:5] + ["comercios minoristas", "distribuidores locales", "tiendas del giro"]))[:6]
+        enfoque_andrea = "Cotización de paquete comercial o mayoreo, envío de catálogo y cierre de pedido con entrega programada"
+
+    return {
+        "ok": True,
+        "origen_diagnostico": "heuristico",
+        "modelo_recomendado": modelo,
+        "scores": scores,
+        "titulo_veredicto": titulo,
+        "explicacion_estrategica": explicacion,
+        "clientes_objetivo": clientes_obj,
+        "keywords_sugeridas": kws_sug,
+        "enfoque_andrea": enfoque_andrea
+    }
+
+
+def diagnosticar_modelo_negocio_ia(descripcion_idea: str, nicho_categoria: str = "", objetivo: str = "") -> dict:
+    base_heuristica = diagnosticar_modelo_heuristico(descripcion_idea, nicho_categoria, objetivo)
+    idea_clean = str(descripcion_idea or "").strip()
+    if not idea_clean:
+        return base_heuristica
+
+    llaves = obtener_llaves_ia_backend()
+    if not llaves:
+        return base_heuristica
+
+    prompt_diag = (
+        "Eres un Arquitecto de Estrategia Comercial B2B/B2C para WhatsApp y Prospección Automatizada en México.\n"
+        "Analiza el siguiente negocio del usuario y clasifícalo en UNO de estos 3 modelos operativos:\n"
+        "1. \"DISTRIBUIDOR_B2B\": Venta de productos físicos, refacciones, insumos o mercancía por mayoreo/paquete a otros negocios establecidos.\n"
+        "2. \"SERVICIOS_B2B\": Servicios técnicos, instalaciones (redes, cableado estructurado, WiFi, CCTV, mantenimiento industrial, software, consultoría) dirigidos a empresas, oficinas, escuelas o comercios.\n"
+        "3. \"EMPRENDEDOR_B2C\": Venta directa al público general/consumidor final (ej. Tupperware, venta por catálogo, comida, postres, ropa, cosméticos en su colonia), donde escribir en frío a desconocidos en WhatsApp causa bloqueos y conviene operar solo en modo Inbound con contenido en redes.\n\n"
+        f"DATOS DEL USUARIO:\n- Descripción de la idea/oferta: {idea_clean[:800]}\n"
+        f"- Categoría seleccionada: {nicho_categoria}\n"
+        f"- Objetivo de conversión: {objetivo}\n\n"
+        "Devuelve ÚNICAMENTE un JSON válido (sin bloques markdown) con esta estructura exacta:\n"
+        "{\n"
+        "  \"modelo_recomendado\": \"DISTRIBUIDOR_B2B\" | \"SERVICIOS_B2B\" | \"EMPRENDEDOR_B2C\",\n"
+        "  \"scores\": {\"distribuidor\": 0-100, \"servicios\": 0-100, \"particular\": 0-100},\n"
+        "  \"titulo_veredicto\": \"string corto y contundente\",\n"
+        "  \"explicacion_estrategica\": \"explicación clara de 2-3 oraciones de por qué este modelo le da más ventas y cómo protege su WhatsApp\",\n"
+        "  \"clientes_objetivo\": \"qué tipo específico de negocios o clientes debe buscar (ej. Oficinas, bodegas, colegios y clínicas)\",\n"
+        "  \"keywords_sugeridas\": [\"termino 1\", \"termino 2\", \"termino 3\", \"termino 4\", \"termino 5\", \"termino 6\"],\n"
+        "  \"enfoque_andrea\": \"cómo debe conducir y cerrar la conversación la asesora IA Andrea\"\n"
+        "}"
+    )
+
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt_diag}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 600
+        }
+    }
+
+    t_inicio = time.time()
+    modelos_rapidos = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.0-flash"]
+    for modelo in modelos_rapidos:
+        for key in llaves[:2]:
+            restante = 7.8 - (time.time() - t_inicio)
+            if restante <= 1.2:
+                return base_heuristica
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={key}"
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, context=SSL_CTX, timeout=min(7.5, max(1.5, restante))) as resp:
+                    res = json.loads(resp.read().decode("utf-8"))
+                    txt = res["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    m_json = re.search(r"\{.*\}", txt, flags=re.S)
+                    if not m_json:
+                        continue
+                    parsed = json.loads(m_json.group(0))
+                    mod_rec = normalizar_modelo_negocio(parsed.get("modelo_recomendado") or base_heuristica["modelo_recomendado"])
+                    # Si la heurística detectó explícitamente palabras clave inequívocas (ej. tupperware/catálogo o instalación de redes/cableado), asegurar coherencia
+                    if base_heuristica["modelo_recomendado"] == "EMPRENDEDOR_B2C" and any(w in motor_m1.quitar_acentos(idea_clean).lower() for w in ("tupper", "catalogo", "colonia")):
+                        mod_rec = "EMPRENDEDOR_B2C"
+                    elif base_heuristica["modelo_recomendado"] == "SERVICIOS_B2B" and any(w in motor_m1.quitar_acentos(idea_clean).lower() for w in ("instalacion", "cableado", "redes", "cctv", "mantenimiento")):
+                        mod_rec = "SERVICIOS_B2B"
+
+                    raw_scores = parsed.get("scores") if isinstance(parsed.get("scores"), dict) else {}
+                    scores = {
+                        "distribuidor": max(0, min(100, int(raw_scores.get("distribuidor", base_heuristica["scores"]["distribuidor"])))),
+                        "servicios": max(0, min(100, int(raw_scores.get("servicios", base_heuristica["scores"]["servicios"])))),
+                        "particular": max(0, min(100, int(raw_scores.get("particular", base_heuristica["scores"]["particular"]))))
+                    }
+                    kws_ia = parsed.get("keywords_sugeridas")
+                    if not isinstance(kws_ia, list) or len(kws_ia) == 0:
+                        kws_ia = base_heuristica["keywords_sugeridas"]
+                    kws_clean = [str(k).strip() for k in kws_ia if str(k).strip()][:8]
+
+                    return {
+                        "ok": True,
+                        "origen_diagnostico": f"gemini ({modelo})",
+                        "modelo_recomendado": mod_rec,
+                        "scores": scores,
+                        "titulo_veredicto": str(parsed.get("titulo_veredicto") or base_heuristica["titulo_veredicto"]).strip(),
+                        "explicacion_estrategica": str(parsed.get("explicacion_estrategica") or base_heuristica["explicacion_estrategica"]).strip(),
+                        "clientes_objetivo": str(parsed.get("clientes_objetivo") or base_heuristica["clientes_objetivo"]).strip(),
+                        "keywords_sugeridas": kws_clean or base_heuristica["keywords_sugeridas"],
+                        "enfoque_andrea": str(parsed.get("enfoque_andrea") or base_heuristica["enfoque_andrea"]).strip()
+                    }
+            except Exception:
+                continue
+
+    return base_heuristica
+
+
 def obtener_nicho_bd(cliente_id: str = "mallas_tlaxcalli") -> dict:
     cid = motor_m1.normalizar_cliente_id(cliente_id)
     conn = sqlite3.connect(DB_PATH)
@@ -427,7 +635,8 @@ def obtener_nicho_bd(cliente_id: str = "mallas_tlaxcalli") -> dict:
         SELECT cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
                codigo_scian_inegi, keywords_busqueda, oferta_gancho,
                catalogo_y_reglas, system_prompt, saludos_frio_json,
-               municipios_json, protegido, activo, fecha_creacion
+               municipios_json, protegido, activo, fecha_creacion,
+               COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}')
         FROM perfiles_nicho
         WHERE LOWER(cliente_id) = LOWER(?)
         LIMIT 1
@@ -438,7 +647,8 @@ def obtener_nicho_bd(cliente_id: str = "mallas_tlaxcalli") -> dict:
             SELECT cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
                    codigo_scian_inegi, keywords_busqueda, oferta_gancho,
                    catalogo_y_reglas, system_prompt, saludos_frio_json,
-                   municipios_json, protegido, activo, fecha_creacion
+                   municipios_json, protegido, activo, fecha_creacion,
+                   COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}')
             FROM perfiles_nicho
             WHERE cliente_id = 'mallas_tlaxcalli'
             LIMIT 1
@@ -457,12 +667,19 @@ def obtener_nicho_bd(cliente_id: str = "mallas_tlaxcalli") -> dict:
             "catalogo_y_reglas": "",
             "system_prompt": cargar_system_prompt(),
             "protegido": True,
-            "activo": True
+            "activo": True,
+            "modelo_negocio": "DISTRIBUIDOR_B2B",
+            "diagnostico_ia": {}
         }
     try:
         munis = json.loads(row[10] or "[]")
     except Exception:
         munis = []
+    try:
+        diag_obj = json.loads(row[15] or "{}") if isinstance(row[15], str) else (row[15] or {})
+    except Exception:
+        diag_obj = {}
+    es_tlax = (str(row[0]).lower() == "mallas_tlaxcalli")
     return {
         "cliente_id": row[0],
         "nombre_negocio": row[1],
@@ -477,7 +694,9 @@ def obtener_nicho_bd(cliente_id: str = "mallas_tlaxcalli") -> dict:
         "municipios": munis,
         "protegido": bool(row[11]),
         "activo": bool(row[12]),
-        "fecha_creacion": row[13] or ""
+        "fecha_creacion": row[13] or "",
+        "modelo_negocio": "DISTRIBUIDOR_B2B" if es_tlax else normalizar_modelo_negocio(row[14]),
+        "diagnostico_ia": diag_obj
     }
 
 
@@ -536,7 +755,8 @@ def obtener_lista_nichos_con_metricas() -> list:
     cur.execute("""
         SELECT cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
                codigo_scian_inegi, keywords_busqueda, oferta_gancho,
-               catalogo_y_reglas, protegido, activo, fecha_creacion
+               catalogo_y_reglas, protegido, activo, fecha_creacion,
+               COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}')
         FROM perfiles_nicho
         ORDER BY protegido DESC, fecha_creacion ASC
     """)
@@ -546,6 +766,11 @@ def obtener_lista_nichos_con_metricas() -> list:
     nichos = []
     for r in filas:
         cid = r[0]
+        es_tlax = (str(cid).lower() == "mallas_tlaxcalli")
+        try:
+            diag_obj = json.loads(r[12] or "{}") if isinstance(r[12], str) else (r[12] or {})
+        except Exception:
+            diag_obj = {}
         nichos.append({
             "cliente_id": cid,
             "nombre_negocio": r[1],
@@ -558,6 +783,8 @@ def obtener_lista_nichos_con_metricas() -> list:
             "protegido": bool(r[8]),
             "activo": bool(r[9]),
             "fecha_creacion": r[10] or "",
+            "modelo_negocio": "DISTRIBUIDOR_B2B" if es_tlax else normalizar_modelo_negocio(r[11]),
+            "diagnostico_ia": diag_obj,
             "total_prospectos": conteo_prosp.get(cid.lower(), 0),
             "enviados_wa": conteo_bit.get(cid.lower(), 0)
         })
@@ -603,6 +830,7 @@ def obtener_nicho_por_email(email_raw: str) -> dict | None:
         base_mallas["owner_email"] = OWNER_EMAIL_MALLAS
         base_mallas["es_mallas"] = True
         base_mallas["tiene_perfil"] = True
+        base_mallas["modelo_negocio"] = "DISTRIBUIDOR_B2B"
         return base_mallas
 
     conn = sqlite3.connect(DB_PATH)
@@ -611,7 +839,8 @@ def obtener_nicho_por_email(email_raw: str) -> dict | None:
         SELECT cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
                codigo_scian_inegi, keywords_busqueda, oferta_gancho,
                catalogo_y_reglas, system_prompt, protegido, activo,
-               fecha_creacion, COALESCE(owner_email, '')
+               fecha_creacion, COALESCE(owner_email, ''),
+               COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}')
         FROM perfiles_nicho
         WHERE LOWER(TRIM(COALESCE(owner_email, ''))) = ?
           AND LOWER(cliente_id) != 'mallas_tlaxcalli'
@@ -624,6 +853,10 @@ def obtener_nicho_por_email(email_raw: str) -> dict | None:
 
     cid = row[0]
     m_info = mapa_metricas.get(cid.lower(), {})
+    try:
+        diag_obj = json.loads(row[14] or "{}") if isinstance(row[14], str) else (row[14] or {})
+    except Exception:
+        diag_obj = {}
     return {
         "cliente_id": cid,
         "nombre_negocio": row[1],
@@ -638,11 +871,49 @@ def obtener_nicho_por_email(email_raw: str) -> dict | None:
         "activo": bool(row[10]),
         "fecha_creacion": row[11] or "",
         "owner_email": row[12] or email_norm,
+        "modelo_negocio": normalizar_modelo_negocio(row[13]),
+        "diagnostico_ia": diag_obj,
         "es_mallas": False,
         "tiene_perfil": True,
         "total_prospectos": m_info.get("total_prospectos", 0),
         "enviados_wa": m_info.get("enviados_wa", 0)
     }
+
+
+def _construir_catalogo_base_por_modelo(modelo_negocio: str, nombre_negocio: str, giro_objetivo: str, oferta_gancho: str, idea_base: str) -> str:
+    mod = normalizar_modelo_negocio(modelo_negocio)
+    if mod == "SERVICIOS_B2B":
+        return (
+            f"Negocio de Servicios B2B: {nombre_negocio}.\n"
+            f"Clientes Objetivo: {giro_objetivo}.\n"
+            f"Propuesta Técnica / Oferta: {oferta_gancho}.\n"
+            f"Descripción del Servicio: {idea_base}\n"
+            "FLUJO CONSULTIVO DE CIERRE (SERVICIOS / INSTALACIONES):\n"
+            "1. Identifica la necesidad técnica del cliente (tipo de inmueble/oficina, cantidad de nodos/equipos o alcance del servicio).\n"
+            "2. Destaca garantía profesional, atención a empresas y diagnóstico técnico.\n"
+            "3. Solicita los 4 datos para agendar levantamiento técnico o visita de instalación: Nombre de Empresa/Contacto, Alcance del Servicio, Ubicación del Sitio y Fecha/Horario de Visita."
+        )[:2500]
+    if mod == "EMPRENDEDOR_B2C":
+        return (
+            f"Negocio B2C (Venta al Público / Catálogo): {nombre_negocio}.\n"
+            f"Clientes Objetivo: {giro_objetivo}.\n"
+            f"Promoción / Oferta Principal: {oferta_gancho}.\n"
+            f"Catálogo y Detalles: {idea_base}\n"
+            "FLUJO DE ATENCIÓN INBOUND (CERO SPAM EN FRÍO):\n"
+            "1. Atiende con calidez a los clientes que llegan desde redes sociales, estados de WhatsApp o recomendaciones.\n"
+            "2. Comparte beneficios, precios claros y disponibilidad de catálogo.\n"
+            "3. Cierra el pedido solicitando: Nombre del cliente, Producto/Paquete elegido, Dirección o Punto de Entrega y Método de pago."
+        )[:2500]
+    return (
+        f"Proveedor / Distribuidor B2B: {nombre_negocio}.\n"
+        f"Giro de Negocios Clientes: {giro_objetivo}.\n"
+        f"Oferta Mayorista / Paquete Gancho: {oferta_gancho}.\n"
+        f"Detalles de Producto: {idea_base}\n"
+        "FLUJO DE CIERRE MAYORISTA / B2B:\n"
+        "1. Presenta el ahorro y beneficio directo para el negocio del cliente.\n"
+        "2. Resuelve dudas de calidad, envío y forma de pago.\n"
+        "3. Cierra el pedido pidiendo los 4 datos: Nombre del Negocio, Dirección de Entrega, Horario de Recepción y Método de Pago."
+    )[:2500]
 
 
 def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict]:
@@ -692,15 +963,40 @@ def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict
         or "Andrea"
     ).strip() or "Andrea"
 
+    diag_input = data.get("diagnostico_ia")
+    if isinstance(diag_input, str):
+        try:
+            diag_obj = json.loads(diag_input)
+        except Exception:
+            diag_obj = {}
+    elif isinstance(diag_input, dict):
+        diag_obj = diag_input
+    else:
+        diag_obj = (existente or {}).get("diagnostico_ia") or {}
+
+    if not diag_obj and raw_idea:
+        diag_obj = diagnosticar_modelo_heuristico(raw_idea, str(data.get("niche") or ""), str(data.get("objective") or ""))
+
+    modelo_raw = (
+        data.get("modelo_negocio")
+        or (diag_obj.get("modelo_recomendado") if isinstance(diag_obj, dict) else "")
+        or (existente or {}).get("modelo_negocio")
+        or "DISTRIBUIDOR_B2B"
+    )
+    modelo_negocio = normalizar_modelo_negocio(modelo_raw)
+
     giro_objetivo = str(
         data.get("giro_objetivo")
+        or (diag_obj.get("clientes_objetivo") if isinstance(diag_obj, dict) and not data.get("giro_objetivo") else "")
         or data.get("niche")
         or (existente or {}).get("giro_objetivo")
         or "Comercios y Clientes Potenciales"
     ).strip()[:160]
 
+    kws_diag = diag_obj.get("keywords_sugeridas") if isinstance(diag_obj, dict) else None
     keywords = str(
         data.get("keywords_busqueda")
+        or (", ".join(kws_diag) if isinstance(kws_diag, list) and len(kws_diag) > 0 else "")
         or (existente or {}).get("keywords_busqueda")
         or ""
     ).strip()
@@ -730,15 +1026,20 @@ def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict
         or f"Promoción especial de {nombre_negocio}"
     ).strip()[:240]
 
-    catalogo_reglas = str(
-        data.get("catalogo_prompt")
-        or data.get("catalogo_y_reglas")
-        or raw_idea
-        or (existente or {}).get("catalogo_y_reglas")
-        or f"Negocio: {nombre_negocio}. Giro: {giro_objetivo}. Oferta: {oferta_gancho}."
-    ).strip()[:2500]
+    catalogo_custom = str(data.get("catalogo_prompt") or data.get("catalogo_y_reglas") or "").strip()
+    if catalogo_custom and len(catalogo_custom) >= 80:
+        catalogo_reglas = catalogo_custom[:2500]
+    else:
+        catalogo_reglas = _construir_catalogo_base_por_modelo(
+            modelo_negocio,
+            nombre_negocio,
+            giro_objetivo,
+            oferta_gancho,
+            catalogo_custom or raw_idea or (existente or {}).get("catalogo_y_reglas") or oferta_gancho
+        )
 
     system_prompt_custom = str(data.get("system_prompt") or "").strip()[:2500]
+    diag_json_str = json.dumps(diag_obj if isinstance(diag_obj, dict) else {}, ensure_ascii=False)
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -747,8 +1048,9 @@ def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict
             cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
             codigo_scian_inegi, keywords_busqueda, oferta_gancho,
             catalogo_y_reglas, system_prompt, saludos_frio_json,
-            municipios_json, protegido, activo, fecha_creacion, owner_email
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', 0, 1, datetime('now'), ?)
+            municipios_json, protegido, activo, fecha_creacion, owner_email,
+            modelo_negocio, diagnostico_ia
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', 0, 1, datetime('now'), ?, ?, ?)
         ON CONFLICT(cliente_id) DO UPDATE SET
             nombre_negocio = excluded.nombre_negocio,
             nombre_agente = excluded.nombre_agente,
@@ -759,12 +1061,15 @@ def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict
             catalogo_y_reglas = excluded.catalogo_y_reglas,
             system_prompt = CASE WHEN excluded.system_prompt != '' THEN excluded.system_prompt ELSE perfiles_nicho.system_prompt END,
             owner_email = excluded.owner_email,
+            modelo_negocio = excluded.modelo_negocio,
+            diagnostico_ia = excluded.diagnostico_ia,
             activo = 1
         WHERE perfiles_nicho.protegido = 0
     """, (
         cid, nombre_negocio, nombre_agente, giro_objetivo,
         codigo_scian, keywords, oferta_gancho,
-        catalogo_reglas, system_prompt_custom, email_norm
+        catalogo_reglas, system_prompt_custom, email_norm,
+        modelo_negocio, diag_json_str
     ))
     conn.commit()
     conn.close()
@@ -1232,15 +1537,36 @@ def construir_system_prompt_nicho(nicho: dict, historial: list) -> str:
     nombre_agente = nicho.get("nombre_agente") or "Andrea"
     giro_obj = nicho.get("giro_objetivo") or "clientes comerciales"
     oferta = nicho.get("oferta_gancho") or "Oferta especial"
+    modelo_neg = normalizar_modelo_negocio(nicho.get("modelo_negocio", "DISTRIBUIDOR_B2B"))
     # Truncado seguro a máximo 2,500 caracteres para latencia óptima
     catalogo_truncado = str(nicho.get("catalogo_y_reglas") or "")[:2500]
     prompt_custom = str(nicho.get("system_prompt") or "").strip()
 
+    if modelo_neg == "SERVICIOS_B2B":
+        regla_cierre = (
+            "5. ENFOQUE CONSULTIVO DE SERVICIOS B2B: Haz 1 pregunta técnica breve para dimensionar el proyecto o instalación "
+            "(ej. cantidad de equipos/nodos, tamaño de oficina/sitio o falla a resolver) y guía al cliente a agendar visita técnica o cotización formal.\n"
+            "6. Cuando el cliente confirme la visita o servicio y tengas sus 4 datos (Nombre de Empresa/Cliente, Alcance/Servicio, Ubicación del Sitio y Fecha/Horario de Visita), añade al final:\n"
+            '`[PEDIDO_CERRADO:{"cliente":"Empresa o Cliente","direccion":"Ubicacion del sitio","municipio":"Municipio","horario":"Fecha y horario visita","metodo_pago":"COTIZACION_SERVICIO","tipo_pedido":"Alcance del servicio","precio":"0"}]`'
+        )
+    elif modelo_neg == "EMPRENDEDOR_B2C":
+        regla_cierre = (
+            "5. ENFOQUE PARTICULAR B2C (ATENCIÓN INBOUND): Atiende con mucha amabilidad a los clientes que preguntan por tu catálogo o promociones, "
+            "resuelve precios al instante y confirma su pedido a domicilio o punto de entrega.\n"
+            "6. Cuando el cliente confirme su compra y tengas sus 4 datos (Nombre, Producto elegido, Dirección/Punto de entrega y Horario/Pago), añade al final:\n"
+            '`[PEDIDO_CERRADO:{"cliente":"Nombre","direccion":"Direccion o Punto","municipio":"Municipio","horario":"Horario","metodo_pago":"CONTRA_ENTREGA","precio":"0"}]`'
+        )
+    else:
+        regla_cierre = (
+            "5. Si el cliente confirma pedido mayorista/comercial y ya dio sus 4 datos (nombre/negocio, dirección, horario y método de pago), añade al final:\n"
+            '`[PEDIDO_CERRADO:{"cliente":"Nombre","direccion":"Direccion","municipio":"Municipio","horario":"Horario","metodo_pago":"METODO","precio":"0"}]`'
+        )
+
     base = prompt_custom if prompt_custom else (
-        f"# {nombre_agente.upper()} — ASESORA COMERCIAL DE {nombre_negocio.upper()} (WhatsApp)\n\n"
+        f"# {nombre_agente.upper()} — ASESORA COMERCIAL DE {nombre_negocio.upper()} ({modelo_neg} • WhatsApp)\n\n"
         f"## QUIÉN ERES\n"
         f"Eres **{nombre_agente}**, asesora comercial de **{nombre_negocio}**, especializada en atender a **{giro_obj}**.\n"
-        f"Eres mujer mexicana, cálida, ágil y persuasiva. Tu objetivo es resolver dudas con naturalidad y **CERRAR LA VENTA / PEDIDO**.\n\n"
+        f"Eres mujer mexicana, cálida, ágil y persuasiva. Tu objetivo es resolver dudas con naturalidad y **CERRAR LA VENTA / SERVICIO**.\n\n"
         f"## OFERTA GANCHO PRINCIPAL\n{oferta}\n\n"
         f"## CATÁLOGO, PRECIOS Y REGLAS DEL NEGOCIO\n{catalogo_truncado}\n\n"
         f"## REGLAS DE ORO EN WHATSAPP\n"
@@ -1248,8 +1574,7 @@ def construir_system_prompt_nicho(nicho: dict, historial: list) -> str:
         f"2. **SIEMPRE termina con UNA sola pregunta fácil de contestar** para avanzar el cierre.\n"
         f"3. Suelta un beneficio o precio a la vez (Escalera del Sí).\n"
         f"4. CAPACIDAD DE VOZ ACTIVA: Nunca digas que eres IA ni que no puedes mandar audios.\n"
-        f"5. Si el cliente confirma pedido y ya dio sus 4 datos (nombre/negocio, dirección, horario y método de pago), añade al final:\n"
-        f'`[PEDIDO_CERRADO:{{"cliente":"Nombre","direccion":"Direccion","municipio":"Municipio","horario":"Horario","metodo_pago":"METODO","precio":"0"}}]`'
+        f"{regla_cierre}"
     )
     return base
 
@@ -1438,6 +1763,16 @@ def _mensaje_saliente_prospecto(pid: int, nombre: str, municipio: str, cliente_i
     nom_emp = nicho.get("nombre_negocio") or cid
     agente = nicho.get("nombre_agente") or "Andrea"
     oferta = nicho.get("oferta_gancho") or "nuestra promoción especial"
+    mod_neg = normalizar_modelo_negocio(nicho.get("modelo_negocio", "DISTRIBUIDOR_B2B"))
+    if mod_neg == "SERVICIOS_B2B":
+        saludos_serv = [
+            f"{saludo_hora}, disculpe la molestia 👋 Le saluda {agente} de *{nom_emp}*. Nos especializamos en servicios e instalaciones técnicas para empresas en *{mun}* y queríamos ponernos a las órdenes de {ref_negocio} con {oferta}. ¿Les gustaría agendar una revisión o cotización sin compromiso?",
+            f"Qué tal, muy {saludo_hora.lower()} 👋 Le escribe {agente} del área de proyectos de *{nom_emp}*. Andamos atendiendo empresas y comercios en *{mun}* y dejamos nuestro contacto para {ref_negocio} por si requieren apoyo en {oferta}. Si gusta le comparto nuestra ficha técnica por aquí.",
+            f"{saludo_hora}, un gusto saludarle hasta *{mun}* 👋 Soy {agente} de *{nom_emp}*. Apoyamos a organizaciones como {ref_negocio} con soluciones profesionales en {oferta}. ¿Tienen algún requerimiento o proyecto próximo que podamos cotizarles sin costo?",
+            f"Hola, {saludo_hora.lower()} 👋 Le saluda {agente} de *{nom_emp}*. Esta semana nuestro equipo técnico tiene agenda abierta en *{mun}* para visitas y diagnósticos en {ref_negocio} ({oferta}). ¿Le paso los detalles brevemente por este medio?"
+        ]
+        return saludos_serv[pid % len(saludos_serv)]
+
     saludos_nicho = [
         f"{saludo_hora}, disculpe la molestia 👋 Le saluda {agente} de *{nom_emp}*. Andamos atendiendo negocios en *{mun}* y queríamos ponernos a las órdenes de {ref_negocio} con {oferta}. ¿Gusta que le comparta los detalles rápido y sin compromiso? ¡Excelente día!",
         f"Qué tal, muy {saludo_hora.lower()} 👋 Le escribe {agente} de *{nom_emp}*. Vimos a {ref_negocio} en *{mun}* y le dejamos nuestro contacto directo por si les interesa aprovechar {oferta}. Si gusta le paso la información por aquí cuando tenga un minuto.",
@@ -1449,18 +1784,39 @@ def _mensaje_saliente_prospecto(pid: int, nombre: str, municipio: str, cliente_i
     return saludos_nicho[pid % len(saludos_nicho)]
 
 
-def obtener_candidato_envio_50(cliente_id: str = "mallas_tlaxcalli") -> dict:
+def obtener_candidato_envio_50(cliente_id: str = "mallas_tlaxcalli", forzar: bool = False) -> dict:
     cid_filtro = motor_m1.normalizar_cliente_id(cliente_id or "mallas_tlaxcalli")
-    if cid_filtro == "mallas_tlaxcalli" and not ESTADO_MOTOR_50_DIARIOS.get("activo", False):
-        return {"ok": False, "motivo": "MOTOR_PAUSADO", "enviados_hoy": 0, "id_cliente_agencia": cid_filtro}
-    """
-    Entrega el siguiente candidato pendiente SIN marcarlo todavía como enviado;
-    el puente WhatsApp verifica primero con `onWhatsApp()` que el número exista en WhatsApp
-    y luego confirma en `/api/confirmar_envio_50` para NO quemar el cupo diario en líneas fijas.
-    Aislado estrictamente por `cliente_id` (default 'mallas_tlaxcalli').
-    """
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
+    cur.execute(
+        "SELECT activo, COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B') FROM perfiles_nicho WHERE LOWER(cliente_id) = LOWER(?)",
+        (cid_filtro,)
+    )
+    row_act = cur.fetchone()
+    modelo_nicho = "DISTRIBUIDOR_B2B" if cid_filtro == "mallas_tlaxcalli" else normalizar_modelo_negocio(row_act[1] if row_act else "DISTRIBUIDOR_B2B")
+
+    # CANDADO ANTI-SPAM B2C: Ningún tenant EMPRENDEDOR_B2C puede disparar mensajes salientes en frío
+    if modelo_nicho == "EMPRENDEDOR_B2C":
+        conn.close()
+        return {
+            "ok": True,
+            "candidato": None,
+            "modelo_negocio": "EMPRENDEDOR_B2C",
+            "motivo": "MODO_B2C_INBOUND_ONLY",
+            "id_cliente_agencia": cid_filtro,
+            "enviados_hoy": 0
+        }
+
+    if cid_filtro == "mallas_tlaxcalli" and not ESTADO_MOTOR_50_DIARIOS.get("activo", False) and not forzar:
+        conn.close()
+        return {
+            "ok": False,
+            "motivo": "MOTOR_PAUSADO",
+            "modelo_negocio": modelo_nicho,
+            "enviados_hoy": 0,
+            "id_cliente_agencia": cid_filtro
+        }
+
     hoy_prefijo = datetime.now().strftime("%Y-%m-%d")
     cur.execute(
         "SELECT COUNT(*) FROM bitacora_envios_wa WHERE fecha_hora LIKE ? AND LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)",
@@ -1470,13 +1826,23 @@ def obtener_candidato_envio_50(cliente_id: str = "mallas_tlaxcalli") -> dict:
 
     if enviados_hoy >= ESTADO_MOTOR_50_DIARIOS["meta_diaria"]:
         conn.close()
-        return {"ok": False, "motivo": "META_DIARIA_50_COMPLETADA", "enviados_hoy": enviados_hoy, "id_cliente_agencia": cid_filtro}
+        return {
+            "ok": False,
+            "motivo": "META_DIARIA_50_COMPLETADA",
+            "modelo_negocio": modelo_nicho,
+            "enviados_hoy": enviados_hoy,
+            "id_cliente_agencia": cid_filtro
+        }
 
-    cur.execute("SELECT activo FROM perfiles_nicho WHERE LOWER(cliente_id) = LOWER(?)", (cid_filtro,))
-    row_act = cur.fetchone()
     if row_act is not None and int(row_act[0]) == 0:
         conn.close()
-        return {"ok": False, "motivo": "NICHO_INACTIVO", "enviados_hoy": enviados_hoy, "id_cliente_agencia": cid_filtro}
+        return {
+            "ok": False,
+            "motivo": "NICHO_INACTIVO",
+            "modelo_negocio": modelo_nicho,
+            "enviados_hoy": enviados_hoy,
+            "id_cliente_agencia": cid_filtro
+        }
 
     cur.execute("""
         SELECT id, nombre, telefono, municipio, direccion, google_maps_url, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')
@@ -1492,7 +1858,13 @@ def obtener_candidato_envio_50(cliente_id: str = "mallas_tlaxcalli") -> dict:
     conn.close()
 
     if not row:
-        return {"ok": False, "motivo": "SIN_PROSPECTOS_PENDIENTES", "enviados_hoy": enviados_hoy, "id_cliente_agencia": cid_filtro}
+        return {
+            "ok": False,
+            "motivo": "SIN_PROSPECTOS_PENDIENTES",
+            "modelo_negocio": modelo_nicho,
+            "enviados_hoy": enviados_hoy,
+            "id_cliente_agencia": cid_filtro
+        }
 
     pid, nombre, telefono, municipio, direccion, maps_url, cid_raw = row
     cid = motor_m1.normalizar_cliente_id(cid_raw or cid_filtro)
@@ -1501,6 +1873,7 @@ def obtener_candidato_envio_50(cliente_id: str = "mallas_tlaxcalli") -> dict:
         "ok": True,
         "id": pid,
         "id_cliente_agencia": cid,
+        "modelo_negocio": modelo_nicho,
         "nombre": nombre,
         "telefono": telefono,
         "municipio": municipio,
@@ -2427,6 +2800,14 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             self.wfile.write(raw)
             return
 
+        if parsed.path == "/api/obtener_candidato_envio_50":
+            qs = urllib.parse.parse_qs(parsed.query)
+            cid_q = motor_m1.normalizar_cliente_id((qs.get("cliente_id", ["mallas_tlaxcalli"])[0] or "mallas_tlaxcalli").strip())
+            forzar_q = (qs.get("forzar", ["0"])[0] or "0").lower() in ("1", "true", "yes")
+            cand = obtener_candidato_envio_50(cliente_id=cid_q, forzar=forzar_q)
+            self._send_json(cand)
+            return
+
         if parsed.path in ("/api/estatus_whatsapp", "/api/estatus_wa", "/estatus_wa"):
             qs = urllib.parse.parse_qs(parsed.query)
             email_q = (qs.get("email", [""])[0] or "").strip().lower()
@@ -2440,6 +2821,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                         "tiene_perfil": False,
                         "es_mallas": False,
                         "cliente_id": "",
+                        "modelo_negocio": "DISTRIBUIDOR_B2B",
                         "conectado": False,
                         "qr": "",
                         "qr_data_url": "",
@@ -2453,15 +2835,19 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                         "motor_50_activo": False
                     })
                     return
+                modelo_nicho = normalizar_modelo_negocio(nicho_ctx.get("modelo_negocio", "DISTRIBUIDOR_B2B"))
             else:
                 cid_target = motor_m1.normalizar_cliente_id(cid_q or "mallas_tlaxcalli")
                 es_mallas = (cid_target == "mallas_tlaxcalli")
+                nicho_ctx = obtener_nicho_bd(cid_target)
+                modelo_nicho = "DISTRIBUIDOR_B2B" if es_mallas else normalizar_modelo_negocio(nicho_ctx.get("modelo_negocio", "DISTRIBUIDOR_B2B"))
 
             est = {
                 "ok": True,
                 "tiene_perfil": True,
                 "es_mallas": es_mallas,
                 "cliente_id": cid_target,
+                "modelo_negocio": modelo_nicho,
                 "conectado": False,
                 "qr": "",
                 "qr_data_url": "",
@@ -2469,7 +2855,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 "codigo_8_digitos": "",
                 "miNumero": "",
                 "numero_vinculado": "",
-                "motor_50_activo": ESTADO_MOTOR_50_DIARIOS["activo"] if es_mallas else True,
+                "motor_50_activo": False if modelo_nicho == "EMPRENDEDOR_B2C" else (ESTADO_MOTOR_50_DIARIOS["activo"] if es_mallas else True),
                 "fotos_producto_reales": len(listar_imagenes_producto_reales()) if es_mallas else 0,
                 "fotos_publicidad": len(listar_publicidad_pau()) if es_mallas else 0
             }
@@ -2481,6 +2867,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                     datos_b = json.loads(resp_b.read().decode("utf-8"))
                     if isinstance(datos_b, dict):
                         est.update(datos_b)
+                        est["modelo_negocio"] = modelo_nicho
                         bridge_ok = True
             except Exception:
                 bridge_ok = False
@@ -2586,12 +2973,28 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/mi-nicho":
             qs = urllib.parse.parse_qs(parsed.query)
             email_q = (qs.get("email", [""])[0] or "").strip().lower()
+            cid_q = (qs.get("cliente_id", [""])[0] or "").strip()
+            if not email_q and cid_q:
+                cid_norm = motor_m1.normalizar_cliente_id(cid_q)
+                nicho_c = obtener_nicho_bd(cid_norm)
+                self._send_json({
+                    "ok": True,
+                    "tiene_perfil": True,
+                    "es_mallas": (cid_norm == "mallas_tlaxcalli"),
+                    "cliente_id": cid_norm,
+                    "modelo_negocio": nicho_c.get("modelo_negocio", "DISTRIBUIDOR_B2B"),
+                    "diagnostico_ia": nicho_c.get("diagnostico_ia", {}),
+                    "nicho": nicho_c
+                })
+                return
             if not email_q:
                 self._send_json({
                     "ok": True,
                     "tiene_perfil": False,
                     "es_mallas": False,
                     "owner_email": "",
+                    "modelo_negocio": "DISTRIBUIDOR_B2B",
+                    "diagnostico_ia": {},
                     "nicho": None,
                     "total_prospectos": 0,
                     "enviados_wa": 0
@@ -2605,6 +3008,8 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                     "tiene_perfil": False,
                     "es_mallas": False,
                     "owner_email": email_q,
+                    "modelo_negocio": "DISTRIBUIDOR_B2B",
+                    "diagnostico_ia": {},
                     "nicho": None,
                     "total_prospectos": 0,
                     "enviados_wa": 0
@@ -2617,6 +3022,8 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 "es_mallas": (email_q == OWNER_EMAIL_MALLAS),
                 "owner_email": email_q,
                 "cliente_id": nicho_u["cliente_id"],
+                "modelo_negocio": nicho_u.get("modelo_negocio", "DISTRIBUIDOR_B2B"),
+                "diagnostico_ia": nicho_u.get("diagnostico_ia", {}),
                 "nicho": nicho_u,
                 "total_prospectos": nicho_u.get("total_prospectos", 0),
                 "enviados_wa": nicho_u.get("enviados_wa", 0)
@@ -2751,6 +3158,14 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
         data = json.loads(raw)
+
+        if self.path == "/api/diagnosticar-modelo":
+            desc = str(data.get("descripcion_idea") or data.get("productDesc") or data.get("idea") or "").strip()
+            cat = str(data.get("nicho_categoria") or data.get("niche") or "").strip()
+            obj = str(data.get("objetivo") or data.get("objective") or "").strip()
+            res_diag = diagnosticar_modelo_negocio_ia(desc, cat, obj)
+            self._send_json(res_diag, status=200)
+            return
 
         if self.path == "/api/mi-nicho":
             owner_email = str(data.get("owner_email") or data.get("email") or "").strip().lower()
@@ -3139,10 +3554,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
         if self.path == "/api/obtener_candidato_envio_50":
             forzar = bool(data.get("forzar", False))
             cid_req = motor_m1.normalizar_cliente_id(data.get("cliente_id") or "mallas_tlaxcalli")
-            if cid_req == "mallas_tlaxcalli" and not ESTADO_MOTOR_50_DIARIOS["activo"] and not forzar:
-                self._send_json({"ok": False, "motivo": "MOTOR_50_EN_PAUSA", "id_cliente_agencia": cid_req})
-                return
-            cand = obtener_candidato_envio_50(cliente_id=cid_req)
+            cand = obtener_candidato_envio_50(cliente_id=cid_req, forzar=forzar)
             self._send_json(cand)
             return
 
@@ -3349,6 +3761,13 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 self._send_json({
                     "ok": False,
                     "error": "Primero define tu producto o idea en '01 • IDEA' para activar la búsqueda de prospectos de tu negocio."
+                }, status=400)
+                return
+
+            if not es_tlaxcalli and normalizar_modelo_negocio(nicho.get("modelo_negocio", "DISTRIBUIDOR_B2B")) == "EMPRENDEDOR_B2C":
+                self._send_json({
+                    "ok": False,
+                    "error": "Modo Particular B2C activo: la prospección en frío está desactivada para proteger tu línea contra bloqueos. Atrae clientes con tus creativos de 03 • ESTUDIO y Andrea los atenderá 24/7."
                 }, status=400)
                 return
 
@@ -4364,7 +4783,10 @@ def _notificar_dueno_wa(mensaje: str, cliente_id: str = "mallas_tlaxcalli") -> b
 
 def _ejecutar_ciclo_cazador_24_7(ciclo_idx: int) -> None:
     nichos_todos = obtener_lista_nichos_con_metricas()
-    nichos_activos = [n for n in nichos_todos if n.get("activo")] or [obtener_nicho_bd("mallas_tlaxcalli")]
+    nichos_activos = [
+        n for n in nichos_todos
+        if n.get("activo") and normalizar_modelo_negocio(n.get("modelo_negocio", "DISTRIBUIDOR_B2B")) in ("DISTRIBUIDOR_B2B", "SERVICIOS_B2B")
+    ] or [obtener_nicho_bd("mallas_tlaxcalli")]
     nicho_actual = nichos_activos[ciclo_idx % len(nichos_activos)]
     cid = motor_m1.normalizar_cliente_id(nicho_actual.get("cliente_id", "mallas_tlaxcalli"))
     nombre_negocio = nicho_actual.get("nombre_negocio") or "Mallas Tlaxcalli"

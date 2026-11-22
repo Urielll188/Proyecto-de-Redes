@@ -12,6 +12,24 @@ export interface ProspectoVps {
   estatus_contacto_wa?: string
 }
 
+export type ModeloNegocioType = 'DISTRIBUIDOR_B2B' | 'SERVICIOS_B2B' | 'EMPRENDEDOR_B2C'
+
+export interface DiagnosticoModeloIA {
+  ok?: boolean
+  origen_diagnostico?: string
+  modelo_recomendado: ModeloNegocioType
+  scores: {
+    distribuidor: number
+    servicios: number
+    particular: number
+  }
+  titulo_veredicto: string
+  explicacion_estrategica: string
+  clientes_objetivo: string
+  keywords_sugeridas: string[]
+  enfoque_andrea: string
+}
+
 export interface NichoVps {
   cliente_id: string
   nombre_negocio: string
@@ -25,6 +43,8 @@ export interface NichoVps {
   activo: boolean
   total_prospectos: number
   enviados_wa: number
+  modelo_negocio?: ModeloNegocioType
+  diagnostico_ia?: DiagnosticoModeloIA | Record<string, unknown>
 }
 
 export interface PedidoVps {

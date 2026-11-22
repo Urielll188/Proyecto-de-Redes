@@ -42,7 +42,7 @@ const MUNICIPIOS = [
 const PAGE_SIZE = 10;
 
 export default function CazadorPage() {
-  const { ownerEmail, isMallasOwner, tienePerfil, nicho, loadingNicho, refreshNicho } = useNicho();
+  const { ownerEmail, isMallasOwner, tienePerfil, nicho, modeloNegocio, loadingNicho, refreshNicho } = useNicho();
 
   const [prospectos, setProspectos] = useState<ProspectoVps[]>([]);
   const [bitacoraTotal, setBitacoraTotal] = useState<number>(0);
@@ -299,6 +299,9 @@ export default function CazadorPage() {
         municipio !== 'TODOS' ? municipio : 'CDMX'
       }`;
 
+  const isB2C = !isMallasOwner && modeloNegocio === 'EMPRENDEDOR_B2C';
+  const isServiciosB2B = !isMallasOwner && modeloNegocio === 'SERVICIOS_B2B';
+
   return (
     <div className="space-y-6">
       {/* Barra Superior Informativa del Negocio del Usuario Logueado */}
@@ -319,7 +322,19 @@ export default function CazadorPage() {
             </span>
           )}
 
-          {nicho && (
+          {isServiciosB2B && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 text-xs font-semibold">
+              🛠️ Prospección Corporativa / Servicios B2B
+            </span>
+          )}
+
+          {isB2C && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-semibold">
+              🛡️ Modo Particular B2C (Inbound Seguro)
+            </span>
+          )}
+
+          {nicho && !isB2C && (
             <button
               type="button"
               onClick={handleToggleNichoWorker}
@@ -363,58 +378,104 @@ export default function CazadorPage() {
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-zinc-800 pb-5">
-        <div>
-          <div className="flex items-center gap-2 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-1">
-            <Crosshair className="w-4 h-4" />
-            Módulo 1 • Prospección Multi-Fuente ({nombreNegocioActivo})
+      {/* Panel Especial si el negocio es SERVICIOS_B2B */}
+      {isServiciosB2B && (
+        <div className="p-4 rounded-xl bg-cyan-950/30 border border-cyan-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+              🏢 Prospección Corporativa / Servicios Técnicos B2B Activa
+            </div>
+            <p className="text-xs text-zinc-300">
+              Clientes Objetivo sugeridos por IA:{' '}
+              <strong className="text-white">{nicho?.giro_objetivo}</strong> • Palabras clave de búsqueda:{' '}
+              <code className="text-cyan-300">{nicho?.keywords_busqueda}</code>
+            </p>
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">
-            Cazador INEGI / Apify Maps / Facebook
-          </h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            Giro activo: <span className="text-zinc-200">{nicho?.giro_objetivo}</span> • Oferta:{' '}
-            <span className="text-amber-300/90">{nicho?.oferta_gancho}</span>
-          </p>
         </div>
+      )}
 
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={cargarDatos}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 text-sm transition-colors disabled:opacity-50"
-          >
-            <RefreshCw
-              className={`w-4 h-4 ${loading || cazaAsyncActiva ? 'animate-spin text-blue-400' : ''}`}
-            />
-            {cazaAsyncActiva ? 'Auto-refrescando...' : 'Actualizar'}
-          </button>
-          <button
-            onClick={() => handleCazarLote('INEGI')}
-            disabled={cazando !== null}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors disabled:opacity-50"
-          >
-            <Zap className="w-4 h-4" />
-            {cazando === 'INEGI' ? 'Cazando...' : '+10 INEGI'}
-          </button>
-          <button
-            onClick={() => handleCazarLote('APIFY')}
-            disabled={cazando !== null}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors disabled:opacity-50"
-          >
-            <Map className="w-4 h-4" />
-            {cazando === 'APIFY' ? 'Cazando...' : '+10 Apify Maps'}
-          </button>
-          <button
-            onClick={() => setMostrarModalFb(true)}
-            disabled={cazando !== null}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors disabled:opacity-50 shadow-sm"
-          >
-            <Share2 className="w-4 h-4" />
-            +15 Facebook Grupos
-          </button>
+      {/* Panel Especial si el negocio es EMPRENDEDOR_B2C (Oculta botones de scraping en frío) */}
+      {isB2C ? (
+        <div className="p-8 rounded-2xl bg-zinc-900/80 border border-amber-500/30 max-w-3xl mx-auto space-y-5 text-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-bold uppercase tracking-wider">
+            🛡️ Modo Particular B2C (Inbound Seguro • Cero Bloqueos en WhatsApp)
+          </div>
+          <h2 className="text-xl font-bold text-white">
+            Tu negocio ({nombreNegocioActivo}) vende directo al consumidor final
+          </h2>
+          <p className="text-sm text-zinc-300 leading-relaxed max-w-2xl mx-auto">
+            En ventas por catálogo, comida o comercio local B2C, enviar mensajes masivos en frío a personas desconocidas genera reportes y bloqueos de tu número de WhatsApp. Por eso <strong>BLITZR protege tu línea desactivando el scraping en frío</strong> y manteniendo a <strong>Andrea IA activa 24/7</strong> para cerrar a cada cliente que te escriba por tus anuncios.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold text-xs hover:opacity-95 transition"
+            >
+              <Sparkles className="w-4 h-4" />
+              Ir a 03 • ESTUDIO para crear anuncios Inbound
+            </Link>
+            <Link
+              href="/dashboard/ventas-ia"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-700 font-semibold text-xs transition"
+            >
+              Probar a Andrea IA 24/7 →
+            </Link>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-zinc-800 pb-5">
+          <div>
+            <div className="flex items-center gap-2 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-1">
+              <Crosshair className="w-4 h-4" />
+              Módulo 1 • Prospección Multi-Fuente ({nombreNegocioActivo})
+            </div>
+            <h1 className="text-2xl font-bold text-white tracking-tight">
+              Cazador INEGI / Apify Maps / Facebook
+            </h1>
+            <p className="text-sm text-zinc-400 mt-1">
+              Giro activo: <span className="text-zinc-200">{nicho?.giro_objetivo}</span> • Oferta:{' '}
+              <span className="text-amber-300/90">{nicho?.oferta_gancho}</span>
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={cargarDatos}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 text-sm transition-colors disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`w-4 h-4 ${loading || cazaAsyncActiva ? 'animate-spin text-blue-400' : ''}`}
+              />
+              {cazaAsyncActiva ? 'Auto-refrescando...' : 'Actualizar'}
+            </button>
+            <button
+              onClick={() => handleCazarLote('INEGI')}
+              disabled={cazando !== null}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              <Zap className="w-4 h-4" />
+              {cazando === 'INEGI' ? 'Cazando...' : '+10 INEGI'}
+            </button>
+            <button
+              onClick={() => handleCazarLote('APIFY')}
+              disabled={cazando !== null}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              <Map className="w-4 h-4" />
+              {cazando === 'APIFY' ? 'Cazando...' : '+10 Apify Maps'}
+            </button>
+            <button
+              onClick={() => setMostrarModalFb(true)}
+              disabled={cazando !== null}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors disabled:opacity-50 shadow-sm"
+            >
+              <Share2 className="w-4 h-4" />
+              +15 Facebook Grupos
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Modal / Selector Híbrido de Facebook */}
       {mostrarModalFb && (

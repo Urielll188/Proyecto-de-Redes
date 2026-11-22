@@ -12,11 +12,12 @@ import { QuickShareModal } from '@/components/share/QuickShareModal'
 import { StudioCanvasPreview, type StudioStyleTheme } from './visual/StudioCanvasPreview'
 import { refineCopyAction } from '@/app/actions/refine-copies'
 import { toast } from 'sonner'
-import { Sparkles, Send, Copy, Palette, Check } from 'lucide-react'
+import { Sparkles, Send, Copy, Palette, Check, Building2, Wrench, ShoppingBag, ShieldCheck } from 'lucide-react'
 import { InstagramMockup } from './mockups/InstagramMockup'
 import { createClient } from '@/utils/supabase/client'
 import { toBlob } from 'html-to-image'
 import { useNicho } from '@/context/NichoContext'
+import { DiagnosticoModeloIA, ModeloNegocioType } from '@/lib/vps/types'
 
 const NICHE_OPTIONS = [
   'Producto Físico',
@@ -93,11 +94,26 @@ interface EmpresaStepperProps {
 
 export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   const router = useRouter()
-  const { isMallasOwner, syncNichoFromIdea } = useNicho()
+  const { isMallasOwner, nicho, modeloNegocio, syncNichoFromIdea, diagnosticarModelo } = useNicho()
   const hasInitialCampaign = Boolean(initialData?.copies || initialData?.strategyData)
 
   // Paso 1: Ingesta | Paso 2: Centro de Mando | Paso 3: Generación Visual de Estudio
   const [step, setStep] = useState<1 | 2 | 3>(hasInitialCampaign ? 2 : 1)
+
+  // Diagnóstico Inteligente BLITZR (3 Modelos: DISTRIBUIDOR_B2B | SERVICIOS_B2B | EMPRENDEDOR_B2C)
+  const [diagnosticoIA, setDiagnosticoIA] = useState<DiagnosticoModeloIA | null>(null)
+  const [selectedModelo, setSelectedModelo] = useState<ModeloNegocioType>('DISTRIBUIDOR_B2B')
+  const [showDiagnosticModal, setShowDiagnosticModal] = useState<boolean>(false)
+  const [pendingMode, setPendingMode] = useState<'fast' | 'strategic'>('strategic')
+
+  useEffect(() => {
+    if (modeloNegocio) {
+      setSelectedModelo(modeloNegocio)
+    }
+    if (nicho?.diagnostico_ia && typeof nicho.diagnostico_ia === 'object' && 'modelo_recomendado' in nicho.diagnostico_ia) {
+      setDiagnosticoIA(nicho.diagnostico_ia as DiagnosticoModeloIA)
+    }
+  }, [modeloNegocio, nicho])
 
   // Entradas del Paso 1
   const [imageUrl, setImageUrl] = useState<string | null>(initialData?.imageUrl || null)
@@ -245,17 +261,115 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     facebookCopy: editableIgCopy,
   }
 
-  // 1. Generador Desacoplado con Gemini (/api/generate/cmo)
+  // Diagnóstico heurístico local de respaldo por si la red tarda
+  const buildLocalFallbackDiagnostic = (desc: string, cat: string, obj: string): DiagnosticoModeloIA => {
+    const low = `${desc} ${cat} ${obj}`.toLowerCase()
+    const isB2C = /(tupper|cat[aá]logo|comida|postre|ropa|cosm[eé]tico|maquillaje|perfume|colonia|vecinos|venta directa|avon|mary kay|shein|menudeo)/.test(low)
+    const isServ = /(instalaci[oó]n|redes|cableado|wifi|cctv|c[aá]maras|mantenimiento|servicio|reparaci[oó]n|consultor[ií]a|soporte|software|agencia)/.test(low)
+
+    if (isB2C && !isServ) {
+      return {
+        ok: true,
+        modelo_recomendado: 'EMPRENDEDOR_B2C',
+        scores: { distribuidor: 35, servicios: 25, particular: 94 },
+        titulo_veredicto: 'Modelo Recomendado: Particular / Emprendedor B2C (Inbound Seguro)',
+        explicacion_estrategica:
+          'Tu producto se vende al consumidor final (B2C). Para evitar bloqueos en WhatsApp por escribir en frío a desconocidos, BLITZR activa el Modo Inbound 24/7: atraes clientes con creativos de 03 • ESTUDIO y Andrea cierra cada venta cuando te escriben.',
+        clientes_objetivo: 'Consumidores finales, vecinos de tu zona, grupos locales y seguidores de redes sociales',
+        keywords_sugeridas: ['catálogo digital', 'promoción local', 'pedidos a domicilio', 'ofertas de temporada', 'entrega inmediata'],
+        enfoque_andrea: 'Atención inbound de catálogo, envío de promociones y cierre rápido de pedido a domicilio',
+      }
+    }
+    if (isServ) {
+      return {
+        ok: true,
+        modelo_recomendado: 'SERVICIOS_B2B',
+        scores: { distribuidor: 58, servicios: 96, particular: 30 },
+        titulo_veredicto: 'Modelo Recomendado: Servicios Técnicos / Instalaciones B2B',
+        explicacion_estrategica:
+          'Ofreces servicios profesionales o instalaciones técnicas. El mayor retorno está en prospectar empresas, oficinas, colegios, clínicas y comercios (B2B) con el Cazador INEGI/Maps, donde Andrea agenda levantamientos técnicos o visitas.',
+        clientes_objetivo: 'Oficinas corporativas, bodegas industriales, colegios privados, clínicas, hoteles y comercios',
+        keywords_sugeridas: ['oficinas corporativas', 'bodegas industriales', 'colegios privados', 'clinicas y consultorios', 'hoteles', 'plazas comerciales'],
+        enfoque_andrea: 'Diagnóstico consultivo de necesidades técnicas, cotización de proyecto y agenda de visita en sitio',
+      }
+    }
+    return {
+      ok: true,
+      modelo_recomendado: 'DISTRIBUIDOR_B2B',
+      scores: { distribuidor: 95, servicios: 52, particular: 32 },
+      titulo_veredicto: 'Modelo Recomendado: Distribuidor / Proveedor Mayorista B2B',
+      explicacion_estrategica:
+        'Tu producto tiene alto potencial como proveedor directo de negocios establecidos (B2B). El Cazador 24/7 localiza comercios de tu giro en INEGI/Google Maps y Andrea cierra paquetes o pedidos por volumen.',
+      clientes_objetivo: 'Negocios establecidos, talleres, tiendas minoristas, restaurantes o distribuidores regionales',
+      keywords_sugeridas: ['comercios minoristas', 'distribuidores locales', 'talleres y negocios', 'tiendas del giro', 'proveedores regionales'],
+      enfoque_andrea: 'Cotización de paquete comercial o mayoreo, envío de catálogo y cierre de pedido con entrega programada',
+    }
+  }
+
+  // Paso 1A: Al presionar "Dar inicio a mi idea", diagnosticar modelo de negocio y mostrar tarjeta de veredicto
   const handleGenerate = async (mode: 'fast' | 'strategic' = 'strategic') => {
     if (!productDesc.trim()) {
-      toast.error('Por favor describe brevemente qué vas a vender')
+      toast.error('Por favor describe brevemente qué vas a vender o qué servicio ofreces')
       return
     }
 
-    // 1. Limpieza de estado previo para evitar mezcla de estados
+    setPendingMode(mode)
+    setGenerationMode(mode)
+    setIsGenerating(true)
+    const toastId = toast.loading('🧠 Analizando tu idea y diagnosticando el modelo comercial ideal...')
+
+    try {
+      const diag =
+        (await diagnosticarModelo({
+          descripcion_idea: productDesc.trim(),
+          nicho_categoria: niche,
+          objetivo: goal,
+        })) || buildLocalFallbackDiagnostic(productDesc.trim(), niche, goal)
+
+      setDiagnosticoIA(diag)
+      setSelectedModelo(diag.modelo_recomendado)
+      setShowDiagnosticModal(true)
+      toast.success('¡Diagnóstico Inteligente BLITZR listo! Revisa y confirma tu modelo operativo.', {
+        id: toastId,
+      })
+    } catch {
+      const fallback = buildLocalFallbackDiagnostic(productDesc.trim(), niche, goal)
+      setDiagnosticoIA(fallback)
+      setSelectedModelo(fallback.modelo_recomendado)
+      setShowDiagnosticModal(true)
+      toast.success('¡Diagnóstico Inteligente BLITZR listo!', { id: toastId })
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  // Paso 1B: Confirmar el modelo elegido en la tarjeta y ejecutar la generación completa + guardado de perfil
+  const executeCampaignGeneration = async (
+    mode: 'fast' | 'strategic' = pendingMode,
+    chosenModel: ModeloNegocioType = selectedModelo,
+    diagData: DiagnosticoModeloIA | null = diagnosticoIA
+  ) => {
+    if (!productDesc.trim()) return
+
+    setShowDiagnosticModal(false)
     setIsGenerating(true)
     setCmoAnalysis(null)
     setGenerationMode(mode)
+
+    // Guardar de inmediato el modelo y perfil en SQLite para usuarios nuevos
+    if (!isMallasOwner) {
+      await syncNichoFromIdea({
+        nombre_negocio: productDesc.trim().split('.')[0].split('\n')[0].slice(0, 48) || 'Mi Negocio',
+        giro_objetivo: diagData?.clientes_objetivo || niche,
+        niche,
+        productDesc: productDesc.trim(),
+        oferta_gancho: productDesc.trim().slice(0, 180),
+        keywords_busqueda: diagData?.keywords_sugeridas?.join(', ') || '',
+        modelo_negocio: chosenModel,
+        diagnostico_ia: diagData || {},
+        nombre_agente: 'Andrea',
+      })
+    }
 
     const toastId = toast.loading(
       mode === 'fast'
@@ -345,7 +459,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
 
       // Sincronizar automáticamente el perfil del negocio con perfiles_nicho en SQLite para usuarios nuevos
       if (!isMallasOwner) {
-        const avatarText = data.cmoAnalysis?.avatar || data.estrategia?.avatar_cliente || ''
+        const avatarText = diagData?.clientes_objetivo || data.cmoAnalysis?.avatar || data.estrategia?.avatar_cliente || ''
         const offerText =
           data.cmoAnalysis?.irresistibleOffer ||
           data.estrategia?.oferta_irresistible ||
@@ -353,9 +467,11 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
           productDesc.trim().slice(0, 180)
         const angleText = data.cmoAnalysis?.angle || data.estrategia?.angulo_gancho || ''
         const catalogoPrompt = [
-          `Producto / Idea: ${productDesc.trim()}`,
+          `Modelo Operativo: ${chosenModel}`,
+          `Producto / Servicio: ${productDesc.trim()}`,
           `Nicho: ${niche} | Objetivo: ${goal}`,
-          avatarText ? `Cliente Objetivo: ${avatarText}` : '',
+          avatarText ? `Clientes Objetivo: ${avatarText}` : '',
+          diagData?.enfoque_andrea ? `Enfoque de Cierre Andrea: ${diagData.enfoque_andrea}` : '',
           offerText ? `Oferta Gancho: ${offerText}` : '',
           angleText ? `Ángulo de Venta: ${angleText}` : '',
           waText ? `Guion WhatsApp: ${waText}` : '',
@@ -367,11 +483,14 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
 
         syncNichoFromIdea({
           nombre_negocio: headlineText,
-          giro_objetivo: avatarText ? `${niche} — ${avatarText.slice(0, 110)}` : niche,
+          giro_objetivo: avatarText ? `${avatarText.slice(0, 140)}` : niche,
           niche,
           productDesc: productDesc.trim(),
           oferta_gancho: offerText,
+          keywords_busqueda: diagData?.keywords_sugeridas?.join(', ') || '',
           catalogo_prompt: catalogoPrompt,
+          modelo_negocio: chosenModel,
+          diagnostico_ia: diagData || {},
           nombre_agente: 'Andrea',
         })
       }
@@ -588,16 +707,22 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   // Transición asistida a Paso 3 (dispara rembg en segundo plano si es imagen y sincroniza estrategia editada)
   const goToStep3 = () => {
     if (!isMallasOwner && productDesc.trim()) {
-      const avatarText = cmoAnalysis?.avatar || campaignData?.estrategia?.avatar_cliente || ''
+      const avatarText =
+        diagnosticoIA?.clientes_objetivo ||
+        cmoAnalysis?.avatar ||
+        campaignData?.estrategia?.avatar_cliente ||
+        ''
       const offerText =
         cmoAnalysis?.irresistibleOffer ||
         campaignData?.estrategia?.oferta_irresistible ||
         editableWaText ||
         productDesc.trim().slice(0, 180)
       const catalogoPrompt = [
+        `Modelo Operativo: ${selectedModelo}`,
         `Producto / Idea: ${productDesc.trim()}`,
         `Nicho: ${niche} | Objetivo: ${goal}`,
         avatarText ? `Cliente Objetivo: ${avatarText}` : '',
+        diagnosticoIA?.enfoque_andrea ? `Enfoque Andrea: ${diagnosticoIA.enfoque_andrea}` : '',
         offerText ? `Oferta Gancho: ${offerText}` : '',
         editableWaText ? `Guion WhatsApp: ${editableWaText}` : '',
         editableIgCopy ? `Copy Comercial: ${editableIgCopy}` : '',
@@ -608,11 +733,14 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
 
       syncNichoFromIdea({
         nombre_negocio: headline || productDesc.trim().slice(0, 40),
-        giro_objetivo: avatarText ? `${niche} — ${avatarText.slice(0, 110)}` : niche,
+        giro_objetivo: avatarText ? `${avatarText.slice(0, 140)}` : niche,
         niche,
         productDesc: productDesc.trim(),
         oferta_gancho: offerText,
+        keywords_busqueda: diagnosticoIA?.keywords_sugeridas?.join(', ') || '',
         catalogo_prompt: catalogoPrompt,
+        modelo_negocio: selectedModelo,
+        diagnostico_ia: diagnosticoIA || {},
         nombre_agente: 'Andrea',
       })
     }
@@ -842,6 +970,180 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
             onGenerate={handleGenerate}
             onResetCutout={() => setCutoutProductUrl(null)}
           />
+
+          {/* TARJETA / MODAL DE DIAGNÓSTICO INTELIGENTE BLITZR (3 MODELOS) */}
+          {showDiagnosticModal && diagnosticoIA && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 overflow-y-auto select-auto">
+              <div className="w-full max-w-3xl bg-zinc-950/95 border border-cyan-500/30 rounded-3xl p-6 md:p-7 shadow-[0_0_50px_rgba(6,182,212,0.18)] space-y-5 my-auto">
+                {/* Header */}
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-800/80 pb-4">
+                  <div className="space-y-1">
+                    <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-[11px] font-mono uppercase tracking-wider font-semibold">
+                      <Sparkles className="w-3.5 h-3.5" /> Diagnóstico Inteligente BLITZR
+                    </div>
+                    <h2 className="text-lg md:text-xl font-bold text-white">
+                      {diagnosticoIA.titulo_veredicto}
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowDiagnosticModal(false)}
+                    className="text-xs text-zinc-400 hover:text-white px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800"
+                  >
+                    Editar idea
+                  </button>
+                </div>
+
+                {/* 3 Puntajes Comparativos */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    {
+                      id: 'DISTRIBUIDOR_B2B' as ModeloNegocioType,
+                      label: 'Distribuidor / Mayoreo B2B',
+                      score: diagnosticoIA.scores?.distribuidor ?? 50,
+                      icon: Building2,
+                      color: 'text-emerald-400',
+                      bar: 'bg-emerald-500',
+                    },
+                    {
+                      id: 'SERVICIOS_B2B' as ModeloNegocioType,
+                      label: 'Servicios / Instalaciones B2B',
+                      score: diagnosticoIA.scores?.servicios ?? 50,
+                      icon: Wrench,
+                      color: 'text-cyan-400',
+                      bar: 'bg-cyan-500',
+                    },
+                    {
+                      id: 'EMPRENDEDOR_B2C' as ModeloNegocioType,
+                      label: 'Particular / Catálogo B2C',
+                      score: diagnosticoIA.scores?.particular ?? 50,
+                      icon: ShoppingBag,
+                      color: 'text-amber-400',
+                      bar: 'bg-amber-500',
+                    },
+                  ].map((item) => {
+                    const Icon = item.icon
+                    const isRecommended = diagnosticoIA.modelo_recomendado === item.id
+                    return (
+                      <div
+                        key={item.id}
+                        className={`p-3.5 rounded-2xl border ${
+                          isRecommended
+                            ? 'bg-zinc-900/90 border-cyan-500/40'
+                            : 'bg-zinc-900/40 border-zinc-800/80'
+                        } space-y-2`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-200">
+                            <Icon className={`w-4 h-4 ${item.color}`} />
+                            {item.label}
+                          </span>
+                          <span className={`text-sm font-black font-mono ${item.color}`}>
+                            {item.score}%
+                          </span>
+                        </div>
+                        <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full ${item.bar} rounded-full transition-all duration-500`}
+                            style={{ width: `${Math.min(100, Math.max(8, item.score))}%` }}
+                          />
+                        </div>
+                        {isRecommended && (
+                          <span className="inline-block text-[10px] font-bold uppercase tracking-wider text-cyan-300">
+                            ★ Recomendado por IA
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Explicación Estratégica + Clientes Objetivo */}
+                <div className="p-4 rounded-2xl bg-zinc-900/70 border border-zinc-800/90 space-y-3 text-xs">
+                  <p className="text-zinc-200 leading-relaxed">
+                    {diagnosticoIA.explicacion_estrategica}
+                  </p>
+                  <div className="grid sm:grid-cols-2 gap-3 pt-2 border-t border-zinc-800/80">
+                    <div>
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 block mb-0.5">
+                        Clientes Objetivo Sugeridos
+                      </span>
+                      <p className="text-zinc-200 font-medium">
+                        {diagnosticoIA.clientes_objetivo}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-400 block mb-0.5">
+                        Estrategia de Cierre Andrea IA
+                      </span>
+                      <p className="text-zinc-200 font-medium">
+                        {diagnosticoIA.enfoque_andrea}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Selector Manual de los 3 Modelos Operativos (Pre-marcado con el recomendado) */}
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-zinc-300 block">
+                    Selecciona el modelo operativo con el que deseas configurar tu plataforma (puedes cambiarlo manualmente):
+                  </label>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {[
+                      {
+                        id: 'DISTRIBUIDOR_B2B' as ModeloNegocioType,
+                        title: '1. Distribuidor B2B',
+                        desc: 'Cazador 24/7 en INEGI/Maps + Primer contacto en frío + Andrea cierra paquetes/mayoreo.',
+                      },
+                      {
+                        id: 'SERVICIOS_B2B' as ModeloNegocioType,
+                        title: '2. Servicios / Instalaciones B2B',
+                        desc: 'Prospección corporativa de empresas/oficinas + Andrea agenda visitas técnicas y cotizaciones.',
+                      },
+                      {
+                        id: 'EMPRENDEDOR_B2C' as ModeloNegocioType,
+                        title: '3. Particular B2C (Inbound)',
+                        desc: 'Protección Anti-Baneo: Cero spam en frío. Atraes clientes con 03 • ESTUDIO y Andrea responde 24/7.',
+                      },
+                    ].map((opt) => {
+                      const active = selectedModelo === opt.id
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setSelectedModelo(opt.id)}
+                          className={`text-left p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                            active
+                              ? 'bg-cyan-500/15 border-cyan-400 text-white shadow-[0_0_20px_rgba(34,211,238,0.15)]'
+                              : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-bold text-white">{opt.title}</span>
+                            {active && <Check className="w-4 h-4 text-cyan-400 shrink-0" />}
+                          </div>
+                          <p className="text-[11px] leading-snug text-zinc-300/90">{opt.desc}</p>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Botón de Confirmación */}
+                <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      executeCampaignGeneration(pendingMode, selectedModelo, diagnosticoIA)
+                    }
+                    className="w-full sm:w-auto px-6 py-3 rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 font-bold text-xs tracking-wide shadow-[0_0_25px_rgba(34,211,238,0.35)] transition cursor-pointer"
+                  >
+                    Confirmar Modelo ({selectedModelo.replace('_', ' ')}) y Generar Estrategia →
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
 

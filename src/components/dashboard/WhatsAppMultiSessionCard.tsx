@@ -40,7 +40,7 @@ interface WaStatusPayload {
 }
 
 export function WhatsAppMultiSessionCard() {
-  const { ownerEmail, isMallasOwner, tienePerfil, nicho, loadingNicho } = useNicho();
+  const { ownerEmail, isMallasOwner, tienePerfil, nicho, modeloNegocio, loadingNicho } = useNicho();
 
   const [status, setStatus] = useState<WaStatusPayload | null>(null);
   const [loadingStatus, setLoadingStatus] = useState<boolean>(true);
@@ -272,6 +272,13 @@ export function WhatsAppMultiSessionCard() {
   const codigo8 = status?.pairingCode || status?.codigo_8_digitos || '';
   const qrDataUrl = status?.qr_data_url || '';
   const motorPausado = Boolean(status?.motorPausadoLocal);
+  const isB2C = !isMallasOwner && modeloNegocio === 'EMPRENDEDOR_B2C';
+  const isServiciosB2B = !isMallasOwner && modeloNegocio === 'SERVICIOS_B2B';
+  const modoLineaLabel = isB2C
+    ? 'Particular B2C: Solo Respuestas Inbound 24/7'
+    : isServiciosB2B
+    ? 'Servicios B2B: Prospección Corporativa + Andrea'
+    : 'Distribuidor B2B: Cazador + Andrea 24/7';
 
   return (
     <div className="bg-zinc-900/90 border border-emerald-500/30 rounded-2xl p-6 shadow-sm space-y-5">
@@ -282,7 +289,7 @@ export function WhatsAppMultiSessionCard() {
             <Smartphone className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h3 className="font-bold text-white text-base">
                 Línea de WhatsApp — {nicho?.nombre_negocio || 'Mi Negocio'}
               </h3>
@@ -291,6 +298,17 @@ export function WhatsAppMultiSessionCard() {
                   <ShieldCheck className="w-3 h-3" /> Sesión Principal Protegida
                 </span>
               )}
+              <span
+                className={`inline-flex items-center gap-1 text-[10px] px-2.5 py-0.5 rounded-full font-semibold border ${
+                  isB2C
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                    : isServiciosB2B
+                    ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
+                    : 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                }`}
+              >
+                {modoLineaLabel}
+              </span>
             </div>
             <p className="text-xs text-zinc-400">
               Tenant ID: <code className="text-zinc-300">{clienteId}</code> • Asesora IA:{' '}
@@ -351,29 +369,35 @@ export function WhatsAppMultiSessionCard() {
         <div className="p-3.5 rounded-xl bg-zinc-950/70 border border-zinc-800/80 flex items-center justify-between gap-2">
           <div>
             <p className="text-[11px] text-zinc-400 uppercase tracking-wider font-semibold">
-              Primer Contacto en Frío (06:00–22:59)
+              {isB2C ? 'Modo Operativo B2C (Protección Anti-Spam)' : 'Primer Contacto en Frío (06:00–22:59)'}
             </p>
             <p className="text-xs font-semibold mt-0.5 text-zinc-200">
-              {motorPausado ? (
+              {isB2C ? (
+                <span className="text-amber-300">
+                  🛡️ Solo Respuestas Inbound 24/7 (Cero envíos en frío)
+                </span>
+              ) : motorPausado ? (
                 <span className="text-amber-400">⏸️ En Pausa (Andrea 24/7 sigue activa)</span>
               ) : (
                 <span className="text-emerald-400">▶️ Activo (Goteo Anti-Baneo + Andrea 24/7)</span>
               )}
             </p>
           </div>
-          <button
-            type="button"
-            disabled={togglingMotor}
-            onClick={handleToggleMotorFrio}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 ${
-              motorPausado
-                ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30'
-                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700'
-            }`}
-          >
-            {motorPausado ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-            {motorPausado ? 'Reanudar Frío' : 'Pausar Frío'}
-          </button>
+          {!isB2C && (
+            <button
+              type="button"
+              disabled={togglingMotor}
+              onClick={handleToggleMotorFrio}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 ${
+                motorPausado
+                  ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30'
+                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700'
+              }`}
+            >
+              {motorPausado ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+              {motorPausado ? 'Reanudar Frío' : 'Pausar Frío'}
+            </button>
+          )}
         </div>
       </div>
 
