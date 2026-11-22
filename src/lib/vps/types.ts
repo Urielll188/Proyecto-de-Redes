@@ -28,6 +28,9 @@ export interface DiagnosticoModeloIA {
   clientes_objetivo: string
   keywords_sugeridas: string[]
   enfoque_andrea: string
+  cliente_objetivo_tipo?: string
+  modalidad_entrega?: string
+  volumen_compra?: string
 }
 
 export interface NichoVps {

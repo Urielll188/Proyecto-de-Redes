@@ -442,15 +442,29 @@ def normalizar_modelo_negocio(val: str) -> str:
     return "DISTRIBUIDOR_B2B"
 
 
-def diagnosticar_modelo_heuristico(descripcion_idea: str, nicho_categoria: str = "", objetivo: str = "") -> dict:
-    texto_full = motor_m1.quitar_acentos(f"{descripcion_idea} {nicho_categoria} {objetivo}").lower()
+def diagnosticar_modelo_heuristico(
+    descripcion_idea: str,
+    nicho_categoria: str = "",
+    objetivo: str = "",
+    cliente_objetivo_tipo: str = "",
+    modalidad_entrega: str = "",
+    volumen_compra: str = ""
+) -> dict:
+    idea_raw = str(descripcion_idea or "").strip()
+    giro_limpio = re.sub(r"\s+", " ", idea_raw)[:70] or "tu producto o servicio"
+    texto_full = motor_m1.quitar_acentos(f"{idea_raw} {nicho_categoria} {objetivo}").lower()
+
+    cli_tipo = str(cliente_objetivo_tipo or "").strip().lower()
+    mod_entrega = str(modalidad_entrega or "").strip().lower()
+    vol_compra = str(volumen_compra or "").strip().lower()
 
     kws_b2c = [
         "tupper", "tupperware", "catalogo", "comida", "postre", "postres", "ropa",
         "cosmetico", "cosmeticos", "maquillaje", "perfume", "perfumes", "venta directa",
         "colonia", "vecinos", "particular", "consumidor final", "avon", "mary kay",
         "shein", "zapatos", "tenis", "joyeria", "bisuteria", "pastel", "pasteles",
-        "antojitos", "snacks", "bazar", "tienda de ropa", "menudeo"
+        "antojitos", "snacks", "bazar", "tienda de ropa", "menudeo", "impresion 3d",
+        "impresiones 3d", "3d", "regalo", "regalos", "personaliz", "figuras"
     ]
     kws_servicios = [
         "instalacion", "instalaciones", "redes", "cableado", "estructurado", "wifi",
@@ -464,60 +478,107 @@ def diagnosticar_modelo_heuristico(descripcion_idea: str, nicho_categoria: str =
     hits_b2c = sum(1 for k in kws_b2c if k in texto_full)
     hits_serv = sum(1 for k in kws_servicios if k in texto_full)
 
-    if hits_b2c > 0 and hits_b2c >= hits_serv:
+    # 1. Regla Determinista B2C:
+    # Si cliente_objetivo_tipo == "consumidor_final" y (volumen_compra == "menudeo" or modalidad_entrega in ("catalogo_estandar", "personalizado_bajo_pedido"))
+    # O si el texto tiene indicadores claros B2C y no es un servicio exclusivo B2B
+    es_b2c_determinado = (
+        cli_tipo == "consumidor_final" and (
+            vol_compra == "menudeo"
+            or mod_entrega in ("catalogo_estandar", "personalizado_bajo_pedido")
+            or not vol_compra
+        )
+    ) or (cli_tipo not in ("empresas_b2b", "ambos") and hits_b2c > 0 and hits_b2c >= hits_serv)
+
+    # 2. Regla Determinista Servicios B2B:
+    # Si modalidad_entrega == "servicio_en_sitio"
+    # O (modalidad_entrega == "personalizado_bajo_pedido" y cliente_objetivo_tipo in ("empresas_b2b", "ambos") y volumen_compra == "proyecto")
+    es_servicios_determinado = (
+        mod_entrega == "servicio_en_sitio"
+        or (mod_entrega == "personalizado_bajo_pedido" and cli_tipo in ("empresas_b2b", "ambos") and vol_compra == "proyecto")
+        or (cli_tipo == "empresas_b2b" and hits_serv > 0)
+        or (not es_b2c_determinado and hits_serv > 0 and hits_b2c == 0)
+    )
+
+    if es_b2c_determinado and not (cli_tipo == "empresas_b2b" and vol_compra == "mayoreo"):
         modelo = "EMPRENDEDOR_B2C"
-        scores = {"distribuidor": 35, "servicios": 25, "particular": 94}
-        titulo = "Modelo Recomendado: Particular / Emprendedor B2C (Inbound Seguro)"
-        explicacion = (
-            "Tu producto se vende directo al consumidor final (B2C). En WhatsApp, enviar mensajes masivos en frío a personas desconocidas "
-            "provoca reportes y bloqueos de chip. Conviene operar en Modo Inbound 24/7: atraes interesados con flyers y videos de 03 • ESTUDIO "
-            "en tus redes/grupos y Andrea cierra cada venta 24/7 en cuanto te escriben."
+        scores = {"distribuidor": 25, "servicios": 20, "particular": 95}
+        es_personalizado = (
+            mod_entrega == "personalizado_bajo_pedido"
+            or any(w in texto_full for w in ("personaliz", "3d", "medida", "diseño", "diseno", "custom", "pedido"))
         )
-        clientes_obj = "Consumidores finales, vecinos de tu zona, grupos locales de compra-venta y seguidores de redes sociales"
-        kws_sug = [
-            "clientes interesados en catálogo",
-            "ofertas de temporada",
-            "pedidos a domicilio",
-            "entregas locales",
-            "promoción especial",
-            "catálogo digital"
-        ]
-        enfoque_andrea = "Atención inbound de catálogo, envío de promociones y cierre rápido de pedido a domicilio o punto de entrega"
-    elif hits_serv > 0:
+        titulo = f"Modelo Recomendado: Particular / Emprendedor B2C (Inbound Seguro — {giro_limpio})"
+        if es_personalizado:
+            explicacion = (
+                f"Al vender {giro_limpio} personalizado directo a personas (B2C), escribir en frío a desconocidos en WhatsApp genera "
+                "reportes y bloqueos de chip. Conviene operar 100% Inbound: los clientes llegan atraídos por tus anuncios de 03 • ESTUDIO "
+                "con enlace wa.me y Andrea solicita especificaciones (medidas, diseño, archivo o foto) para cotizar y cerrar de forma segura."
+            )
+            clientes_obj = f"Compradores de {giro_limpio}, personas que buscan regalos personalizados, coleccionistas o clientes que solicitan piezas a medida"
+            enfoque_andrea = "Atención inbound personalizada: pedir detalles clave (medidas, material/color, diseño o archivo de referencia), resolver dudas y cotizar antes de confirmar el pedido"
+            kws_sug = [
+                f"{giro_limpio} personalizado",
+                "pedidos a medida",
+                "regalos personalizados",
+                "catalogo digital",
+                "entregas locales",
+                "promociones especiales"
+            ]
+        else:
+            explicacion = (
+                f"Tu oferta de {giro_limpio} va dirigida al consumidor final (B2C). Enviar mensajes masivos en frío a personas desconocidas "
+                "provoca reportes y bloqueos de chip. Conviene operar en Modo Inbound 24/7: atraes interesados con anuncios de 03 • ESTUDIO "
+                "en redes sociales y Andrea atiende y cierra cada venta 24/7 en cuanto te escriben."
+            )
+            clientes_obj = f"Consumidores finales, seguidores en redes sociales y personas interesadas en {giro_limpio}"
+            enfoque_andrea = f"Atención inbound de catálogo para {giro_limpio}, envío de promociones y cierre rápido de pedido a domicilio o entrega local"
+            kws_sug = [
+                f"{giro_limpio} catalogo",
+                "pedidos a domicilio",
+                "ofertas de temporada",
+                "entregas locales",
+                "catalogo digital",
+                "promociones especiales"
+            ]
+
+    elif es_servicios_determinado:
         modelo = "SERVICIOS_B2B"
-        scores = {"distribuidor": 58, "servicios": 96, "particular": 30}
-        titulo = "Modelo Recomendado: Servicios Técnicos / Instalaciones B2B"
+        scores = {"distribuidor": 48, "servicios": 95, "particular": 28}
+        titulo = f"Modelo Recomendado: Servicios Técnicos y Proyectos B2B ({giro_limpio})"
         explicacion = (
-            "Ofreces servicios profesionales o instalaciones técnicas. El mayor retorno está en prospectar empresas, oficinas, escuelas, "
-            "clínicas y comercios establecidos (B2B) mediante el Cazador INEGI/Maps, donde Andrea contacta con enfoque consultivo "
-            "y agenda levantamientos técnicos o visitas de cotización."
+            f"Tu modelo para {giro_limpio} requiere análisis técnico o visita en sitio. El mayor retorno está en prospectar empresas, "
+            "oficinas, comercios y corporativos establecidos (B2B) mediante el Cazador INEGI/Maps, donde Andrea califica alcances técnicos "
+            "y agenda levantamientos o visitas de cotización sin fricción."
         )
-        clientes_obj = "Oficinas corporativas, bodegas industriales, escuelas privadas, clínicas, hoteles y comercios en expansión"
+        clientes_obj = f"Empresas, oficinas, comercios, despachos o corporativos que requieran {giro_limpio}"
+        enfoque_andrea = f"Diagnóstico consultivo para {giro_limpio}, levantamiento de requerimientos técnicos (medidas, especificaciones, archivos o visita en sitio) y cotización de proyecto"
         kws_sug = [
-            "oficinas corporativas",
-            "bodegas industriales",
-            "colegios privados",
-            "clinicas y consultorios",
-            "hoteles y plazas comerciales",
-            "restaurantes y franquicias"
+            f"servicios de {giro_limpio}",
+            "levantamiento tecnico",
+            "cotizacion corporativa",
+            "mantenimiento y proyectos",
+            "empresas y oficinas",
+            "atencion a negocios"
         ]
-        enfoque_andrea = "Diagnóstico consultivo de necesidades técnicas, cotización de proyecto y agenda de visita o levantamiento en sitio"
+
     else:
         modelo = "DISTRIBUIDOR_B2B"
-        scores = {"distribuidor": 95, "servicios": 52, "particular": 32}
-        titulo = "Modelo Recomendado: Distribuidor / Proveedor Mayorista B2B"
+        scores = {"distribuidor": 95, "servicios": 45, "particular": 22}
+        titulo = f"Modelo Recomendado: Proveedor Mayorista / Distribuidor B2B ({giro_limpio})"
         explicacion = (
-            "Tu producto tiene alto potencial como proveedor directo de negocios establecidos (B2B). El Cazador 24/7 localiza comercios "
-            "que consumen tu insumo o mercancía de forma recurrente en INEGI/Google Maps y Andrea cierra paquetes o pedidos por volumen "
-            "sin riesgo de spam al dirigirte a teléfonos comerciales."
+            f"Tu oferta de {giro_limpio} tiene alto potencial como proveedor o distribuidor directo a negocios establecidos (B2B). "
+            "El Cazador 24/7 localiza comercios que consumen tu producto de forma recurrente en INEGI/Google Maps y Andrea cierra paquetes "
+            "o pedidos por volumen sin riesgo de spam al dirigirse a teléfonos comerciales."
         )
-        clientes_obj = "Negocios establecidos, talleres, tiendas minoristas, restaurantes o distribuidores regionales de tu giro"
-        palabras_base = [
-            w for w in re.split(r"[^a-z0-9]+", texto_full)
-            if len(w) >= 4 and w not in ("vendo", "ofrezco", "para", "como", "producto", "fisico", "servicio", "local", "venta", "inmediata", "clientes")
+        clientes_obj = f"Comercios establecidos, distribuidores y compradores comerciales que consuman o revendan {giro_limpio}"
+        enfoque_andrea = f"Presentación de catálogo mayorista para {giro_limpio}, escalas de precios por volumen y cierre de pedidos con entrega programada"
+        kws_sug = [
+            f"mayoreo de {giro_limpio}",
+            "distribuidores locales",
+            "proveedores comerciales",
+            "pedidos por volumen",
+            "tiendas del giro",
+            "suministro recurrente"
         ]
-        kws_sug = list(dict.fromkeys(palabras_base[:5] + ["comercios minoristas", "distribuidores locales", "tiendas del giro"]))[:6]
-        enfoque_andrea = "Cotización de paquete comercial o mayoreo, envío de catálogo y cierre de pedido con entrega programada"
 
     return {
         "ok": True,
@@ -528,12 +589,29 @@ def diagnosticar_modelo_heuristico(descripcion_idea: str, nicho_categoria: str =
         "explicacion_estrategica": explicacion,
         "clientes_objetivo": clientes_obj,
         "keywords_sugeridas": kws_sug,
-        "enfoque_andrea": enfoque_andrea
+        "enfoque_andrea": enfoque_andrea,
+        "cliente_objetivo_tipo": cli_tipo,
+        "modalidad_entrega": mod_entrega,
+        "volumen_compra": vol_compra
     }
 
 
-def diagnosticar_modelo_negocio_ia(descripcion_idea: str, nicho_categoria: str = "", objetivo: str = "") -> dict:
-    base_heuristica = diagnosticar_modelo_heuristico(descripcion_idea, nicho_categoria, objetivo)
+def diagnosticar_modelo_negocio_ia(
+    descripcion_idea: str,
+    nicho_categoria: str = "",
+    objetivo: str = "",
+    cliente_objetivo_tipo: str = "",
+    modalidad_entrega: str = "",
+    volumen_compra: str = ""
+) -> dict:
+    base_heuristica = diagnosticar_modelo_heuristico(
+        descripcion_idea,
+        nicho_categoria,
+        objetivo,
+        cliente_objetivo_tipo=cliente_objetivo_tipo,
+        modalidad_entrega=modalidad_entrega,
+        volumen_compra=volumen_compra
+    )
     idea_clean = str(descripcion_idea or "").strip()
     if not idea_clean:
         return base_heuristica
@@ -545,19 +623,30 @@ def diagnosticar_modelo_negocio_ia(descripcion_idea: str, nicho_categoria: str =
     prompt_diag = (
         "Eres un Arquitecto de Estrategia Comercial B2B/B2C para WhatsApp y Prospección Automatizada en México.\n"
         "Analiza el siguiente negocio del usuario y clasifícalo en UNO de estos 3 modelos operativos:\n"
-        "1. \"DISTRIBUIDOR_B2B\": Venta de productos físicos, refacciones, insumos o mercancía por mayoreo/paquete a otros negocios establecidos.\n"
-        "2. \"SERVICIOS_B2B\": Servicios técnicos, instalaciones (redes, cableado estructurado, WiFi, CCTV, mantenimiento industrial, software, consultoría) dirigidos a empresas, oficinas, escuelas o comercios.\n"
-        "3. \"EMPRENDEDOR_B2C\": Venta directa al público general/consumidor final (ej. Tupperware, venta por catálogo, comida, postres, ropa, cosméticos en su colonia), donde escribir en frío a desconocidos en WhatsApp causa bloqueos y conviene operar solo en modo Inbound con contenido en redes.\n\n"
-        f"DATOS DEL USUARIO:\n- Descripción de la idea/oferta: {idea_clean[:800]}\n"
+        "1. \"DISTRIBUIDOR_B2B\": Venta de productos físicos, refacciones, insumos o mercancía por mayoreo/lotes a otros negocios establecidos.\n"
+        "2. \"SERVICIOS_B2B\": Servicios técnicos, instalaciones (redes, cableado estructurado, WiFi, CCTV, mantenimiento industrial, software, consultoría) o proyectos a medida para empresas, oficinas, escuelas o comercios.\n"
+        "3. \"EMPRENDEDOR_B2C\": Venta directa al público general/consumidor final (ej. regalos personalizados, impresiones 3D a medida o por catálogo, Tupperware, comida, ropa, piezas sueltas), donde escribir en frío a desconocidos en WhatsApp causa bloqueos y conviene operar solo en modo Inbound con anuncios de 03 • ESTUDIO y enlaces wa.me.\n\n"
+        "REGLAS DETERMINISTAS:\n"
+        "- Si el cliente objetivo es 'consumidor_final' y compran al menudeo o bajo pedido/catálogo: DEBES asignar 'EMPRENDEDOR_B2C' (particular >= 88, distribuidor <= 45).\n"
+        "- Si la modalidad es 'servicio_en_sitio' o proyecto para empresas ('personalizado_bajo_pedido' + 'empresas_b2b'/'ambos' + 'proyecto'): DEBES asignar 'SERVICIOS_B2B' (servicios >= 88).\n"
+        "- Si el cliente objetivo es 'empresas_b2b' y compran por 'mayoreo': DEBES asignar 'DISTRIBUIDOR_B2B' (distribuidor >= 88).\n\n"
+        "PROHIBICIÓN ESTRICTA:\n"
+        "Queda TERMINANTEMENTE PROHIBIDO usar textos genéricos como 'talleres, tiendas minoristas, restaurantes' a menos que el negocio venda insumos a esos rubros. En 'clientes_objetivo', 'explicacion_estrategica' y 'enfoque_andrea', DEBES interpolar EXACTAMENTE el producto o servicio que el usuario describió (por ejemplo, para impresiones 3D: 'compradores de regalos personalizados, coleccionistas, emprendedores o despachos que requieran prototipos').\n"
+        "Si es personalizado bajo pedido, Andrea debe solicitar medidas, color, material, diseño o archivo de referencia antes de cotizar.\n\n"
+        f"DATOS DEL USUARIO:\n"
+        f"- Descripción de la idea/oferta: {idea_clean[:800]}\n"
         f"- Categoría seleccionada: {nicho_categoria}\n"
-        f"- Objetivo de conversión: {objetivo}\n\n"
+        f"- Objetivo de conversión: {objetivo}\n"
+        f"- ¿Quién compra?: {cliente_objetivo_tipo or 'No especificado'}\n"
+        f"- ¿Cómo entregas?: {modalidad_entrega or 'No especificado'}\n"
+        f"- ¿Cómo compran?: {volumen_compra or 'No especificado'}\n\n"
         "Devuelve ÚNICAMENTE un JSON válido (sin bloques markdown) con esta estructura exacta:\n"
         "{\n"
         "  \"modelo_recomendado\": \"DISTRIBUIDOR_B2B\" | \"SERVICIOS_B2B\" | \"EMPRENDEDOR_B2C\",\n"
         "  \"scores\": {\"distribuidor\": 0-100, \"servicios\": 0-100, \"particular\": 0-100},\n"
         "  \"titulo_veredicto\": \"string corto y contundente\",\n"
         "  \"explicacion_estrategica\": \"explicación clara de 2-3 oraciones de por qué este modelo le da más ventas y cómo protege su WhatsApp\",\n"
-        "  \"clientes_objetivo\": \"qué tipo específico de negocios o clientes debe buscar (ej. Oficinas, bodegas, colegios y clínicas)\",\n"
+        "  \"clientes_objetivo\": \"qué tipo específico de negocios o clientes debe buscar\",\n"
         "  \"keywords_sugeridas\": [\"termino 1\", \"termino 2\", \"termino 3\", \"termino 4\", \"termino 5\", \"termino 6\"],\n"
         "  \"enfoque_andrea\": \"cómo debe conducir y cerrar la conversación la asesora IA Andrea\"\n"
         "}"
@@ -593,11 +682,11 @@ def diagnosticar_modelo_negocio_ia(descripcion_idea: str, nicho_categoria: str =
                         continue
                     parsed = json.loads(m_json.group(0))
                     mod_rec = normalizar_modelo_negocio(parsed.get("modelo_recomendado") or base_heuristica["modelo_recomendado"])
-                    # Si la heurística detectó explícitamente palabras clave inequívocas (ej. tupperware/catálogo o instalación de redes/cableado), asegurar coherencia
-                    if base_heuristica["modelo_recomendado"] == "EMPRENDEDOR_B2C" and any(w in motor_m1.quitar_acentos(idea_clean).lower() for w in ("tupper", "catalogo", "colonia")):
-                        mod_rec = "EMPRENDEDOR_B2C"
-                    elif base_heuristica["modelo_recomendado"] == "SERVICIOS_B2B" and any(w in motor_m1.quitar_acentos(idea_clean).lower() for w in ("instalacion", "cableado", "redes", "cctv", "mantenimiento")):
-                        mod_rec = "SERVICIOS_B2B"
+
+                    # Aplicar salvaguardas deterministas sobre el resultado de IA
+                    cli_norm = str(cliente_objetivo_tipo or "").strip().lower()
+                    mod_norm = str(modalidad_entrega or "").strip().lower()
+                    vol_norm = str(volumen_compra or "").strip().lower()
 
                     raw_scores = parsed.get("scores") if isinstance(parsed.get("scores"), dict) else {}
                     scores = {
@@ -605,6 +694,41 @@ def diagnosticar_modelo_negocio_ia(descripcion_idea: str, nicho_categoria: str =
                         "servicios": max(0, min(100, int(raw_scores.get("servicios", base_heuristica["scores"]["servicios"])))),
                         "particular": max(0, min(100, int(raw_scores.get("particular", base_heuristica["scores"]["particular"]))))
                     }
+
+                    if cli_norm == "consumidor_final" and (vol_norm == "menudeo" or mod_norm in ("catalogo_estandar", "personalizado_bajo_pedido") or not vol_norm):
+                        mod_rec = "EMPRENDEDOR_B2C"
+                        scores["particular"] = max(88, scores["particular"])
+                        scores["distribuidor"] = min(45, scores["distribuidor"])
+                    elif mod_norm == "servicio_en_sitio" or (mod_norm == "personalizado_bajo_pedido" and cli_norm in ("empresas_b2b", "ambos") and vol_norm == "proyecto"):
+                        mod_rec = "SERVICIOS_B2B"
+                        scores["servicios"] = max(88, scores["servicios"])
+                    elif cli_norm == "empresas_b2b" and vol_norm == "mayoreo":
+                        mod_rec = "DISTRIBUIDOR_B2B"
+                        scores["distribuidor"] = max(88, scores["distribuidor"])
+                    elif base_heuristica["modelo_recomendado"] == "EMPRENDEDOR_B2C" and any(w in motor_m1.quitar_acentos(idea_clean).lower() for w in ("tupper", "catalogo", "colonia", "3d", "personaliz")):
+                        mod_rec = "EMPRENDEDOR_B2C"
+                        scores["particular"] = max(88, scores["particular"])
+                        scores["distribuidor"] = min(45, scores["distribuidor"])
+
+                    # Prohibición de textos genéricos en clientes_objetivo
+                    cli_obj_raw = str(parsed.get("clientes_objetivo") or "").strip()
+                    if ("talleres" in cli_obj_raw.lower() or "restaurantes" in cli_obj_raw.lower()) and not any(w in motor_m1.quitar_acentos(idea_clean).lower() for w in ("taller", "restaurante", "malla", "comida")):
+                        cli_obj_raw = base_heuristica["clientes_objetivo"]
+                    if not cli_obj_raw:
+                        cli_obj_raw = base_heuristica["clientes_objetivo"]
+
+                    # Sanitizar explicacion_estrategica si contiene talleres/restaurantes
+                    exp_est_raw = str(parsed.get("explicacion_estrategica") or "").strip()
+                    if ("talleres" in exp_est_raw.lower() or "restaurantes" in exp_est_raw.lower()) and not any(w in motor_m1.quitar_acentos(idea_clean).lower() for w in ("taller", "restaurante", "malla", "comida")):
+                        exp_est_raw = base_heuristica["explicacion_estrategica"]
+                    if not exp_est_raw:
+                        exp_est_raw = base_heuristica["explicacion_estrategica"]
+
+                    # Sanitizar enfoque_andrea
+                    enf_andrea_raw = str(parsed.get("enfoque_andrea") or "").strip()
+                    if not enf_andrea_raw:
+                        enf_andrea_raw = base_heuristica["enfoque_andrea"]
+
                     kws_ia = parsed.get("keywords_sugeridas")
                     if not isinstance(kws_ia, list) or len(kws_ia) == 0:
                         kws_ia = base_heuristica["keywords_sugeridas"]
@@ -616,10 +740,13 @@ def diagnosticar_modelo_negocio_ia(descripcion_idea: str, nicho_categoria: str =
                         "modelo_recomendado": mod_rec,
                         "scores": scores,
                         "titulo_veredicto": str(parsed.get("titulo_veredicto") or base_heuristica["titulo_veredicto"]).strip(),
-                        "explicacion_estrategica": str(parsed.get("explicacion_estrategica") or base_heuristica["explicacion_estrategica"]).strip(),
-                        "clientes_objetivo": str(parsed.get("clientes_objetivo") or base_heuristica["clientes_objetivo"]).strip(),
+                        "explicacion_estrategica": exp_est_raw,
+                        "clientes_objetivo": cli_obj_raw,
                         "keywords_sugeridas": kws_clean or base_heuristica["keywords_sugeridas"],
-                        "enfoque_andrea": str(parsed.get("enfoque_andrea") or base_heuristica["enfoque_andrea"]).strip()
+                        "enfoque_andrea": enf_andrea_raw,
+                        "cliente_objetivo_tipo": cli_norm,
+                        "modalidad_entrega": mod_norm,
+                        "volumen_compra": vol_norm
                     }
             except Exception:
                 continue
@@ -880,8 +1007,22 @@ def obtener_nicho_por_email(email_raw: str) -> dict | None:
     }
 
 
-def _construir_catalogo_base_por_modelo(modelo_negocio: str, nombre_negocio: str, giro_objetivo: str, oferta_gancho: str, idea_base: str) -> str:
+def _construir_catalogo_base_por_modelo(
+    modelo_negocio: str,
+    nombre_negocio: str,
+    giro_objetivo: str,
+    oferta_gancho: str,
+    idea_base: str,
+    modalidad_entrega: str = ""
+) -> str:
     mod = normalizar_modelo_negocio(modelo_negocio)
+    mod_ent = str(modalidad_entrega or "").strip().lower()
+    idea_low = f"{idea_base} {giro_objetivo}".lower()
+    es_personalizado = (
+        mod_ent == "personalizado_bajo_pedido"
+        or any(w in idea_low for w in ("personaliz", "3d", "medida", "diseno", "diseño", "custom", "pedido", "figura"))
+    )
+
     if mod == "SERVICIOS_B2B":
         return (
             f"Negocio de Servicios B2B: {nombre_negocio}.\n"
@@ -894,6 +1035,17 @@ def _construir_catalogo_base_por_modelo(modelo_negocio: str, nombre_negocio: str
             "3. Solicita los 4 datos para agendar levantamiento técnico o visita de instalación: Nombre de Empresa/Contacto, Alcance del Servicio, Ubicación del Sitio y Fecha/Horario de Visita."
         )[:2500]
     if mod == "EMPRENDEDOR_B2C":
+        if es_personalizado:
+            return (
+                f"Negocio B2C (Personalizado / Bajo Pedido): {nombre_negocio}.\n"
+                f"Clientes Objetivo: {giro_objetivo}.\n"
+                f"Oferta / Gancho: {oferta_gancho}.\n"
+                f"Detalles y Catálogo: {idea_base}\n"
+                "FLUJO DE ATENCIÓN INBOUND PERSONALIZADO (CERO SPAM EN FRÍO):\n"
+                "1. Atiende con calidez a los clientes que solicitan cotización de piezas o pedidos a medida.\n"
+                "2. Pide detalles clave antes de cotizar: medidas, material o color deseado, diseño o archivo de referencia (ej. STL/vector/foto) y cantidad.\n"
+                "3. Cotiza tiempos de elaboración y entrega, y cierra solicitando: Nombre del cliente, Dirección de entrega o punto de encuentro y Anticipo/Método de pago."
+            )[:2500]
         return (
             f"Negocio B2C (Venta al Público / Catálogo): {nombre_negocio}.\n"
             f"Clientes Objetivo: {giro_objetivo}.\n"
@@ -970,12 +1122,31 @@ def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict
         except Exception:
             diag_obj = {}
     elif isinstance(diag_input, dict):
-        diag_obj = diag_input
+        diag_obj = dict(diag_input)
     else:
         diag_obj = (existente or {}).get("diagnostico_ia") or {}
 
+    cli_tipo = str(data.get("cliente_objetivo_tipo") or (diag_obj.get("cliente_objetivo_tipo") if isinstance(diag_obj, dict) else "") or "")
+    mod_ent = str(data.get("modalidad_entrega") or (diag_obj.get("modalidad_entrega") if isinstance(diag_obj, dict) else "") or "")
+    vol_com = str(data.get("volumen_compra") or (diag_obj.get("volumen_compra") if isinstance(diag_obj, dict) else "") or "")
+
     if not diag_obj and raw_idea:
-        diag_obj = diagnosticar_modelo_heuristico(raw_idea, str(data.get("niche") or ""), str(data.get("objective") or ""))
+        diag_obj = diagnosticar_modelo_heuristico(
+            raw_idea,
+            str(data.get("niche") or ""),
+            str(data.get("objective") or ""),
+            cliente_objetivo_tipo=cli_tipo,
+            modalidad_entrega=mod_ent,
+            volumen_compra=vol_com
+        )
+
+    if isinstance(diag_obj, dict):
+        if cli_tipo:
+            diag_obj["cliente_objetivo_tipo"] = cli_tipo
+        if mod_ent:
+            diag_obj["modalidad_entrega"] = mod_ent
+        if vol_com:
+            diag_obj["volumen_compra"] = vol_com
 
     modelo_raw = (
         data.get("modelo_negocio")
@@ -1035,7 +1206,8 @@ def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict
             nombre_negocio,
             giro_objetivo,
             oferta_gancho,
-            catalogo_custom or raw_idea or (existente or {}).get("catalogo_y_reglas") or oferta_gancho
+            catalogo_custom or raw_idea or (existente or {}).get("catalogo_y_reglas") or oferta_gancho,
+            modalidad_entrega=mod_ent
         )
 
     system_prompt_custom = str(data.get("system_prompt") or "").strip()[:2500]
@@ -3181,7 +3353,17 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             ).strip()
             cat = str(data.get("nicho_categoria") or data.get("niche") or (qs_url.get("nicho_categoria", [""])[0]) or "").strip()
             obj = str(data.get("objetivo") or data.get("objective") or (qs_url.get("objetivo", [""])[0]) or "").strip()
-            res_diag = diagnosticar_modelo_negocio_ia(desc, cat, obj)
+            cliente_obj_tipo = str(data.get("cliente_objetivo_tipo") or (qs_url.get("cliente_objetivo_tipo", [""])[0]) or "").strip()
+            mod_entrega = str(data.get("modalidad_entrega") or (qs_url.get("modalidad_entrega", [""])[0]) or "").strip()
+            vol_compra = str(data.get("volumen_compra") or (qs_url.get("volumen_compra", [""])[0]) or "").strip()
+            res_diag = diagnosticar_modelo_negocio_ia(
+                desc,
+                cat,
+                obj,
+                cliente_objetivo_tipo=cliente_obj_tipo,
+                modalidad_entrega=mod_entrega,
+                volumen_compra=vol_compra
+            )
             self._send_json(res_diag, status=200)
             return
 

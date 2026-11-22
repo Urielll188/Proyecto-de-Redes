@@ -106,12 +106,27 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   const [showDiagnosticModal, setShowDiagnosticModal] = useState<boolean>(false)
   const [pendingMode, setPendingMode] = useState<'fast' | 'strategic'>('strategic')
 
+  // Contexto Comercial Rápido (3 Píldoras de 1 Clic para precisión de modelo y catálogo)
+  const [clienteObjetivoTipo, setClienteObjetivoTipo] = useState<'consumidor_final' | 'empresas_b2b' | 'ambos'>('consumidor_final')
+  const [modalidadEntrega, setModalidadEntrega] = useState<'catalogo_estandar' | 'personalizado_bajo_pedido' | 'servicio_en_sitio'>('catalogo_estandar')
+  const [volumenCompra, setVolumenCompra] = useState<'menudeo' | 'mayoreo' | 'proyecto'>('menudeo')
+
   useEffect(() => {
     if (modeloNegocio) {
       setSelectedModelo(modeloNegocio)
     }
     if (nicho?.diagnostico_ia && typeof nicho.diagnostico_ia === 'object' && 'modelo_recomendado' in nicho.diagnostico_ia) {
-      setDiagnosticoIA(nicho.diagnostico_ia as DiagnosticoModeloIA)
+      const diag = nicho.diagnostico_ia as DiagnosticoModeloIA
+      setDiagnosticoIA(diag)
+      if (diag.cliente_objetivo_tipo && ['consumidor_final', 'empresas_b2b', 'ambos'].includes(diag.cliente_objetivo_tipo)) {
+        setClienteObjetivoTipo(diag.cliente_objetivo_tipo as any)
+      }
+      if (diag.modalidad_entrega && ['catalogo_estandar', 'personalizado_bajo_pedido', 'servicio_en_sitio'].includes(diag.modalidad_entrega)) {
+        setModalidadEntrega(diag.modalidad_entrega as any)
+      }
+      if (diag.volumen_compra && ['menudeo', 'mayoreo', 'proyecto'].includes(diag.volumen_compra)) {
+        setVolumenCompra(diag.volumen_compra as any)
+      }
     }
   }, [modeloNegocio, nicho])
 
@@ -128,6 +143,19 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   const [bannerUrl, setBannerUrl] = useState<string | null>(initialData?.bannerUrl || null)
   const [niche, setNiche] = useState<string>('Producto Físico')
   const [goal, setGoal] = useState<string>('Venta Inmediata')
+
+  const handleNicheChange = (newNiche: string) => {
+    setNiche(newNiche)
+    if (newNiche === 'Servicio Local') {
+      setClienteObjetivoTipo('empresas_b2b')
+      setModalidadEntrega('servicio_en_sitio')
+      setVolumenCompra('proyecto')
+    } else if (newNiche === 'Producto Físico' || newNiche === 'E-commerce' || newNiche === 'Marca Personal') {
+      setClienteObjetivoTipo('consumidor_final')
+      setModalidadEntrega('catalogo_estandar')
+      setVolumenCompra('menudeo')
+    }
+  }
 
   // ID de persistencia en BD
   const [publicationId, setPublicationId] = useState<string | null>(initialData?.id || null)
@@ -262,47 +290,94 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   }
 
   // Diagnóstico heurístico local de respaldo por si la red tarda
-  const buildLocalFallbackDiagnostic = (desc: string, cat: string, obj: string): DiagnosticoModeloIA => {
+  const buildLocalFallbackDiagnostic = (
+    desc: string,
+    cat: string,
+    obj: string,
+    cliTipo: 'consumidor_final' | 'empresas_b2b' | 'ambos' = clienteObjetivoTipo,
+    modEnt: 'catalogo_estandar' | 'personalizado_bajo_pedido' | 'servicio_en_sitio' = modalidadEntrega,
+    volCom: 'menudeo' | 'mayoreo' | 'proyecto' = volumenCompra
+  ): DiagnosticoModeloIA => {
+    const giroLimpio = desc.trim().slice(0, 70) || 'tu producto o servicio'
     const low = `${desc} ${cat} ${obj}`.toLowerCase()
-    const isB2C = /(tupper|cat[aá]logo|comida|postre|ropa|cosm[eé]tico|maquillaje|perfume|colonia|vecinos|venta directa|avon|mary kay|shein|menudeo)/.test(low)
-    const isServ = /(instalaci[oó]n|redes|cableado|wifi|cctv|c[aá]maras|mantenimiento|servicio|reparaci[oó]n|consultor[ií]a|soporte|software|agencia)/.test(low)
+    const hitsB2C = /(tupper|cat[aá]logo|comida|postre|ropa|cosm[eé]tico|maquillaje|perfume|colonia|vecinos|venta directa|avon|mary kay|shein|menudeo|impresi[oó]n 3d|3d|regalo|personaliz|figura)/.test(low)
+    const hitsServ = /(instalaci[oó]n|redes|cableado|wifi|cctv|c[aá]maras|mantenimiento|servicio|reparaci[oó]n|consultor[ií]a|soporte|software|agencia)/.test(low)
 
-    if (isB2C && !isServ) {
+    // Regla 1: Consumidor final al menudeo o bajo pedido/catálogo
+    if (cliTipo === 'consumidor_final' && (volCom === 'menudeo' || modEnt === 'catalogo_estandar' || modEnt === 'personalizado_bajo_pedido' || !volCom)) {
+      const esPersonalizado = modEnt === 'personalizado_bajo_pedido' || /personaliz|3d|medida|dise[nñ]o|custom|pedido/.test(low)
       return {
         ok: true,
         modelo_recomendado: 'EMPRENDEDOR_B2C',
-        scores: { distribuidor: 35, servicios: 25, particular: 94 },
-        titulo_veredicto: 'Modelo Recomendado: Particular / Emprendedor B2C (Inbound Seguro)',
-        explicacion_estrategica:
-          'Tu producto se vende al consumidor final (B2C). Para evitar bloqueos en WhatsApp por escribir en frío a desconocidos, BLITZR activa el Modo Inbound 24/7: atraes clientes con creativos de 03 • ESTUDIO y Andrea cierra cada venta cuando te escriben.',
-        clientes_objetivo: 'Consumidores finales, vecinos de tu zona, grupos locales y seguidores de redes sociales',
-        keywords_sugeridas: ['catálogo digital', 'promoción local', 'pedidos a domicilio', 'ofertas de temporada', 'entrega inmediata'],
-        enfoque_andrea: 'Atención inbound de catálogo, envío de promociones y cierre rápido de pedido a domicilio',
+        scores: { distribuidor: 25, servicios: 20, particular: 95 },
+        titulo_veredicto: `Modelo Recomendado: Emprendedor B2C (Inbound Seguro — ${giroLimpio})`,
+        explicacion_estrategica: esPersonalizado
+          ? `Al vender ${giroLimpio} personalizado directo a personas (B2C), escribir en frío a desconocidos genera reportes y bloquea tu línea de WhatsApp. Conviene operar 100% Inbound: los clientes llegan atraídos por tus anuncios de 03 • ESTUDIO y Andrea solicita medidas, archivo o diseño para cotizar y cerrar de forma segura.`
+          : `Tu oferta de ${giroLimpio} va dirigida al consumidor final (B2C). Enviar mensajes masivos en frío causa bloqueos de WhatsApp. En Modo Inbound 24/7, atraes interesados con los creativos de 03 • ESTUDIO y Andrea atiende y cierra pedidos 24/7 en cuanto te contactan.`,
+        clientes_objetivo: esPersonalizado
+          ? `Compradores de ${giroLimpio}, personas que buscan regalos personalizados, coleccionistas o clientes que solicitan piezas a medida`
+          : `Consumidores finales, seguidores en redes sociales y personas interesadas en ${giroLimpio}`,
+        keywords_sugeridas: [
+          `${giroLimpio} personalizado`,
+          'pedidos a medida',
+          'catalogo digital',
+          'entregas locales',
+          'promociones especiales',
+          'atencion personalizada',
+        ],
+        enfoque_andrea: esPersonalizado
+          ? `Atención inbound personalizada: pedir detalles específicos (medidas, material, color o archivo/diseño de referencia), resolver dudas y cotizar antes de confirmar el pedido`
+          : `Atención inbound de catálogo para ${giroLimpio}, envío de opciones disponibles y cierre rápido de pedido a domicilio o entrega local`,
+        cliente_objetivo_tipo: cliTipo,
+        modalidad_entrega: modEnt,
+        volumen_compra: volCom,
       }
     }
-    if (isServ) {
+
+    // Regla 2: Servicios en sitio o proyectos B2B
+    if (modEnt === 'servicio_en_sitio' || (modEnt === 'personalizado_bajo_pedido' && (cliTipo === 'empresas_b2b' || cliTipo === 'ambos') && volCom === 'proyecto') || (hitsServ && !hitsB2C)) {
       return {
         ok: true,
         modelo_recomendado: 'SERVICIOS_B2B',
-        scores: { distribuidor: 58, servicios: 96, particular: 30 },
-        titulo_veredicto: 'Modelo Recomendado: Servicios Técnicos / Instalaciones B2B',
-        explicacion_estrategica:
-          'Ofreces servicios profesionales o instalaciones técnicas. El mayor retorno está en prospectar empresas, oficinas, colegios, clínicas y comercios (B2B) con el Cazador INEGI/Maps, donde Andrea agenda levantamientos técnicos o visitas.',
-        clientes_objetivo: 'Oficinas corporativas, bodegas industriales, colegios privados, clínicas, hoteles y comercios',
-        keywords_sugeridas: ['oficinas corporativas', 'bodegas industriales', 'colegios privados', 'clinicas y consultorios', 'hoteles', 'plazas comerciales'],
-        enfoque_andrea: 'Diagnóstico consultivo de necesidades técnicas, cotización de proyecto y agenda de visita en sitio',
+        scores: { distribuidor: 48, servicios: 95, particular: 28 },
+        titulo_veredicto: `Modelo Recomendado: Servicios Técnicos y Proyectos B2B (${giroLimpio})`,
+        explicacion_estrategica: `Tu modelo para ${giroLimpio} requiere análisis técnico o visita en sitio. El Cazador 24/7 localiza empresas, comercios y oficinas afines, permitiendo que Andrea califique alcances técnicos y agende levantamientos o visitas de cotización.`,
+        clientes_objetivo: `Empresas, oficinas, comercios, despachos o corporativos que requieran ${giroLimpio}`,
+        keywords_sugeridas: [
+          `servicios de ${giroLimpio}`,
+          'levantamiento tecnico',
+          'cotizacion corporativa',
+          'mantenimiento y proyectos',
+          'empresas y oficinas',
+          'atencion a negocios',
+        ],
+        enfoque_andrea: `Diagnóstico consultivo para ${giroLimpio}, levantamiento de requerimientos técnicos (medidas, especificaciones, archivos o visita en sitio) y cotización de proyecto`,
+        cliente_objetivo_tipo: cliTipo,
+        modalidad_entrega: modEnt,
+        volumen_compra: volCom,
       }
     }
+
+    // Regla 3: Distribuidor mayorista B2B
     return {
       ok: true,
       modelo_recomendado: 'DISTRIBUIDOR_B2B',
-      scores: { distribuidor: 95, servicios: 52, particular: 32 },
-      titulo_veredicto: 'Modelo Recomendado: Distribuidor / Proveedor Mayorista B2B',
-      explicacion_estrategica:
-        'Tu producto tiene alto potencial como proveedor directo de negocios establecidos (B2B). El Cazador 24/7 localiza comercios de tu giro en INEGI/Google Maps y Andrea cierra paquetes o pedidos por volumen.',
-      clientes_objetivo: 'Negocios establecidos, talleres, tiendas minoristas, restaurantes o distribuidores regionales',
-      keywords_sugeridas: ['comercios minoristas', 'distribuidores locales', 'talleres y negocios', 'tiendas del giro', 'proveedores regionales'],
-      enfoque_andrea: 'Cotización de paquete comercial o mayoreo, envío de catálogo y cierre de pedido con entrega programada',
+      scores: { distribuidor: 95, servicios: 45, particular: 22 },
+      titulo_veredicto: `Modelo Recomendado: Proveedor Mayorista / Distribuidor B2B (${giroLimpio})`,
+      explicacion_estrategica: `Tu oferta de ${giroLimpio} tiene alto potencial de reventa o suministro a negocios. El Cazador 24/7 prospecta comercios de tu giro en INEGI DENUE y Google Maps, y Andrea presenta paquetes mayoristas con entrega programada.`,
+      clientes_objetivo: `Comercios establecidos, distribuidores y compradores comerciales que consuman o revendan ${giroLimpio}`,
+      keywords_sugeridas: [
+        `mayoreo de ${giroLimpio}`,
+        'distribuidores locales',
+        'proveedores comerciales',
+        'pedidos por volumen',
+        'tiendas del giro',
+        'suministro recurrente',
+      ],
+      enfoque_andrea: `Presentación de catálogo mayorista para ${giroLimpio}, escalas de precios por volumen y cierre de pedidos con entrega`,
+      cliente_objetivo_tipo: cliTipo,
+      modalidad_entrega: modEnt,
+      volumen_compra: volCom,
     }
   }
 
@@ -324,7 +399,10 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
           descripcion_idea: productDesc.trim(),
           nicho_categoria: niche,
           objetivo: goal,
-        })) || buildLocalFallbackDiagnostic(productDesc.trim(), niche, goal)
+          cliente_objetivo_tipo: clienteObjetivoTipo,
+          modalidad_entrega: modalidadEntrega,
+          volumen_compra: volumenCompra,
+        })) || buildLocalFallbackDiagnostic(productDesc.trim(), niche, goal, clienteObjetivoTipo, modalidadEntrega, volumenCompra)
 
       setDiagnosticoIA(diag)
       setSelectedModelo(diag.modelo_recomendado)
@@ -333,7 +411,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         id: toastId,
       })
     } catch {
-      const fallback = buildLocalFallbackDiagnostic(productDesc.trim(), niche, goal)
+      const fallback = buildLocalFallbackDiagnostic(productDesc.trim(), niche, goal, clienteObjetivoTipo, modalidadEntrega, volumenCompra)
       setDiagnosticoIA(fallback)
       setSelectedModelo(fallback.modelo_recomendado)
       setShowDiagnosticModal(true)
@@ -356,6 +434,19 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     setCmoAnalysis(null)
     setGenerationMode(mode)
 
+    const finalDiag = diagData
+      ? {
+          ...diagData,
+          cliente_objetivo_tipo: clienteObjetivoTipo,
+          modalidad_entrega: modalidadEntrega,
+          volumen_compra: volumenCompra,
+        }
+      : {
+          cliente_objetivo_tipo: clienteObjetivoTipo,
+          modalidad_entrega: modalidadEntrega,
+          volumen_compra: volumenCompra,
+        }
+
     // Guardar de inmediato el modelo y perfil en SQLite para usuarios nuevos
     if (!isMallasOwner) {
       await syncNichoFromIdea({
@@ -366,7 +457,10 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         oferta_gancho: productDesc.trim().slice(0, 180),
         keywords_busqueda: diagData?.keywords_sugeridas?.join(', ') || '',
         modelo_negocio: chosenModel,
-        diagnostico_ia: diagData || {},
+        cliente_objetivo_tipo: clienteObjetivoTipo,
+        modalidad_entrega: modalidadEntrega,
+        volumen_compra: volumenCompra,
+        diagnostico_ia: finalDiag,
         nombre_agente: 'Andrea',
       })
     }
@@ -944,7 +1038,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
           {/* Controles Flotantes Esquina Inferior Izquierda: Nicho y Objetivo */}
           <NicheGoalGlassCard
             niche={niche}
-            onNicheChange={setNiche}
+            onNicheChange={handleNicheChange}
             goal={goal}
             onGoalChange={setGoal}
             disabled={isGenerating}
@@ -969,6 +1063,12 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
             generationMode={generationMode}
             onGenerate={handleGenerate}
             onResetCutout={() => setCutoutProductUrl(null)}
+            clienteObjetivoTipo={clienteObjetivoTipo}
+            setClienteObjetivoTipo={setClienteObjetivoTipo}
+            modalidadEntrega={modalidadEntrega}
+            setModalidadEntrega={setModalidadEntrega}
+            volumenCompra={volumenCompra}
+            setVolumenCompra={setVolumenCompra}
           />
 
           {/* TARJETA / MODAL DE DIAGNÓSTICO INTELIGENTE BLITZR (3 MODELOS) */}

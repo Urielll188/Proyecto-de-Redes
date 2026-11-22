@@ -43,6 +43,9 @@ interface NichoContextValue {
     descripcion_idea: string;
     nicho_categoria?: string;
     objetivo?: string;
+    cliente_objetivo_tipo?: string;
+    modalidad_entrega?: string;
+    volumen_compra?: string;
   }) => Promise<DiagnosticoModeloIA | null>;
 }
 
@@ -148,6 +151,9 @@ export function NichoProvider({
       descripcion_idea: string;
       nicho_categoria?: string;
       objetivo?: string;
+      cliente_objetivo_tipo?: string;
+      modalidad_entrega?: string;
+      volumen_compra?: string;
     }): Promise<DiagnosticoModeloIA | null> => {
       try {
         const res = await fetchVpsPost('/api/diagnosticar-modelo', payload);

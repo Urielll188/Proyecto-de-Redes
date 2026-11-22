@@ -29,6 +29,12 @@ export interface Step1ActionPanelProps {
   onGenerate: (mode: 'fast' | 'strategic') => void
   onResetCutout?: () => void
   className?: string
+  clienteObjetivoTipo?: 'consumidor_final' | 'empresas_b2b' | 'ambos'
+  setClienteObjetivoTipo?: (val: 'consumidor_final' | 'empresas_b2b' | 'ambos') => void
+  modalidadEntrega?: 'catalogo_estandar' | 'personalizado_bajo_pedido' | 'servicio_en_sitio'
+  setModalidadEntrega?: (val: 'catalogo_estandar' | 'personalizado_bajo_pedido' | 'servicio_en_sitio') => void
+  volumenCompra?: 'menudeo' | 'mayoreo' | 'proyecto'
+  setVolumenCompra?: (val: 'menudeo' | 'mayoreo' | 'proyecto') => void
 }
 
 export function Step1ActionPanel({
@@ -50,6 +56,12 @@ export function Step1ActionPanel({
   onGenerate,
   onResetCutout,
   className = '',
+  clienteObjetivoTipo = 'consumidor_final',
+  setClienteObjetivoTipo,
+  modalidadEntrega = 'catalogo_estandar',
+  setModalidadEntrega,
+  volumenCompra = 'menudeo',
+  setVolumenCompra,
 }: Step1ActionPanelProps) {
   const [localPreview, setLocalPreview] = useState<string | null>(null)
   const [fileName, setFileName] = useState<string | null>(null)
@@ -280,15 +292,107 @@ export function Step1ActionPanel({
       )}
 
       {/* 3. IDEA INPUT GLASS BOX */}
-      <div className="rounded-2xl bg-zinc-900/70 backdrop-blur-xl border border-white/15 p-3.5 shadow-2xl focus-within:border-cyan-400/50 focus-within:shadow-[0_0_20px_rgba(6,182,212,0.15)] transition-all">
+      <div className="rounded-2xl bg-zinc-900/70 backdrop-blur-xl border border-white/15 p-3.5 shadow-2xl focus-within:border-cyan-400/50 focus-within:shadow-[0_0_20px_rgba(6,182,212,0.15)] transition-all space-y-2.5">
         <textarea
           rows={3}
           value={productDesc}
           onChange={(e) => setProductDesc(e.target.value)}
           disabled={isGenerating}
-          placeholder="Describe tu producto o la oferta que quieres lanzar hoy (ej. Sérum facial rejuvenecedor con ácido hialurónico 2x1 por 48 horas)..."
+          placeholder="Describe tu producto o la oferta que quieres lanzar hoy (ej. Impresiones 3D personalizadas o por catálogo, figuras y piezas a medida)..."
           className="w-full bg-transparent border-0 text-xs md:text-sm text-zinc-100 placeholder-zinc-500 focus:ring-0 focus:outline-none resize-none leading-relaxed disabled:opacity-50"
         />
+
+        {/* 3 FILAS COMPACTAS DE PÍLDORAS DE CONTEXTO COMERCIAL (1 CLIC) */}
+        {setClienteObjetivoTipo && setModalidadEntrega && setVolumenCompra && (
+          <div className="pt-2 border-t border-white/10 space-y-1.5 select-none">
+            {/* Fila 1: ¿Quién compra? */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider min-w-[85px]">
+                ¿Quién compra?
+              </span>
+              {[
+                { id: 'consumidor_final', label: 'Público / Personas' },
+                { id: 'empresas_b2b', label: 'Negocios / Empresas' },
+                { id: 'ambos', label: 'Ambos' },
+              ].map((opt) => {
+                const active = clienteObjetivoTipo === opt.id
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setClienteObjetivoTipo(opt.id as any)}
+                    disabled={isGenerating}
+                    className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-all cursor-pointer ${
+                      active
+                        ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/60 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                        : 'bg-white/[0.04] text-zinc-400 border border-white/10 hover:border-white/20 hover:text-zinc-200'
+                    } disabled:opacity-50`}
+                  >
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Fila 2: ¿Cómo entregas? */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider min-w-[85px]">
+                ¿Cómo entregas?
+              </span>
+              {[
+                { id: 'catalogo_estandar', label: 'Catálogo listo' },
+                { id: 'personalizado_bajo_pedido', label: 'Personalizado / A medida' },
+                { id: 'servicio_en_sitio', label: 'Servicio / En sitio' },
+              ].map((opt) => {
+                const active = modalidadEntrega === opt.id
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setModalidadEntrega(opt.id as any)}
+                    disabled={isGenerating}
+                    className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-all cursor-pointer ${
+                      active
+                        ? 'bg-purple-500/25 text-purple-200 border border-purple-400/60 shadow-[0_0_10px_rgba(168,85,247,0.3)]'
+                        : 'bg-white/[0.04] text-zinc-400 border border-white/10 hover:border-white/20 hover:text-zinc-200'
+                    } disabled:opacity-50`}
+                  >
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Fila 3: ¿Cómo compran? */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider min-w-[85px]">
+                ¿Cómo compran?
+              </span>
+              {[
+                { id: 'menudeo', label: 'Piezas sueltas' },
+                { id: 'mayoreo', label: 'Mayoreo / Lotes' },
+                { id: 'proyecto', label: 'Por proyecto' },
+              ].map((opt) => {
+                const active = volumenCompra === opt.id
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setVolumenCompra(opt.id as any)}
+                    disabled={isGenerating}
+                    className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-all cursor-pointer ${
+                      active
+                        ? 'bg-emerald-500/25 text-emerald-200 border border-emerald-400/60 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                        : 'bg-white/[0.04] text-zinc-400 border border-white/10 hover:border-white/20 hover:text-zinc-200'
+                    } disabled:opacity-50`}
+                  >
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 4. DUAL ACTION TRIGGER BUTTONS */}
