@@ -386,8 +386,8 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         scores: { distribuidor: 25, servicios: 20, particular: 95 },
         titulo_veredicto: `Modelo Recomendado: Emprendedor B2C (Inbound Seguro — ${giroLimpio})`,
         explicacion_estrategica: esPersonalizado
-          ? `Al vender ${giroLimpio} personalizado directo a personas (B2C), escribir en frío a desconocidos genera reportes y bloquea tu línea de WhatsApp. Conviene operar 100% Inbound: los clientes llegan atraídos por tus anuncios de 03 • ESTUDIO y Andrea solicita medidas, archivo o diseño para cotizar y cerrar de forma segura.`
-          : `Tu oferta de ${giroLimpio} va dirigida al consumidor final (B2C). Enviar mensajes masivos en frío causa bloqueos de WhatsApp. En Modo Inbound 24/7, atraes interesados con los creativos de 03 • ESTUDIO y Andrea atiende y cierra pedidos 24/7 en cuanto te contactan.`,
+          ? `Al vender ${giroLimpio} personalizado directo a personas (B2C), escribir en frío a desconocidos genera reportes y bloquea tu línea de WhatsApp. Conviene operar 100% Inbound: los clientes llegan atraídos por tus anuncios de 02 • ESTUDIO y Andrea solicita medidas, archivo o diseño para cotizar y cerrar de forma segura.`
+          : `Tu oferta de ${giroLimpio} va dirigida al consumidor final (B2C). Enviar mensajes masivos en frío causa bloqueos de WhatsApp. En Modo Inbound 24/7, atraes interesados con los creativos de 02 • ESTUDIO y Andrea atiende y cierra pedidos 24/7 en cuanto te contactan.`,
         clientes_objetivo: esPersonalizado
           ? `Compradores de ${giroLimpio}, personas que buscan regalos personalizados, coleccionistas o clientes que solicitan piezas a medida`
           : `Consumidores finales, seguidores en redes sociales y personas interesadas en ${giroLimpio}`,
@@ -1349,7 +1349,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
           </span>
         </div>
 
-        {/* Paso 03 */}
+        {/* Paso 02 (Estudio) */}
         <div
           onClick={step !== 3 && hasInitialCampaign ? () => setStep(3) : undefined}
           className={`flex items-center gap-3 ${
@@ -1368,7 +1368,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
               step === 3 ? 'font-semibold text-cyan-400' : 'font-medium text-zinc-500'
             }`}
           >
-            03 • ESTUDIO
+            02 • ESTUDIO
           </span>
         </div>
       </div>
@@ -1544,7 +1544,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
                       {
                         id: 'EMPRENDEDOR_B2C' as ModeloNegocioType,
                         title: '3. Particular B2C (Inbound)',
-                        desc: 'Protección Anti-Baneo: Cero spam en frío. Atraes clientes con 03 • ESTUDIO y Andrea responde 24/7.',
+                        desc: 'Protección Anti-Baneo: Cero spam en frío. Atraes clientes con 02 • ESTUDIO y Andrea responde 24/7.',
                       },
                     ].map((opt) => {
                       const active = selectedModelo === opt.id
@@ -1909,8 +1909,8 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
             <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
               <div>
                 <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
-                  <span className="text-emerald-400">03 •</span>
-                  <span>Estudio Publicitario Profesional (1080×1350 HD)</span>
+                  <span className="text-emerald-400">02 •</span>
+                  <span>Estudio Creativo Publicitario (1080×1350 HD)</span>
                 </h2>
                 <p className="text-xs text-zinc-400 mt-0.5">
                   Lienzo unificado de nivel agencia con integración de producto sin fondo y Copiloto de Diseño IA en tiempo real.
@@ -1955,7 +1955,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
                     onClick={() => setStep(2)}
                     className="text-[11px] text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
                   >
-                    Abrir vista extendida de guiones (02) →
+                    Abrir vista extendida de guiones →
                   </button>
                 </div>
 
