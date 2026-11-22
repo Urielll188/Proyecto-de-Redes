@@ -50,6 +50,8 @@ export interface NichoVps {
   diagnostico_ia?: DiagnosticoModeloIA | Record<string, unknown>
 }
 
+export type EstrategiaRutaType = 'cercanos_primero' | 'lejanos_primero' | 'por_horario'
+
 export interface PedidoVps {
   id: number
   folio: string
@@ -64,6 +66,14 @@ export interface PedidoVps {
   monto_venta: number
   comision_agencia: number
   estatus_entrega: string
+  tipo_pedido?: string
+  orden_parada?: number
+  distancia_tramo_km?: number
+  distancia_origen_km?: number
+  motivo_orden?: string
+  lat?: number
+  lng?: number
+  es_demo?: boolean
 }
 
 export interface SeguimientoVps {

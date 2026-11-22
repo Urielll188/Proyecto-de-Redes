@@ -26,6 +26,7 @@ import csv
 import hashlib
 import io
 import json
+import math
 import mimetypes
 import os
 import re
@@ -2729,6 +2730,291 @@ Mensaje del dueño/a: "{mensaje_paola}"
 
 
 
+CACHE_GEOCODING_RUTA = {}
+
+CENTROIDES_MUNICIPIOS_MX = {
+    "cuauhtemoc": (19.4326, -99.1332),
+    "centro": (19.4326, -99.1332),
+    "cdmx": (19.4326, -99.1332),
+    "benito juarez": (19.3984, -99.1577),
+    "coyoacan": (19.3467, -99.1617),
+    "miguel hidalgo": (19.4326, -99.2000),
+    "azcapotzalco": (19.4869, -99.1859),
+    "gustavo a. madero": (19.4873, -99.1236),
+    "gustavo a madero": (19.4873, -99.1236),
+    "gam": (19.4873, -99.1236),
+    "venustiano carranza": (19.4239, -99.1074),
+    "iztacalco": (19.3953, -99.0975),
+    "iztapalapa": (19.3553, -99.0622),
+    "tlahuac": (19.2869, -99.0051),
+    "xochimilco": (19.2572, -99.1030),
+    "tlalpan": (19.2897, -99.1672),
+    "alvaro obregon": (19.3587, -99.2225),
+    "cuajimalpa": (19.3556, -99.2997),
+    "magdalena contreras": (19.3220, -99.2392),
+    "milpa alta": (19.1922, -99.0231),
+    "ecatepec": (19.6018, -99.0507),
+    "nezahualcoyotl": (19.4006, -99.0148),
+    "neza": (19.4006, -99.0148),
+    "tlalnepantla": (19.5367, -99.1948),
+    "naucalpan": (19.4785, -99.2396),
+    "atizapan": (19.5562, -99.2675),
+    "cuautitlan izcalli": (19.6458, -99.2163),
+    "cuautitlan": (19.6710, -99.1804),
+    "tultitlan": (19.6450, -99.1685),
+    "coacalco": (19.6319, -99.1009),
+    "tecámac": (19.7128, -98.9689),
+    "tecamac": (19.7128, -98.9689),
+    "chimalhuacan": (19.4208, -98.9535),
+    "texcoco": (19.5118, -98.8829),
+    "los reyes la paz": (19.3606, -98.9774),
+    "la paz": (19.3606, -98.9774),
+    "ixtapaluca": (19.3142, -98.8822),
+    "valle de chalco": (19.2917, -98.9389),
+    "chalco": (19.2647, -98.8975),
+    "huixquilucan": (19.3622, -99.3497),
+    "metepec": (19.2519, -99.6047),
+    "toluca": (19.2826, -99.6557),
+    "lerma": (19.2858, -99.5117),
+    "zumpango": (19.7969, -99.0989),
+    "nicolas romero": (19.6267, -99.3144),
+    "puebla": (19.0414, -98.2063),
+    "queretaro": (20.5888, -100.3899),
+    "pachuca": (20.1011, -98.7591),
+    "cuernavaca": (18.9242, -99.2216),
+    "guadalajara": (20.6597, -103.3496),
+    "monterrey": (25.6866, -100.3161),
+}
+
+
+def _distancia_haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * (math.sin(dlambda / 2.0) ** 2)
+    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
+    return r * c
+
+
+def _geocodificar_direccion_ruta(direccion: str, municipio: str = "", t_inicio_global: float = 0.0) -> tuple:
+    dir_clean = str(direccion or "").strip()
+    muni_clean = str(municipio or "").strip()
+    key_raw = f"{dir_clean}|{muni_clean}".lower().strip()
+    if key_raw in CACHE_GEOCODING_RUTA:
+        return CACHE_GEOCODING_RUTA[key_raw]
+
+    # 1. Revisar si la cadena incluye coordenadas explícitas lat,lng
+    m_coord = re.search(r"(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})", f"{dir_clean} {muni_clean}")
+    if m_coord:
+        try:
+            lat_val = float(m_coord.group(1))
+            lng_val = float(m_coord.group(2))
+            if -90 <= lat_val <= 90 and -180 <= lng_val <= 180:
+                CACHE_GEOCODING_RUTA[key_raw] = (lat_val, lng_val)
+                return (lat_val, lng_val)
+        except Exception:
+            pass
+
+    # 2. Intentar Nominatim dentro del presupuesto máximo de 5.5 segundos
+    presupuesto_ok = (t_inicio_global <= 0.0) or ((time.time() - t_inicio_global) < 5.2)
+    if presupuesto_ok and (dir_clean or muni_clean):
+        q_parts = [p for p in [dir_clean, muni_clean, "Mexico"] if p]
+        q_str = ", ".join(q_parts)
+        try:
+            url_nom = f"https://nominatim.openstreetmap.org/search?format=json&limit=1&q={urllib.parse.quote(q_str)}"
+            req = urllib.request.Request(
+                url_nom,
+                headers={"User-Agent": "BlitzrLogistics/1.0 (logistica@blitzr.mx)"}
+            )
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                datos_nom = json.loads(resp.read().decode("utf-8", errors="ignore"))
+                if isinstance(datos_nom, list) and len(datos_nom) > 0:
+                    lat_nom = float(datos_nom[0]["lat"])
+                    lon_nom = float(datos_nom[0]["lon"])
+                    CACHE_GEOCODING_RUTA[key_raw] = (lat_nom, lon_nom)
+                    return (lat_nom, lon_nom)
+        except Exception:
+            pass
+
+    # 3. Fallback determinista por centroide municipal + micro-offset por calle
+    import hashlib
+    texto_busqueda = _quitar_acentos_visual(f"{muni_clean} {dir_clean}".lower())
+    base_lat, base_lon = (19.4326, -99.1332)
+    matched_muni = False
+    for k_muni, coords_muni in CENTROIDES_MUNICIPIOS_MX.items():
+        if k_muni in texto_busqueda:
+            base_lat, base_lon = coords_muni
+            matched_muni = True
+            break
+
+    h_digest = hashlib.md5(key_raw.encode("utf-8", errors="ignore")).hexdigest()
+    # Si encontramos el municipio, variamos +-0.008 grados (~800m); si no, variamos +-0.04 grados
+    amplitud = 0.008 if matched_muni else 0.035
+    off_lat = ((int(h_digest[:4], 16) / 65535.0) - 0.5) * 2.0 * amplitud
+    off_lon = ((int(h_digest[4:8], 16) / 65535.0) - 0.5) * 2.0 * amplitud
+    res_coords = (round(base_lat + off_lat, 6), round(base_lon + off_lon, 6))
+    CACHE_GEOCODING_RUTA[key_raw] = res_coords
+    return res_coords
+
+
+def _extraer_hora_inicio_num(horario_str: str) -> float:
+    txt = str(horario_str or "").strip().lower()
+    if not txt:
+        return 12.0
+    m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|hrs|horas)?", txt)
+    if not m:
+        return 12.0
+    hora = int(m.group(1))
+    minuto = int(m.group(2) or 0)
+    ampm = (m.group(3) or "").replace(".", "")
+    if ampm == "pm" and hora < 12:
+        hora += 12
+    elif ampm == "am" and hora == 12:
+        hora = 0
+    elif not ampm and 1 <= hora <= 6:
+        # Si dice "2 a 5" sin AM/PM suele ser 14:00
+        if "tarde" in txt:
+            hora += 12
+    return float(hora) + (minuto / 60.0)
+
+
+def optimizar_ruta_paradas(punto_partida: str, estrategia: str, paradas: list) -> dict:
+    t0 = time.time()
+    origen_txt = str(punto_partida or "").strip() or "Centro CDMX, Cuauhtemoc"
+    estrategia_norm = str(estrategia or "cercanos_primero").strip().lower()
+    if estrategia_norm not in ("cercanos_primero", "lejanos_primero", "por_horario"):
+        estrategia_norm = "cercanos_primero"
+
+    lat_orig, lon_orig = _geocodificar_direccion_ruta(origen_txt, "", t0)
+
+    pendientes = []
+    for idx, p in enumerate(paradas or []):
+        if not isinstance(p, dict):
+            continue
+        item = dict(p)
+        dir_p = str(item.get("direccion_gps") or item.get("direccion") or "").strip()
+        muni_p = str(item.get("municipio") or "").strip()
+        lat_p, lon_p = _geocodificar_direccion_ruta(dir_p, muni_p, t0)
+        dist_orig = _distancia_haversine_km(lat_orig, lon_orig, lat_p, lon_p)
+        hora_num = _extraer_hora_inicio_num(str(item.get("horario_recepcion") or item.get("horario") or ""))
+        item["_lat"] = lat_p
+        item["_lon"] = lon_p
+        item["_dist_origen"] = dist_orig
+        item["_hora_num"] = hora_num
+        item["_idx_orig"] = idx
+        pendientes.append(item)
+
+    ordenadas = []
+    curr_lat, curr_lon = lat_orig, lon_orig
+    dist_acumulada = 0.0
+
+    if estrategia_norm == "por_horario":
+        # Ordenar cronológicamente por horario y desempatar por cercanía al punto actual
+        while pendientes:
+            min_hora = min(x["_hora_num"] for x in pendientes)
+            candidatos_hora = [x for x in pendientes if abs(x["_hora_num"] - min_hora) <= 0.25]
+            elegido = min(
+                candidatos_hora,
+                key=lambda x: _distancia_haversine_km(curr_lat, curr_lon, x["_lat"], x["_lon"])
+            )
+            pendientes.remove(elegido)
+            dist_tramo = _distancia_haversine_km(curr_lat, curr_lon, elegido["_lat"], elegido["_lon"])
+            dist_acumulada += dist_tramo
+            curr_lat, curr_lon = elegido["_lat"], elegido["_lon"]
+            orden_num = len(ordenadas) + 1
+            horario_lbl = str(elegido.get("horario_recepcion") or "Horario abierto").strip()
+            elegido["orden_parada"] = orden_num
+            elegido["distancia_tramo_km"] = round(dist_tramo, 1)
+            elegido["distancia_origen_km"] = round(elegido["_dist_origen"], 1)
+            elegido["motivo_orden"] = f"Prioridad por horario ({horario_lbl}) • +{round(dist_tramo, 1)} km"
+            ordenadas.append(elegido)
+
+    elif estrategia_norm == "lejanos_primero":
+        # 1. Arrancar en la parada más retirada del punto de partida
+        if pendientes:
+            primero = max(pendientes, key=lambda x: x["_dist_origen"])
+            pendientes.remove(primero)
+            dist_tramo = _distancia_haversine_km(curr_lat, curr_lon, primero["_lat"], primero["_lon"])
+            dist_acumulada += dist_tramo
+            curr_lat, curr_lon = primero["_lat"], primero["_lon"]
+            primero["orden_parada"] = 1
+            primero["distancia_tramo_km"] = round(dist_tramo, 1)
+            primero["distancia_origen_km"] = round(primero["_dist_origen"], 1)
+            primero["motivo_orden"] = f"Punto más lejano a {round(primero['_dist_origen'], 1)} km del origen (inicio retorno)"
+            ordenadas.append(primero)
+
+        # 2. Encadenar el regreso hacia el punto de partida
+        while pendientes:
+            elegido = min(
+                pendientes,
+                key=lambda x: (
+                    _distancia_haversine_km(curr_lat, curr_lon, x["_lat"], x["_lon"]) * 0.7
+                    + x["_dist_origen"] * 0.3
+                )
+            )
+            pendientes.remove(elegido)
+            dist_tramo = _distancia_haversine_km(curr_lat, curr_lon, elegido["_lat"], elegido["_lon"])
+            dist_acumulada += dist_tramo
+            curr_lat, curr_lon = elegido["_lat"], elegido["_lon"]
+            orden_num = len(ordenadas) + 1
+            elegido["orden_parada"] = orden_num
+            elegido["distancia_tramo_km"] = round(dist_tramo, 1)
+            elegido["distancia_origen_km"] = round(elegido["_dist_origen"], 1)
+            elegido["motivo_orden"] = f"Retorno hacia origen • Tramo +{round(dist_tramo, 1)} km (a {round(elegido['_dist_origen'], 1)} km de base)"
+            ordenadas.append(elegido)
+
+    else:
+        # cercanos_primero (Vecino más cercano desde el punto de partida)
+        while pendientes:
+            elegido = min(
+                pendientes,
+                key=lambda x: _distancia_haversine_km(curr_lat, curr_lon, x["_lat"], x["_lon"])
+            )
+            pendientes.remove(elegido)
+            dist_tramo = _distancia_haversine_km(curr_lat, curr_lon, elegido["_lat"], elegido["_lon"])
+            dist_acumulada += dist_tramo
+            curr_lat, curr_lon = elegido["_lat"], elegido["_lon"]
+            orden_num = len(ordenadas) + 1
+            elegido["orden_parada"] = orden_num
+            elegido["distancia_tramo_km"] = round(dist_tramo, 1)
+            elegido["distancia_origen_km"] = round(elegido["_dist_origen"], 1)
+            if orden_num == 1:
+                elegido["motivo_orden"] = f"Más cercano al punto de partida ({round(dist_tramo, 1)} km)"
+            else:
+                elegido["motivo_orden"] = f"Siguiente más cercano • Tramo +{round(dist_tramo, 1)} km"
+            ordenadas.append(elegido)
+
+    # Limpiar llaves internas y construir URL multi-parada de Google Maps (máximo 9 paradas)
+    segmentos_maps = [urllib.parse.quote(f"{origen_txt}, Mexico", safe="")]
+    for p_ord in ordenadas[:9]:
+        dir_g = str(p_ord.get("direccion_gps") or "").strip()
+        muni_g = str(p_ord.get("municipio") or "").strip()
+        destino_str = ", ".join([x for x in [dir_g, muni_g, "Mexico"] if x]) or "CDMX, Mexico"
+        segmentos_maps.append(urllib.parse.quote(destino_str, safe=""))
+
+    for p_ord in ordenadas:
+        p_ord["lat"] = p_ord.pop("_lat", None)
+        p_ord["lng"] = p_ord.pop("_lon", None)
+        p_ord.pop("_dist_origen", None)
+        p_ord.pop("_hora_num", None)
+        p_ord.pop("_idx_orig", None)
+
+    google_maps_multi_url = "https://www.google.com/maps/dir/" + "/".join(segmentos_maps)
+
+    return {
+        "ok": True,
+        "punto_partida": origen_txt,
+        "coords_origen": {"lat": lat_orig, "lng": lon_orig},
+        "estrategia": estrategia_norm,
+        "distancia_total_km": round(dist_acumulada, 1),
+        "total_paradas": len(ordenadas),
+        "google_maps_multi_url": google_maps_multi_url,
+        "paradas_ordenadas": ordenadas,
+    }
+
+
 ESTADO_ULTIMO_FLYER_DUENO = {
     "titulo": "PAQUETE COMPLETO DE MANTENIMIENTO",
     "subtitulo": "Malla Testalera + Transportadora Calibre 14 + Balero 7210B Aleman",
@@ -3715,17 +4001,37 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             pago = str(data.get("metodo_pago") or "TRANSFERENCIA_CONTRA_ENTREGA").strip()
             default_tipo = "1 Paquete Completo Mallas Tlaxcalli ($1,713)" if es_mallas else (nicho_ctx.get("oferta_gancho") or f"Pedido {nicho_ctx.get('nombre_negocio', '')}")
             tipo = str(data.get("tipo_pedido") or default_tipo).strip()
-            monto = float(data.get("monto", 1713.0 if es_mallas else 0.0) or 0.0)
-            comision = float(data.get("comision", 200.0) or 200.0)
+            raw_monto = data.get("monto_venta") if data.get("monto_venta") not in (None, "") else data.get("monto")
+            if raw_monto in (None, ""):
+                monto = 1713.0 if es_mallas else 0.0
+            else:
+                try:
+                    monto = float(str(raw_monto).replace("$", "").replace(",", "").strip() or 0.0)
+                except Exception:
+                    monto = 1713.0 if es_mallas else 0.0
+
+            raw_comision = data.get("comision_agencia") if data.get("comision_agencia") not in (None, "") else data.get("comision")
+            if raw_comision in (None, ""):
+                comision = 200.0
+            else:
+                try:
+                    comision = float(str(raw_comision).replace("$", "").replace(",", "").strip() or 200.0)
+                except Exception:
+                    comision = 200.0
+
+            # Permitir registrar múltiples paradas manuales si trae flag forzar_nuevo o distinta dirección
+            forzar_nuevo = bool(data.get("forzar_nuevo", False))
 
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
             hoy_pref = datetime.now().strftime("%Y-%m-%d")
-            cur.execute(
-                "SELECT id FROM pedidos_comisiones WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?) AND telefono = ? AND fecha_cierre LIKE ? ORDER BY id DESC LIMIT 1",
-                (cid_resolved, tel, f"{hoy_pref}%")
-            )
-            ya_existe = cur.fetchone()
+            ya_existe = None
+            if not forzar_nuevo:
+                cur.execute(
+                    "SELECT id FROM pedidos_comisiones WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?) AND telefono = ? AND fecha_cierre LIKE ? ORDER BY id DESC LIMIT 1",
+                    (cid_resolved, tel, f"{hoy_pref}%")
+                )
+                ya_existe = cur.fetchone()
             if not ya_existe:
                 cur.execute("SELECT COUNT(*) FROM pedidos_comisiones")
                 n = cur.fetchone()[0] + 1
@@ -3768,6 +4074,26 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             conn.close()
             bd_info = obtener_datos_completos_bd(cid_resolved)
             self._send_json({"ok": True, "pedidos": bd_info["pedidos"]})
+            return
+
+        if clean_path == "/api/optimizar_ruta":
+            punto_partida = str(data.get("punto_partida") or "Centro CDMX, Cuauhtemoc").strip()
+            estrategia = str(data.get("estrategia") or "cercanos_primero").strip().lower()
+            paradas_req = data.get("paradas")
+            if not isinstance(paradas_req, list):
+                email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+                cid_req = str(data.get("cliente_id") or "").strip()
+                cid_resolved, _, _ = resolver_contexto_tenant_request(email_req, cid_req)
+                if cid_resolved:
+                    bd_info = obtener_datos_completos_bd(cid_resolved)
+                    paradas_req = [
+                        p for p in (bd_info.get("pedidos") or [])
+                        if str(p.get("estatus_entrega") or "") == "EN_RUTA_REPARTIDOR"
+                    ]
+                else:
+                    paradas_req = []
+            res_ruta = optimizar_ruta_paradas(punto_partida, estrategia, paradas_req)
+            self._send_json(res_ruta)
             return
 
         if clean_path in ("/api/generar_marketing", "/api/generar-campana"):

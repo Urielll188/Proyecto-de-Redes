@@ -28,6 +28,7 @@ const ALLOWED_POST_ENDPOINTS = [
   '/api/tts_voz_mujer',
   '/api/registrar_pedido',
   '/api/confirmar_entrega_comision',
+  '/api/optimizar_ruta',
   '/api/generar_marketing',
   '/api/generar-campana',
   '/api/control_motor',
