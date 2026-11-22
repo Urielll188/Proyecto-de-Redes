@@ -442,6 +442,18 @@ def normalizar_modelo_negocio(val: str) -> str:
     return "DISTRIBUIDOR_B2B"
 
 
+def _limpiar_giro_texto(texto: str) -> str:
+    limpio = re.sub(r"\s+", " ", str(texto or "").strip())
+    patron_prefijo = r"^(?:yo\s+)?(?:hago|vendo|ofrezco|fabrico|soy|realizo|me\s+dedico\s+a|dedico\s+a|hacemos|vendemos|ofrecemos|fabricamos|somos|realizamos|nos\s+dedicamos\s+a)\s+"
+    while True:
+        nuevo = re.sub(patron_prefijo, "", limpio, flags=re.IGNORECASE).strip()
+        if nuevo == limpio:
+            break
+        limpio = nuevo
+    limpio = re.sub(r"^(?:hacer|vender|ofrecer|fabricar|realizar)\s+", "", limpio, flags=re.IGNORECASE).strip()
+    return limpio[:70] or "tu producto o servicio"
+
+
 def diagnosticar_modelo_heuristico(
     descripcion_idea: str,
     nicho_categoria: str = "",
@@ -451,7 +463,7 @@ def diagnosticar_modelo_heuristico(
     volumen_compra: str = ""
 ) -> dict:
     idea_raw = str(descripcion_idea or "").strip()
-    giro_limpio = re.sub(r"\s+", " ", idea_raw)[:70] or "tu producto o servicio"
+    giro_limpio = _limpiar_giro_texto(idea_raw)
     texto_full = motor_m1.quitar_acentos(f"{idea_raw} {nicho_categoria} {objetivo}").lower()
 
     cli_tipo = str(cliente_objetivo_tipo or "").strip().lower()
@@ -615,6 +627,7 @@ def diagnosticar_modelo_negocio_ia(
     idea_clean = str(descripcion_idea or "").strip()
     if not idea_clean:
         return base_heuristica
+    giro_limpio_ia = _limpiar_giro_texto(idea_clean)
 
     llaves = obtener_llaves_ia_backend()
     if not llaves:
@@ -631,10 +644,11 @@ def diagnosticar_modelo_negocio_ia(
         "- Si la modalidad es 'servicio_en_sitio' o proyecto para empresas ('personalizado_bajo_pedido' + 'empresas_b2b'/'ambos' + 'proyecto'): DEBES asignar 'SERVICIOS_B2B' (servicios >= 88).\n"
         "- Si el cliente objetivo es 'empresas_b2b' y compran por 'mayoreo': DEBES asignar 'DISTRIBUIDOR_B2B' (distribuidor >= 88).\n\n"
         "PROHIBICIÓN ESTRICTA:\n"
-        "Queda TERMINANTEMENTE PROHIBIDO usar textos genéricos como 'talleres, tiendas minoristas, restaurantes' a menos que el negocio venda insumos a esos rubros. En 'clientes_objetivo', 'explicacion_estrategica' y 'enfoque_andrea', DEBES interpolar EXACTAMENTE el producto o servicio que el usuario describió (por ejemplo, para impresiones 3D: 'compradores de regalos personalizados, coleccionistas, emprendedores o despachos que requieran prototipos').\n"
+        "Queda TERMINANTEMENTE PROHIBIDO usar textos genéricos como 'talleres, tiendas minoristas, restaurantes' a menos que el negocio venda insumos a esos rubros. En 'clientes_objetivo', 'explicacion_estrategica' y 'enfoque_andrea', DEBES interpolar EXACTAMENTE el sustantivo del producto o servicio sin verbos en primera persona como 'hago' o 'vendo' (por ejemplo, para impresiones 3D: 'compradores de regalos personalizados, coleccionistas, emprendedores o despachos que requieran prototipos').\n"
         "Si es personalizado bajo pedido, Andrea debe solicitar medidas, color, material, diseño o archivo de referencia antes de cotizar.\n\n"
         f"DATOS DEL USUARIO:\n"
-        f"- Descripción de la idea/oferta: {idea_clean[:800]}\n"
+        f"- Producto o servicio limpio: {giro_limpio_ia}\n"
+        f"- Descripción original: {idea_clean[:800]}\n"
         f"- Categoría seleccionada: {nicho_categoria}\n"
         f"- Objetivo de conversión: {objetivo}\n"
         f"- ¿Quién compra?: {cliente_objetivo_tipo or 'No especificado'}\n"
@@ -1839,16 +1853,71 @@ def llamar_pool_ia_real(session_id: str, mensaje_usuario: str, incluir_voz: bool
     return {"respuesta": "⚠️ Rotando modelo del Pool, envía de nuevo.", "fotos_adjuntas": []}
 
 
-def generar_campana_marketing_ia(enfoque: str, zona: str) -> dict:
+def generar_campana_marketing_ia(
+    enfoque: str,
+    zona: str,
+    owner_email: str = "",
+    cliente_id: str = "",
+    modelo_negocio: str = "",
+    modalidad_entrega: str = ""
+) -> dict:
     """
-    Módulo 5: Genera los 4 posts reales listos para publicar en Facebook,
-    Instagram, TikTok y Estados de WhatsApp respetando las reglas de Mallas Tlaxcalli.
+    Módulo 5 / 03 • ESTUDIO: Genera kit multicanal (Estados de WhatsApp,
+    Facebook Marketplace/Grupos, Reels/TikTok y mensaje disparador wa.me)
+    respetando Mallas Tlaxcalli para el tenant base y adaptándose al modelo
+    y modalidad del usuario para cualquier otro negocio.
     """
-    prompt_mkt = f"""
+    email_norm = str(owner_email or "").strip().lower()
+    cid_req = str(cliente_id or "").strip()
+    nicho_ctx = None
+    cid_target = "mallas_tlaxcalli"
+
+    if email_norm and email_norm != OWNER_EMAIL_MALLAS:
+        cid_res, nicho_res, _ = resolver_contexto_tenant_request(email_norm, cid_req)
+        if cid_res and nicho_res:
+            cid_target = cid_res
+            nicho_ctx = nicho_res
+        else:
+            cid_target = cid_req or "tenant_custom"
+    elif cid_req and cid_req.lower() != "mallas_tlaxcalli":
+        cid_target = motor_m1.normalizar_cliente_id(cid_req)
+        nicho_ctx = obtener_nicho_bd(cid_target)
+
+    es_mallas = (
+        cid_target == "mallas_tlaxcalli"
+        and (email_norm == OWNER_EMAIL_MALLAS or not email_norm)
+        and not (enfoque and not any(w in enfoque.lower() for w in ("malla", "1,713", "1713", "tortill", "balero")))
+    )
+
+    zona_clean = str(zona or "CDMX y Zona Metropolitana").strip()
+
+    if es_mallas:
+        copy_wa_status = (
+            "⚙️ *MALLAS TLAXCALLI* • Paquete Completo de Mantenimiento ($1,713 MXN): "
+            "Testalera 23x140 + Transportadora Cal 14 + Balero 7210B alemán con Envío GRATIS y pago al recibir. "
+            "📲 Responde este estado o toca el enlace para pedir tu kit con Paola hoy 👇"
+        )
+        copy_marketplace = (
+            "🔥 PAQUETE COMPLETO MANTENIMIENTO TORTILLADORA ($1,713 MXN) — ENVÍO GRATIS\n\n"
+            "✅ 1 Malla Testalera (23 cm x 1.40 m)\n"
+            "✅ 1 Malla Transportadora (10 pulg x 9 m Calibre 14 reforzado)\n"
+            "✅ 1 Balero 7210B alemán de alta duración\n"
+            "💰 Ahorra casi $1,000 MXN directo de fábrica vs refaccionaria.\n"
+            "🛡️ Cero riesgo: Pagas al recibir con Transferencia o Mercado Pago.\n"
+            f"📍 Entregas sin costo en {zona_clean}\n\n"
+            "📲 Pide tu paquete directo por WhatsApp aquí:"
+        )
+        copy_reels = (
+            "🎥 [0-3s] ¿Sigues gastando más de $2,700 en refaccionaria cada que cambias mallas de tu tortilladora?\n"
+            "🔧 [3-12s] Mira el acero Calibre 14 real de Mallas Tlaxcalli: Malla Testalera, Transportadora y Balero 7210B alemán juntos por solo $1,713 MXN.\n"
+            "📲 [12-20s] Envío gratis hasta tu tortillería y pagas al recibir. Toca el enlace de WhatsApp en mi perfil y Paola agenda tu entrega hoy."
+        )
+        mensaje_disparador = "Hola Paola 👋 Vi su promoción del Paquete Completo de Mantenimiento ($1,713 MXN) con envío gratis y me gustaría pedir informes."
+        prompt_mkt = f"""
 Eres el Director de Marketing de Mallas Tlaxcalli.
 Genera contenido comercial 100% realista, persuasivo y con jerga auténtica de dueños de tortillerías y mecánicos en México (sin sonar a robot ni IA falsa).
-Enfoque de la campaña: {enfoque}
-Zona destacada: {zona}
+Enfoque de la campaña: {enfoque or 'Ahorro de $1,000 MXN vs Refaccionaria ($1,713 Paquete Completo)'}
+Zona destacada: {zona_clean}
 
 Reglas obligatorias del producto:
 - Paquete Completo de Mantenimiento Mallas Tlaxcalli: $1,713 MXN con envío GRATIS a domicilio.
@@ -1866,13 +1935,106 @@ Devuelve tu respuesta dividida claramente con estos 4 encabezados exactos:
 ### 🎵 TIKTOK / REELS (GUION DE VIDEO DE 20 SEGUNDOS MOSTRANDO EL ACERO REAL)
 ### 🟢 ESTADO DE WHATSAPP BUSINESS (TEXTO CORTO + LLAMADO A LA ACCIÓN)
 """
+    else:
+        idea_fuente = enfoque or (nicho_ctx or {}).get("oferta_gancho") or (nicho_ctx or {}).get("nombre_negocio") or "productos y servicios"
+        giro_limpio = _limpiar_giro_texto(idea_fuente)
+        nombre_neg = (nicho_ctx or {}).get("nombre_negocio") or giro_limpio[:40].capitalize()
+        nombre_ag = (nicho_ctx or {}).get("nombre_agente") or "Andrea"
+        diag_saved = (nicho_ctx or {}).get("diagnostico_ia") if isinstance((nicho_ctx or {}).get("diagnostico_ia"), dict) else {}
+        mod_neg = normalizar_modelo_negocio(modelo_negocio or (nicho_ctx or {}).get("modelo_negocio") or diag_saved.get("modelo_recomendado") or "EMPRENDEDOR_B2C")
+        mod_ent = str(modalidad_entrega or diag_saved.get("modalidad_entrega") or "").strip().lower()
+
+        es_personalizado = (
+            mod_ent == "personalizado_bajo_pedido"
+            or any(w in giro_limpio.lower() for w in ("personaliz", "3d", "medida", "diseño", "diseno", "custom", "pedido"))
+        )
+
+        if es_personalizado:
+            mensaje_disparador = f"Hola {nombre_ag} 👋 Vi su anuncio de {giro_limpio} y me gustaría cotizar un pedido personalizado."
+            copy_wa_status = (
+                f"✨ ¡Hacemos realidad tus ideas en *{giro_limpio}*! "
+                "Trabajamos diseños personalizados a tu medida y modelos de catálogo. "
+                f"📲 Responde este estado o toca el enlace para enviarnos tu idea, foto o medidas y {nombre_ag} te cotiza al instante 👇"
+            )
+            copy_marketplace = (
+                f"🔥 {giro_limpio.upper()} — DISEÑOS PERSONALIZADOS Y CATÁLOGO\n\n"
+                "✅ Piezas y pedidos hechos a tu medida con excelente acabado\n"
+                "✅ Cotiza enviando tu idea, foto, medidas o archivo de referencia\n"
+                f"✅ Atención inmediata 24/7 con {nombre_ag}\n"
+                f"📍 Entregas y envíos seguros en {zona_clean}\n\n"
+                "📲 Mándanos mensaje directo por WhatsApp aquí:"
+            )
+            copy_reels = (
+                f"🎥 [0-3s] ¿Buscas {giro_limpio} hecho exactamente a tu gusto o medida?\n"
+                "✨ [3-12s] Mira cómo cuidamos cada detalle en nuestros pedidos personalizados y de catálogo para que recibas una pieza única.\n"
+                f"📲 [12-20s] Toca el enlace de WhatsApp en mi perfil, mándanos tu idea o foto de referencia y {nombre_ag} te cotiza en minutos."
+            )
+        elif mod_neg == "SERVICIOS_B2B" or mod_ent == "servicio_en_sitio":
+            mensaje_disparador = f"Hola {nombre_ag} 👋 Vi su servicio de {giro_limpio} y me gustaría solicitar una cotización o visita técnica."
+            copy_wa_status = (
+                f"🛠️ Especialistas en *{giro_limpio}* para empresas, comercios y proyectos en {zona_clean}. "
+                f"Diagnóstico profesional y atención inmediata. 📲 Toca el enlace para agendar cotización o visita técnica con {nombre_ag} 👇"
+            )
+            copy_marketplace = (
+                f"🛠️ SERVICIO PROFESIONAL: {giro_limpio.upper()}\n\n"
+                "✅ Atención especializada a empresas, oficinas, comercios y proyectos\n"
+                "✅ Levantamiento técnico y cotización transparente\n"
+                f"📍 Cobertura en {zona_clean} con garantía de servicio\n\n"
+                f"📲 Agenda tu visita técnica o cotización por WhatsApp con {nombre_ag} aquí:"
+            )
+            copy_reels = (
+                f"🎥 [0-3s] ¿Tu negocio o proyecto requiere {giro_limpio} con garantía profesional?\n"
+                "🛠️ [3-12s] Así ejecutamos cada instalación y servicio en sitio cuidando tiempos y calidad técnica.\n"
+                f"📲 [12-20s] Toca el enlace de WhatsApp en el perfil y {nombre_ag} agenda tu levantamiento o cotización hoy mismo."
+            )
+        else:
+            mensaje_disparador = f"Hola {nombre_ag} 👋 Vi su catálogo de {giro_limpio} y me gustaría conocer precios y disponibilidad."
+            copy_wa_status = (
+                f"🔥 ¡Ya disponible en *{nombre_neg}*: {giro_limpio}! "
+                f"Calidad garantizada y entregas rápidas en {zona_clean}. "
+                f"📲 Responde este estado o toca el enlace para pedir el catálogo a {nombre_ag} 👇"
+            )
+            copy_marketplace = (
+                f"✨ {giro_limpio.upper()} — DISPONIBLE CON ENTREGA RÁPIDA\n\n"
+                "✅ Excelente calidad y precios directos\n"
+                f"✅ Atención inmediata 24/7 con {nombre_ag}\n"
+                f"📍 Entregas y envíos en {zona_clean}\n\n"
+                "📲 Pide catálogo y haz tu pedido por WhatsApp aquí:"
+            )
+            copy_reels = (
+                f"🎥 [0-3s] Si estabas buscando {giro_limpio} con entrega rápida y calidad garantizada, tienes que ver esto.\n"
+                "✨ [3-12s] Mira de cerca las opciones de nuestro catálogo que más nos están pidiendo esta semana.\n"
+                f"📲 [12-20s] Toca el enlace de WhatsApp en mi perfil y {nombre_ag} toma tu pedido al instante."
+            )
+
+        prompt_mkt = f"""
+Eres un Director de Marketing Digital experto en conversión por WhatsApp en México.
+Negocio: {nombre_neg}
+Producto o Servicio: {giro_limpio}
+Modelo Operativo: {mod_neg} ({mod_ent or 'estandar'})
+Asesora IA que atiende en WhatsApp: {nombre_ag}
+Zona: {zona_clean}
+
+Devuelve contenido comercial atractivo, persuasivo y natural dividido con estos 4 encabezados:
+### 📘 FACEBOOK (MARKETPLACE Y GRUPOS LOCALES)
+### 📸 INSTAGRAM (PIE DE FOTO + HASHTAGS)
+### 🎵 TIKTOK / REELS (GUION DE VIDEO DE 20 SEGUNDOS)
+### 🟢 ESTADO DE WHATSAPP BUSINESS (TEXTO CORTO + LLAMADO A LA ACCIÓN)
+"""
+
+    contenido_base = (
+        f"### 📘 FACEBOOK (MARKETPLACE Y GRUPOS)\n{copy_marketplace}\n\n"
+        f"### 🎵 TIKTOK / REELS (GUION 20S)\n{copy_reels}\n\n"
+        f"### 🟢 ESTADO DE WHATSAPP BUSINESS\n{copy_wa_status}"
+    )
+
     llaves = obtener_llaves_ia_backend()
     payload = {
         "contents": [{"parts": [{"text": prompt_mkt}]}],
         "generationConfig": {"temperature": 0.35, "maxOutputTokens": 900}
     }
-    for modelo in MODELOS_POOL_INFINITO:
-        for key in llaves:
+    for modelo in MODELOS_POOL_INFINITO[:2]:
+        for key in llaves[:2]:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={key}"
             try:
                 req = urllib.request.Request(
@@ -1880,20 +2042,29 @@ Devuelve tu respuesta dividida claramente con estos 4 encabezados exactos:
                     data=json.dumps(payload).encode("utf-8"),
                     headers={"Content-Type": "application/json"}
                 )
-                with urllib.request.urlopen(req, context=SSL_CTX, timeout=18) as resp:
+                with urllib.request.urlopen(req, context=SSL_CTX, timeout=8) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     txt = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    try:
-                        conn_h2 = sqlite3.connect(DB_PATH)
-                        conn_h2.cursor().execute("INSERT INTO conversacion_dueno (rol, mensaje, session_id) VALUES ('cdo', ?, ?)", (txt, session_id))
-                        conn_h2.commit()
-                        conn_h2.close()
-                    except Exception:
-                        pass
-                    return {"ok": True, "contenido": txt, "modelo": modelo}
+                    return {
+                        "ok": True,
+                        "contenido": txt or contenido_base,
+                        "copy_whatsapp_status": copy_wa_status,
+                        "copy_marketplace": copy_marketplace,
+                        "copy_reels": copy_reels,
+                        "mensaje_disparador_wa": mensaje_disparador,
+                        "modelo": modelo
+                    }
             except Exception:
                 continue
-    return {"ok": False, "contenido": "Error temporal generando campaña."}
+    return {
+        "ok": True,
+        "contenido": contenido_base,
+        "copy_whatsapp_status": copy_wa_status,
+        "copy_marketplace": copy_marketplace,
+        "copy_reels": copy_reels,
+        "mensaje_disparador_wa": mensaje_disparador,
+        "modelo": "heuristico_instantaneo"
+    }
 
 
 COLA_MENSAJES_PAOLA = []
@@ -3599,10 +3770,21 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "pedidos": bd_info["pedidos"]})
             return
 
-        if self.path == "/api/generar_marketing":
-            enfoque = data.get("enfoque", "Ahorro de $1,000 MXN vs Refaccionaria ($1,713 Paquete Completo)")
-            zona = data.get("zona", "Ecatepec, Tlalnepantla, Naucalpan y CDMX")
-            res = generar_campana_marketing_ia(enfoque, zona)
+        if clean_path in ("/api/generar_marketing", "/api/generar-campana"):
+            email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            cid_req = str(data.get("cliente_id") or "").strip()
+            enfoque = str(data.get("enfoque") or data.get("descripcion_idea") or data.get("productDesc") or "").strip()
+            zona = str(data.get("zona") or "CDMX y Zona Metropolitana").strip()
+            mod_neg = str(data.get("modelo_negocio") or "").strip()
+            mod_ent = str(data.get("modalidad_entrega") or "").strip()
+            res = generar_campana_marketing_ia(
+                enfoque=enfoque,
+                zona=zona,
+                owner_email=email_req,
+                cliente_id=cid_req,
+                modelo_negocio=mod_neg,
+                modalidad_entrega=mod_ent
+            )
             self._send_json(res)
             return
 

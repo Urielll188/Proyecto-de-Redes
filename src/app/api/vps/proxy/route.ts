@@ -29,6 +29,7 @@ const ALLOWED_POST_ENDPOINTS = [
   '/api/registrar_pedido',
   '/api/confirmar_entrega_comision',
   '/api/generar_marketing',
+  '/api/generar-campana',
   '/api/control_motor',
   '/control_motor',
   '/api/vincular_wa',
