@@ -39,7 +39,22 @@ export function DashboardShell({
   const [showArrivalWarp, setShowArrivalWarp] = useState(false)
   const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const pathname = usePathname()
-  const isRootDashboard = pathname === '/dashboard'
+  const nonStepperPrefixes = [
+    '/dashboard/history',
+    '/dashboard/billing',
+    '/dashboard/integrations',
+    '/dashboard/channels',
+    '/dashboard/cazador',
+    '/dashboard/ventas-ia',
+    '/dashboard/logistica',
+    '/dashboard/seguimiento',
+    '/dashboard/marketing-realista',
+    '/dashboard/whatsapp',
+  ]
+  const isStepperWorkspace =
+    pathname === '/dashboard' ||
+    (Boolean(pathname?.startsWith('/dashboard/')) &&
+      !nonStepperPrefixes.some((prefix) => pathname?.startsWith(prefix)))
 
   useEffect(() => {
     try {
@@ -305,8 +320,8 @@ export function DashboardShell({
           className={`w-full h-full relative transition-all duration-700 ${
             showArrivalWarp ? 'opacity-90 scale-[0.98]' : 'opacity-100 scale-100'
           } ${
-            isRootDashboard
-              ? 'overflow-y-auto overflow-x-hidden lg:overflow-hidden'
+            isStepperWorkspace
+              ? 'overflow-y-auto overflow-x-hidden'
               : 'overflow-y-auto pt-24 pb-12 px-4 md:px-8 max-w-6xl mx-auto'
           }`}
         >

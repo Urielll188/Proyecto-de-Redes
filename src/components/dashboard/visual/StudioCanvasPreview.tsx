@@ -308,9 +308,9 @@ export function StudioCanvasPreview({
           ) : null}
         </div>
 
-        {/* CAPA 3B (INFERIOR): ETIQUETA EDITORIAL DE PRECIO (SIN BOTONES FALSOS) */}
-        <div className="relative z-30 px-6 pb-6 flex items-end justify-between gap-3">
-          {numPrice > 0 ? (
+        {/* CAPA 3B (INFERIOR): ETIQUETA EDITORIAL DE PRECIO (SIN BOTONES FALSOS NI TEXTOS RESIDUALES) */}
+        <div className="relative z-30 px-6 pb-6 flex items-end justify-start gap-3">
+          {numPrice > 0 && (
             <div
               className={`inline-flex items-baseline gap-2.5 px-4 py-2 rounded-2xl shadow-xl backdrop-blur-md ${
                 normalizedStyle === 'bold-retail'
@@ -333,14 +333,6 @@ export function StudioCanvasPreview({
                 ${formatCurrency(numPrice)} <span className="text-[11px] font-bold">MXN</span>
               </span>
             </div>
-          ) : (
-            <div />
-          )}
-
-          {niche && (
-            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/60 drop-shadow">
-              {niche}
-            </span>
           )}
         </div>
       </div>

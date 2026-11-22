@@ -50,10 +50,10 @@ export function BlitzrPrismStage({
       ref={containerRef}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
-      className={`min-h-screen lg:h-screen lg:overflow-hidden relative bg-[#050507] overflow-x-hidden ${
+      className={`min-h-screen relative bg-[#050507] overflow-x-hidden ${
         attenuated
-          ? 'flex flex-col w-full h-full'
-          : 'flex flex-col justify-between px-4 pt-20 pb-8 lg:p-0 select-none'
+          ? 'flex flex-col w-full'
+          : 'lg:h-screen lg:overflow-hidden flex flex-col justify-between px-4 pt-20 pb-8 lg:p-0 select-none'
       } ${className}`}
     >
       {/* Background Volumetric Halo & Micro-Particles (contained to prevent horizontal overflow) */}

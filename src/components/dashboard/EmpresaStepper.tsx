@@ -286,12 +286,23 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   }
 
   // ===================== ESTADOS PASO 3: ESTUDIO PUBLICITARIO UNIFICADO (1080×1350) + COPILOTO IA =====================
-  const [sceneUrl, setSceneUrl] = useState<string | null>(initialData?.bannerUrl || null)
+  const initialSceneIsClean = Boolean(
+    initialData?.bannerUrl && !initialData.bannerUrl.includes('/banners/')
+  )
+  const [sceneUrl, setSceneUrl] = useState<string | null>(
+    initialSceneIsClean ? initialData?.bannerUrl || null : null
+  )
   const setVisualOutput = (url: string | null) => setSceneUrl(url)
   const [isGeneratingScene, setIsGeneratingScene] = useState(false)
-  const [cutoutProductUrl, setCutoutProductUrl] = useState<string | null>(null)
+  const [cutoutProductUrl, setCutoutProductUrl] = useState<string | null>(
+    initialData?.imageUrl && initialData.imageUrl.includes('-nobg.png')
+      ? initialData.imageUrl
+      : null
+  )
   const [isRemovingBg, setIsRemovingBg] = useState(false)
   const [useCutout, setUseCutout] = useState(true)
+  const autoCutoutTriggeredRef = useRef(false)
+  const autoSceneTriggeredRef = useRef(false)
   const [isBakingBanner, setIsBakingBanner] = useState(false)
   const [headline, setHeadline] = useState(
     initialData?.productDesc
@@ -922,6 +933,24 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     }
   }
 
+  // Auto-recorte de fondo y escena fotográfica al reanudar un proyecto desde la Bóveda en Paso 3
+  useEffect(() => {
+    if (step !== 3) return
+    if (imageUrl && !isVideoMedia && !cutoutProductUrl && !isRemovingBg && !autoCutoutTriggeredRef.current) {
+      autoCutoutTriggeredRef.current = true
+      if (imageUrl.includes('-nobg.png')) {
+        setCutoutProductUrl(imageUrl)
+        setUseCutout(true)
+      } else {
+        handleRemoveBackground(imageUrl)
+      }
+    }
+    if (!sceneUrl && !isGeneratingScene && !autoSceneTriggeredRef.current) {
+      autoSceneTriggeredRef.current = true
+      handleGenerateStudioScene(undefined, styleTheme)
+    }
+  }, [step, imageUrl, isVideoMedia, cutoutProductUrl, isRemovingBg, sceneUrl, isGeneratingScene])
+
   // 6B. Subir o Cambiar Foto del Producto directamente dentro de 03 • ESTUDIO
   const handleStudioProductUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -1273,7 +1302,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     <BlitzrPrismStage attenuated={step >= 2}>
       {/* ================= INDICADOR VERTICAL DE ETAPAS (FLANCO IZQUIERDO MEDIO - SOLO ESCRITORIO) ================= */}
       <div
-        className="fixed left-8 top-1/2 -translate-y-1/2 z-30 hidden xl:flex flex-col items-start gap-4 select-none"
+        className="fixed left-6 top-1/2 -translate-y-1/2 z-30 hidden xl:flex flex-col items-start gap-4 select-none"
       >
         {/* Paso 01 */}
         <div
@@ -1300,37 +1329,13 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
           </span>
         </div>
 
-        {/* Paso 02 */}
+        {/* Paso 03 */}
         <div
-          onClick={step === 3 ? () => setStep(2) : undefined}
+          onClick={step !== 3 && hasInitialCampaign ? () => setStep(3) : undefined}
           className={`flex items-center gap-3 ${
-            step === 3 ? 'cursor-pointer pointer-events-auto group' : 'pointer-events-none'
+            step !== 3 && hasInitialCampaign ? 'cursor-pointer pointer-events-auto group' : 'pointer-events-none'
           }`}
         >
-          <div
-            className={`rounded-full transition-all duration-300 ${
-              step === 2
-                ? 'h-8 w-1 bg-cyan-400 shadow-[0_0_12px_#22d3ee]'
-                : step === 3
-                ? 'h-4 w-1 bg-white/30 group-hover:bg-cyan-400 group-hover:h-6'
-                : 'h-4 w-1 bg-white/15'
-            }`}
-          />
-          <span
-            className={`text-xs font-mono tracking-wider transition-colors ${
-              step === 2
-                ? 'font-semibold text-cyan-400'
-                : step === 3
-                ? 'font-medium text-zinc-400 group-hover:text-cyan-300'
-                : 'font-medium text-zinc-500'
-            }`}
-          >
-            02 • ESTRATEGIA
-          </span>
-        </div>
-
-        {/* Paso 03 */}
-        <div className="flex items-center gap-3 pointer-events-none">
           <div
             className={`rounded-full transition-all duration-300 ${
               step === 3
@@ -1554,7 +1559,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
                     }
                     className="w-full sm:w-auto px-6 py-3 rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 font-bold text-xs tracking-wide shadow-[0_0_25px_rgba(34,211,238,0.35)] transition cursor-pointer"
                   >
-                    Confirmar Modelo ({selectedModelo.replace('_', ' ')}) y Generar Estrategia →
+                    Confirmar Modelo ({selectedModelo.replace('_', ' ')}) y Abrir Estudio Creativo →
                   </button>
                 </div>
               </div>
@@ -1565,8 +1570,8 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
 
       {/* ===================== PASO 2: CENTRO DE MANDO (EL EMBUDO) ===================== */}
       {step === 2 && (
-        <div className="w-full min-h-full lg:h-full lg:overflow-y-auto overflow-x-hidden relative select-auto">
-          <div className="max-w-6xl mx-auto pt-20 md:pt-24 pb-24 px-4 sm:px-6 md:px-10 xl:pl-28 space-y-6 animate-in fade-in duration-300">
+        <div className="w-full min-h-screen relative select-auto">
+          <div className="max-w-7xl w-full mx-auto pt-20 md:pt-24 pb-24 px-5 sm:px-8 xl:pl-44 xl:pr-8 space-y-6 animate-in fade-in duration-300">
             {/* CABECERA MINIMALISTA PASO 2: BOTÓN AJUSTAR IDEA */}
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
               <div className="flex items-center gap-2">
@@ -1878,8 +1883,8 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
 
       {/* ===================== PASO 3: ESTUDIO PUBLICITARIO PROFESIONAL (LIENZO UNIFICADO 1080×1350 + SALA DE CHAT IA EN VIVO) ===================== */}
       {step === 3 && (
-        <div className="w-full min-h-full lg:h-full lg:overflow-y-auto overflow-x-hidden relative select-auto">
-          <div className="max-w-6xl mx-auto pt-20 md:pt-24 pb-24 px-4 sm:px-6 md:px-10 space-y-5 animate-in fade-in duration-300">
+        <div className="w-full min-h-screen relative select-auto">
+          <div className="max-w-7xl w-full mx-auto pt-20 md:pt-24 pb-24 px-5 sm:px-8 xl:pl-44 xl:pr-8 space-y-5 animate-in fade-in duration-300">
             {/* Header Superior de Estudio */}
             <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
               <div>
