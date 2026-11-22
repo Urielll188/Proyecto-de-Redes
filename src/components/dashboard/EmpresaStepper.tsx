@@ -322,6 +322,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   const [customScenePrompt, setCustomScenePrompt] = useState<string>('')
   const [showCmoStrategyPanel, setShowCmoStrategyPanel] = useState<boolean>(false)
   const [showManualControls, setShowManualControls] = useState<boolean>(false)
+  const [showCreatorScriptsPanel, setShowCreatorScriptsPanel] = useState<boolean>(false)
   const [studioChatMessages, setStudioChatMessages] = useState<
     Array<{ role: 'assistant' | 'user'; text: string }>
   >([
@@ -1272,31 +1273,50 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
 
   const activeTriggerMsgEstudio = (customTriggerMsg || defaultTriggerMsgEstudio).trim()
   const cleanPhoneWaMe = formatWaMePhone(waNumeroVinculado)
-  const waMeLinkEstudio = cleanPhoneWaMe
+  const hasValidWaPhone = cleanPhoneWaMe.length >= 10
+  const waMeLinkEstudio = hasValidWaPhone
     ? `https://wa.me/${cleanPhoneWaMe}?text=${encodeURIComponent(activeTriggerMsgEstudio)}`
-    : `https://wa.me/52TUNUMERO?text=${encodeURIComponent(activeTriggerMsgEstudio)}`
+    : ''
+
+  const ctaLineWaStatus = hasValidWaPhone
+    ? `📲 Responde este estado o toca aquí para cotizar con ${nombreAgenteEstudio}:\n${waMeLinkEstudio}`
+    : `📲 Responde este estado y ${nombreAgenteEstudio} te atiende al instante.`
+
+  const ctaLineMarketplace = hasValidWaPhone
+    ? `📲 Mándanos mensaje directo por WhatsApp con ${nombreAgenteEstudio} aquí:\n${waMeLinkEstudio}`
+    : `📲 Mándanos mensaje directo para cotizar con ${nombreAgenteEstudio} al instante.`
 
   const copyWaStatusEstudio = isMallasOwner
-    ? `⚙️ *MALLAS TLAXCALLI* • Paquete Completo de Mantenimiento ($1,713 MXN): Testalera + Transportadora Cal 14 + Balero 7210B alemán con Envío GRATIS y pago al recibir.\n📲 Responde este estado o toca aquí para pedir tu kit con Paola:\n${waMeLinkEstudio}`
+    ? `⚙️ *MALLAS TLAXCALLI* • Paquete Completo de Mantenimiento ($1,713 MXN): Testalera + Transportadora Cal 14 + Balero 7210B alemán con Envío GRATIS y pago al recibir.\n${ctaLineWaStatus}`
     : esPersonalizadoEstudio
-    ? `✨ ¡Hacemos realidad tus ideas en *${giroLimpioEstudio}*! Trabajamos diseños personalizados a tu medida y por catálogo.\n📲 Responde este estado o toca el enlace para enviarnos tu idea, foto o medidas y ${nombreAgenteEstudio} te cotiza al instante:\n${waMeLinkEstudio}`
+    ? `✨ ¡Hacemos realidad tus ideas en *${giroLimpioEstudio}*! Trabajamos diseños personalizados a tu medida y por catálogo.\n${ctaLineWaStatus}`
     : selectedModelo === 'SERVICIOS_B2B'
-    ? `🛠️ Especialistas en *${giroLimpioEstudio}* para empresas, comercios y proyectos. Diagnóstico técnico y garantía.\n📲 Toca el enlace para agendar cotización o visita técnica con ${nombreAgenteEstudio}:\n${waMeLinkEstudio}`
-    : `🔥 ¡Ya disponible: *${giroLimpioEstudio}*! Calidad garantizada y atención inmediata 24/7.\n📲 Responde este estado o toca el enlace para ver catálogo y hacer tu pedido con ${nombreAgenteEstudio}:\n${waMeLinkEstudio}`
+    ? `🛠️ Especialistas en *${giroLimpioEstudio}* para empresas, comercios y proyectos. Diagnóstico técnico y garantía.\n${ctaLineWaStatus}`
+    : `🔥 ¡Ya disponible: *${giroLimpioEstudio}*! Calidad garantizada y atención inmediata 24/7.\n${ctaLineWaStatus}`
 
   const copyMarketplaceEstudio = isMallasOwner
-    ? `🔥 PAQUETE COMPLETO MANTENIMIENTO TORTILLADORA ($1,713 MXN) — ENVÍO GRATIS\n\n✅ 1 Malla Testalera (23 cm x 1.40 m)\n✅ 1 Malla Transportadora (10 pulg x 9 m Calibre 14 reforzado)\n✅ 1 Balero 7210B alemán alta duración\n💰 Ahorra casi $1,000 MXN directo de fábrica vs refaccionaria. Pagas al recibir.\n\n📲 Pide tu paquete directo por WhatsApp con Paola aquí:\n${waMeLinkEstudio}`
+    ? `🔥 PAQUETE COMPLETO MANTENIMIENTO TORTILLADORA ($1,713 MXN) — ENVÍO GRATIS\n\n✅ 1 Malla Testalera (23 cm x 1.40 m)\n✅ 1 Malla Transportadora (10 pulg x 9 m Calibre 14 reforzado)\n✅ 1 Balero 7210B alemán alta duración\n💰 Ahorra casi $1,000 MXN directo de fábrica vs refaccionaria. Pagas al recibir.\n\n${ctaLineMarketplace}`
     : esPersonalizadoEstudio
-    ? `🔥 ${giroLimpioEstudio.toUpperCase()} — DISEÑOS PERSONALIZADOS Y CATÁLOGO\n\n✅ Piezas y pedidos hechos a tu medida con excelente acabado\n✅ Cotiza enviando tu idea, foto, medidas, color o archivo de referencia\n✅ Atención inmediata 24/7 con ${nombreAgenteEstudio}\n\n📲 Mándanos mensaje directo por WhatsApp para cotizar tu pedido:\n${waMeLinkEstudio}`
+    ? `🔥 ${giroLimpioEstudio.toUpperCase()} — DISEÑOS PERSONALIZADOS Y CATÁLOGO\n\n✅ Piezas y pedidos hechos a tu medida con excelente acabado\n✅ Cotiza enviando tu idea, foto, medidas, color o archivo de referencia\n✅ Atención inmediata 24/7 con ${nombreAgenteEstudio}\n\n${ctaLineMarketplace}`
     : selectedModelo === 'SERVICIOS_B2B'
-    ? `🛠️ SERVICIO PROFESIONAL: ${giroLimpioEstudio.toUpperCase()}\n\n✅ Atención especializada a empresas, oficinas, comercios y proyectos\n✅ Levantamiento técnico y cotización transparente\n✅ Atención inmediata 24/7 con ${nombreAgenteEstudio}\n\n📲 Agenda tu visita técnica o cotización por WhatsApp aquí:\n${waMeLinkEstudio}`
-    : `✨ ${giroLimpioEstudio.toUpperCase()} — DISPONIBLE CON ENTREGA RÁPIDA\n\n✅ Excelente calidad y precios directos\n✅ Atención personalizada 24/7 con ${nombreAgenteEstudio}\n\n📲 Pide catálogo y haz tu pedido directo por WhatsApp aquí:\n${waMeLinkEstudio}`
+    ? `🛠️ SERVICIO PROFESIONAL: ${giroLimpioEstudio.toUpperCase()}\n\n✅ Atención especializada a empresas, oficinas, comercios y proyectos\n✅ Levantamiento técnico y cotización transparente\n✅ Atención inmediata 24/7 con ${nombreAgenteEstudio}\n\n${ctaLineMarketplace}`
+    : `✨ ${giroLimpioEstudio.toUpperCase()} — DISPONIBLE CON ENTREGA RÁPIDA\n\n✅ Excelente calidad y precios directos\n✅ Atención personalizada 24/7 con ${nombreAgenteEstudio}\n\n${ctaLineMarketplace}`
+
+  const creatorHook0to3 = esPersonalizadoEstudio
+    ? `¿Buscas ${giroLimpioEstudio} hecho exactamente a tu gusto o medida?`
+    : `Si estabas buscando ${giroLimpioEstudio} con calidad garantizada y entrega rápida, tienes que ver esto.`
+
+  const creatorBody3to12 = esPersonalizadoEstudio
+    ? `Mira cómo cuidamos cada detalle en nuestros pedidos personalizados y de catálogo para que recibas una pieza única.`
+    : `Conoce de cerca los acabados y por qué nuestros clientes nos recomiendan.`
+
+  const creatorCta12to20 = hasValidWaPhone
+    ? `Toca el enlace de WhatsApp en mi perfil o comentarios, mándanos tu idea y ${nombreAgenteEstudio} te cotiza en minutos: ${waMeLinkEstudio}`
+    : `Escríbenos por mensaje directo o WhatsApp en el perfil y ${nombreAgenteEstudio} toma tu pedido hoy mismo.`
 
   const copyReelsEstudio = editableTtScript
-    ? `${editableTtScript}\n\n📲 Enlace directo en bio / comentarios para cotizar con ${nombreAgenteEstudio}:\n${waMeLinkEstudio}`
-    : esPersonalizadoEstudio
-    ? `🎥 [0-3s] ¿Buscas ${giroLimpioEstudio} hecho exactamente a tu gusto o medida?\n✨ [3-12s] Mira cómo cuidamos cada detalle en nuestros pedidos personalizados y de catálogo.\n📲 [12-20s] Toca el enlace de WhatsApp en mi perfil, mándanos tu idea o medidas y ${nombreAgenteEstudio} te cotiza en minutos:\n${waMeLinkEstudio}`
-    : `🎥 [0-3s] Si estabas buscando ${giroLimpioEstudio} con calidad garantizada y atención rápida, mira esto.\n✨ [3-12s] Conoce por qué nuestros clientes nos eligen y cómo trabajamos cada pedido.\n📲 [12-20s] Toca el enlace de WhatsApp en mi perfil para hablar con ${nombreAgenteEstudio} 24/7:\n${waMeLinkEstudio}`
+    ? `${editableTtScript}${hasValidWaPhone ? `\n\n📲 Enlace directo a WhatsApp (${nombreAgenteEstudio}):\n${waMeLinkEstudio}` : ''}`
+    : `🎥 [Gancho 0-3s]: ${creatorHook0to3}\n\n✨ [Desarrollo 3-12s]: ${creatorBody3to12}\n\n📲 [Llamado a la acción]: ${creatorCta12to20}`
 
   return (
     <BlitzrPrismStage attenuated={step >= 2}>
@@ -2366,24 +2386,24 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
               </div>
             </div>
 
-          {/* ================= KIT DE ATRACCIÓN INBOUND 1-CLIC CONECTADO A ANDREA IA (wa.me + COPYS) ================= */}
+          {/* ================= SECCIÓN 1: COPYS DE ACCIÓN INMEDIATA (ESTADOS WA + FB MARKETPLACE + LINK WA.ME) ================= */}
           <div className="bg-zinc-900/90 border border-cyan-500/25 rounded-2xl p-5 md:p-6 shadow-[0_0_40px_rgba(6,182,212,0.1)] space-y-5">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-zinc-800/90 pb-4">
               <div className="space-y-1">
                 <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 text-[11px] font-bold uppercase tracking-wider">
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Kit de Atracción Inbound 1-Clic → {nombreAgenteEstudio} IA 24/7</span>
+                  <span>Conversión Directa con tu Arte Estático → {nombreAgenteEstudio} IA 24/7</span>
                 </div>
                 <h3 className="text-base md:text-lg font-bold text-white">
-                  Copys Listos y Enlace Directo <code className="text-cyan-300 font-mono text-sm">wa.me</code> para Redes, Estados y Marketplace
+                  Copys de Acción Inmediata (Estados de WhatsApp y Facebook Marketplace)
                 </h3>
                 <p className="text-xs text-zinc-400">
-                  Publica tu flyer junto con estos textos. Cuando un cliente toque tu enlace, entrará directo al WhatsApp donde {nombreAgenteEstudio} atiende, pide especificaciones y cierra el pedido 24/7 sin riesgo de bloqueo.
+                  Publica tu flyer descargado junto con estos textos listos para convertir en clientes entrantes sin riesgo de bloqueo.
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {cleanPhoneWaMe ? (
+                {hasValidWaPhone ? (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                     WhatsApp Vinculado: +{cleanPhoneWaMe}
@@ -2392,34 +2412,88 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
                   <button
                     type="button"
                     onClick={() => router.push('/dashboard/whatsapp')}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-xs font-semibold transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/30 text-amber-200 text-xs font-semibold transition cursor-pointer"
                   >
                     <MessageCircle className="w-3.5 h-3.5 text-amber-300" />
-                    <span>Vincular mi número en WhatsApp →</span>
+                    <span>Conectar WhatsApp →</span>
                   </button>
                 )}
               </div>
             </div>
 
-            {/* TARJETA DESTACADA: ENLACE DIRECTO WA.ME PRELLENADO */}
+            {/* 2 TARJETAS EN PRIMER PLANO: ESTADOS DE WHATSAPP + FACEBOOK MARKETPLACE / GRUPOS */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* 1. Copy para Estados de WhatsApp */}
+              <div className="bg-zinc-950/75 border border-zinc-800 hover:border-emerald-500/30 rounded-xl p-4 flex flex-col justify-between space-y-3 transition">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>🟢</span> 1. Copy para Estados de WhatsApp
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(copyWaStatusEstudio, 'Copy Estado de WhatsApp')}
+                      className="px-3 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition active:scale-95"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Copiar</span>
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-zinc-400">
+                    Sube el flyer a tu Estado de WhatsApp y pega este texto corto con llamado a la acción directo:
+                  </p>
+                  <div className="bg-zinc-900/80 border border-zinc-800/80 rounded-lg p-3 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed max-h-44 overflow-y-auto">
+                    {copyWaStatusEstudio}
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Copy para Facebook Marketplace / Grupos */}
+              <div className="bg-zinc-950/75 border border-zinc-800 hover:border-blue-500/30 rounded-xl p-4 flex flex-col justify-between space-y-3 transition">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>📘</span> 2. Copy para Facebook Marketplace / Grupos
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(copyMarketplaceEstudio, 'Copy Facebook Marketplace')}
+                      className="px-3 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 text-blue-300 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition active:scale-95"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Copiar</span>
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-zinc-400">
+                    Título llamativo + beneficios listos para pegar en Facebook Marketplace y grupos de compra-venta:
+                  </p>
+                  <div className="bg-zinc-900/80 border border-zinc-800/80 rounded-lg p-3 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed max-h-44 overflow-y-auto">
+                    {copyMarketplaceEstudio}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 3. ENLACE DIRECTO A ANDREA IA (wa.me) CON VERIFICACIÓN ESTRICTA DE LÍNEA VINCULADA */}
             <div className="bg-zinc-950/80 border border-emerald-500/30 rounded-xl p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Link2 className="w-4 h-4 text-emerald-400" />
                   <span className="text-xs font-bold uppercase tracking-wider text-emerald-300">
-                    Enlace Directo a {nombreAgenteEstudio} IA (Bio de IG / TikTok / Botón de Anuncio)
+                    3. Enlace Directo a {nombreAgenteEstudio} IA (<code className="font-mono">wa.me</code>)
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard(waMeLinkEstudio, 'Enlace wa.me')}
-                    className="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer active:scale-95"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copiar Enlace wa.me</span>
-                  </button>
-                  {cleanPhoneWaMe && (
+
+                {hasValidWaPhone && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(waMeLinkEstudio, 'Enlace wa.me')}
+                      className="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer active:scale-95"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copiar Enlace wa.me</span>
+                    </button>
                     <a
                       href={waMeLinkEstudio}
                       target="_blank"
@@ -2429,110 +2503,129 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
                       <span>Probar</span>
                       <ExternalLink className="w-3 h-3" />
                     </a>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-center">
-                <div className="lg:col-span-7">
-                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">
-                    Mensaje Disparador que enviará el cliente al abrir tu WhatsApp
-                  </label>
-                  <input
-                    type="text"
-                    value={customTriggerMsg || defaultTriggerMsgEstudio}
-                    onChange={(e) => setCustomTriggerMsg(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-emerald-500/60"
-                  />
-                </div>
-                <div className="lg:col-span-5">
-                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">
-                    URL Generada Lista para Pegar
-                  </label>
-                  <div className="bg-zinc-900/90 border border-zinc-800 rounded-lg px-3 py-2 text-[11px] font-mono text-emerald-300 truncate select-all">
-                    {waMeLinkEstudio}
+              {hasValidWaPhone ? (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-center">
+                  <div className="lg:col-span-7">
+                    <label className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">
+                      Mensaje Disparador que enviará el cliente al abrir tu WhatsApp
+                    </label>
+                    <input
+                      type="text"
+                      value={customTriggerMsg || defaultTriggerMsgEstudio}
+                      onChange={(e) => setCustomTriggerMsg(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-emerald-500/60"
+                    />
+                  </div>
+                  <div className="lg:col-span-5">
+                    <label className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">
+                      URL Activa Lista para Pegar
+                    </label>
+                    <div className="bg-zinc-900/90 border border-zinc-800 rounded-lg px-3 py-2 text-[11px] font-mono text-emerald-300 truncate select-all">
+                      {waMeLinkEstudio}
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-zinc-900/70 border border-zinc-800 rounded-xl px-4 py-3">
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-medium text-zinc-200">
+                      Conecta tu WhatsApp en Canales para activar tu link directo
+                    </p>
+                    <p className="text-[11px] text-zinc-400">
+                      En cuanto vincules tu número, aquí se generará automáticamente tu enlace <code className="font-mono text-zinc-300">https://wa.me/...</code> conectado a {nombreAgenteEstudio} IA.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => router.push('/dashboard/whatsapp')}
+                    className="px-4 py-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-xs font-bold transition cursor-pointer flex-shrink-0"
+                  >
+                    Ir a Vincular WhatsApp →
+                  </button>
+                </div>
+              )}
             </div>
+          </div>
 
-            {/* 3 TARJETAS COMPACTAS DE COPYS POR CANAL CON BOTÓN COPIAR 1-CLIC */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* 1. Estados de WhatsApp */}
-              <div className="bg-zinc-950/75 border border-zinc-800 hover:border-emerald-500/30 rounded-xl p-4 flex flex-col justify-between space-y-3 transition">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <span>🟢</span> 1. Estado de WhatsApp
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => copyToClipboard(copyWaStatusEstudio, 'Copy Estado de WhatsApp')}
-                      className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition active:scale-95"
-                    >
-                      <Copy className="w-3 h-3" />
-                      <span>Copiar</span>
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-zinc-400">
-                    Sube el flyer a tu Estado y pega este texto corto con llamado a la acción directo:
-                  </p>
-                  <div className="bg-zinc-900/80 border border-zinc-800/80 rounded-lg p-3 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed max-h-44 overflow-y-auto">
-                    {copyWaStatusEstudio}
-                  </div>
+          {/* ================= SECCIÓN 2 (COLAPSABLE SECUNDARIA): MODO CREADOR — GUIONES PARA GRABAR TUS PROPIOS VIDEOS ================= */}
+          <div className="bg-zinc-900/75 border border-zinc-800/90 rounded-2xl overflow-hidden shadow-lg">
+            <button
+              type="button"
+              onClick={() => setShowCreatorScriptsPanel((prev) => !prev)}
+              className="w-full p-4 md:p-5 flex flex-wrap items-center justify-between gap-3 text-left hover:bg-white/[0.02] transition cursor-pointer"
+            >
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-sm md:text-base font-bold text-white flex items-center gap-2">
+                    <span>🎬 Modo Creador: Guiones para grabar tus propios videos</span>
+                  </h4>
+                  <span className="px-2.5 py-0.5 rounded-full bg-purple-500/15 border border-purple-400/30 text-purple-300 text-[10px] font-bold uppercase tracking-wider">
+                    Video Automático IA • Próximamente
+                  </span>
                 </div>
+                <p className="text-xs text-zinc-400">
+                  Te damos el gancho, desarrollo y cierre listos para que los grabes con tu celular
+                </p>
               </div>
 
-              {/* 2. Facebook Marketplace / Grupos */}
-              <div className="bg-zinc-950/75 border border-zinc-800 hover:border-blue-500/30 rounded-xl p-4 flex flex-col justify-between space-y-3 transition">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <span>📘</span> 2. FB Marketplace / Grupos
+              <span className="px-3 py-1.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-semibold text-zinc-300">
+                {showCreatorScriptsPanel ? 'Ocultar Guion ▲' : 'Ver Guion de Video ▼'}
+              </span>
+            </button>
+
+            {showCreatorScriptsPanel && (
+              <div className="px-5 pb-5 pt-2 border-t border-zinc-800/80 space-y-4 animate-in fade-in duration-200">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-pink-400">
+                      🎥 1. Gancho (0 - 3s)
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => copyToClipboard(copyMarketplaceEstudio, 'Copy Facebook Marketplace')}
-                      className="px-2.5 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 text-blue-300 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition active:scale-95"
-                    >
-                      <Copy className="w-3 h-3" />
-                      <span>Copiar</span>
-                    </button>
+                    <p className="text-xs text-zinc-200 leading-relaxed">
+                      {creatorHook0to3}
+                    </p>
                   </div>
-                  <p className="text-[11px] text-zinc-400">
-                    Título llamativo + beneficios + enlace directo para grupos de compra-venta y Marketplace:
-                  </p>
-                  <div className="bg-zinc-900/80 border border-zinc-800/80 rounded-lg p-3 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed max-h-44 overflow-y-auto">
-                    {copyMarketplaceEstudio}
+                  <div className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400">
+                      ✨ 2. Desarrollo (3 - 12s)
+                    </span>
+                    <p className="text-xs text-zinc-200 leading-relaxed">
+                      {creatorBody3to12}
+                    </p>
+                  </div>
+                  <div className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                      📲 3. Llamado a la Acción
+                    </span>
+                    <p className="text-xs text-zinc-200 leading-relaxed break-words">
+                      {creatorCta12to20}
+                    </p>
                   </div>
                 </div>
-              </div>
 
-              {/* 3. Reels / TikTok */}
-              <div className="bg-zinc-950/75 border border-zinc-800 hover:border-purple-500/30 rounded-xl p-4 flex flex-col justify-between space-y-3 transition">
-                <div className="space-y-2">
+                <div className="bg-zinc-950/90 border border-zinc-800 rounded-xl p-4 space-y-2.5">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <span>🎵</span> 3. Reels / TikTok
+                    <span className="text-xs font-bold text-purple-300 uppercase tracking-wider">
+                      Guion Completo para Reels / TikTok
                     </span>
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(copyReelsEstudio, 'Guion y Copy Reels / TikTok')}
-                      className="px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-300 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition active:scale-95"
+                      onClick={() => copyToClipboard(copyReelsEstudio, 'Guion de Video')}
+                      className="px-3.5 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition active:scale-95"
                     >
-                      <Copy className="w-3 h-3" />
-                      <span>Copiar</span>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copiar Guion</span>
                     </button>
                   </div>
-                  <p className="text-[11px] text-zinc-400">
-                    Guion y descripción para video corto redirigiendo al enlace de tu perfil o comentarios:
-                  </p>
-                  <div className="bg-zinc-900/80 border border-zinc-800/80 rounded-lg p-3 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed max-h-44 overflow-y-auto">
+                  <div className="text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed">
                     {copyReelsEstudio}
                   </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
         </div>
