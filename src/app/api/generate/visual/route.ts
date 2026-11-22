@@ -175,13 +175,20 @@ export async function POST(request: NextRequest) {
     const productDesc = (body?.productDesc || body?.descripcion_producto || '').trim()
     const niche = (body?.niche || body?.productNiche || body?.stylePrompt || 'Producto Físico').trim()
     const styleTheme = (body?.styleTheme || body?.theme || 'minimal-dark').trim()
+    const isServiceMode = Boolean(body?.isServiceMode)
 
     const combinedContext = `${customPrompt} ${productDesc} ${niche} ${styleTheme}`
     const mood = detectMood(combinedContext, styleTheme)
 
     let scenePrompt = ''
     if (customPrompt) {
-      scenePrompt = `${customPrompt}, commercial studio photography stage, clean empty foreground podium surface, professional lighting, NO text, NO letters, NO watermark, 8k`
+      scenePrompt = `${customPrompt}, commercial editorial photography background, professional lighting, NO people posing, NO text, NO letters, NO watermark, 8k`
+    } else if (/redes|cableado|wifi|cctv|servidor|rack|fibra|telecom/i.test(combinedContext)) {
+      scenePrompt =
+        'Modern clean corporate data center server rack and structured network cabling infrastructure, subtle cyan and blue fiber optic LED status lights, dark architectural glass bokeh, commercial technology editorial photography background, NO people, NO text, NO letters, 8k'
+    } else if (isServiceMode || /instalaci[oó]n|mantenimiento|consultor[ií]a|ingenier[ií]a|soporte|corporativo|servicio/i.test(combinedContext)) {
+      scenePrompt =
+        'Modern luxury corporate architectural interior and technical engineering environment, sleek dark matte surfaces with warm and cyan accent lighting, dramatic depth of field bokeh, high-end B2B commercial photography backdrop, NO people posing, NO text, NO letters, 8k'
     } else if (/3d|impresi[oó]n|figura|coleccion|prototipo/i.test(combinedContext)) {
       scenePrompt =
         'Modern creative studio desk podium, soft cyan and warm rim lighting, matte dark architectural surface, commercial product photography background, completely empty center stage, NO text, NO objects, 8k'

@@ -17,7 +17,12 @@ import { InstagramMockup } from './mockups/InstagramMockup'
 import { createClient } from '@/utils/supabase/client'
 import { toBlob } from 'html-to-image'
 import { useNicho } from '@/context/NichoContext'
-import { DiagnosticoModeloIA, ModeloNegocioType, fetchVpsGet } from '@/lib/vps/types'
+import {
+  DiagnosticoModeloIA,
+  ModeloNegocioType,
+  WebsiteExtractedKnowledge,
+  fetchVpsGet,
+} from '@/lib/vps/types'
 
 function cleanGiroTexto(texto: string): string {
   let limpio = (texto || '').trim().replace(/\s+/g, ' ')
@@ -129,6 +134,16 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   const [modalidadEntrega, setModalidadEntrega] = useState<'catalogo_estandar' | 'personalizado_bajo_pedido' | 'servicio_en_sitio'>('catalogo_estandar')
   const [volumenCompra, setVolumenCompra] = useState<'menudeo' | 'mayoreo' | 'proyecto'>('menudeo')
 
+  // Conocimiento importado desde sitio web + modo servicio editorial sin foto
+  const [webCatalogoAndrea, setWebCatalogoAndrea] = useState<string>('')
+  const [webNombreNegocio, setWebNombreNegocio] = useState<string>('')
+  const [webUrlSitio, setWebUrlSitio] = useState<string>('')
+  const [webLogoUrl, setWebLogoUrl] = useState<string | null>(null)
+  const [webLogoDataUrl, setWebLogoDataUrl] = useState<string | null>(null)
+  const [useLogoOverlay, setUseLogoOverlay] = useState<boolean>(true)
+  const [beneficiosClave, setBeneficiosClave] = useState<string[]>([])
+  const hydratedWebAssetsRef = useRef<boolean>(false)
+
   // Estado de conexión WhatsApp del tenant activo para enlaces wa.me en 03 • ESTUDIO
   const [waNumeroVinculado, setWaNumeroVinculado] = useState<string>('')
   const [waConectado, setWaConectado] = useState<boolean>(false)
@@ -150,6 +165,15 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
       }
       if (diag.volumen_compra && ['menudeo', 'mayoreo', 'proyecto'].includes(diag.volumen_compra)) {
         setVolumenCompra(diag.volumen_compra as any)
+      }
+      if (!hydratedWebAssetsRef.current) {
+        hydratedWebAssetsRef.current = true
+        if (diag.logo_url) setWebLogoUrl(diag.logo_url)
+        if (diag.logo_data_url) setWebLogoDataUrl(diag.logo_data_url)
+        if (diag.url_sitio_web) setWebUrlSitio(diag.url_sitio_web)
+        if (Array.isArray(diag.beneficios_clave) && diag.beneficios_clave.length > 0) {
+          setBeneficiosClave(diag.beneficios_clave.slice(0, 3))
+        }
       }
     }
   }, [modeloNegocio, nicho])
@@ -455,6 +479,29 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     }
   }
 
+  const handleWebsiteImported = (extracted: WebsiteExtractedKnowledge) => {
+    setWebCatalogoAndrea(extracted.catalogo_andrea || '')
+    setWebNombreNegocio(extracted.nombre_negocio || '')
+    setWebUrlSitio(extracted.url_analizada || '')
+    setWebLogoUrl(extracted.logo_url || null)
+    setWebLogoDataUrl(extracted.logo_data_url || null)
+    setUseLogoOverlay(Boolean(extracted.logo_data_url || extracted.logo_url))
+    if (Array.isArray(extracted.beneficios_clave) && extracted.beneficios_clave.length > 0) {
+      setBeneficiosClave(extracted.beneficios_clave.slice(0, 3))
+    }
+    if (extracted.titular_anuncio) {
+      setHeadline(extracted.titular_anuncio.toUpperCase().slice(0, 48))
+    }
+    if (extracted.modalidad_entrega === 'servicio_en_sitio' || extracted.cliente_objetivo_tipo === 'empresas_b2b') {
+      setNiche('Servicio Local')
+      setGoal('Generar Leads / Citas')
+      setCtaText('Cotización y levantamiento técnico sin costo')
+    } else if (extracted.cliente_objetivo_tipo === 'consumidor_final') {
+      setNiche('E-commerce')
+      setCtaText('Cotiza directo por WhatsApp')
+    }
+  }
+
   // Paso 1A: Al presionar "Dar inicio a mi idea", diagnosticar modelo de negocio y mostrar tarjeta de veredicto
   const handleGenerate = async (mode: 'fast' | 'strategic' = 'strategic') => {
     if (!productDesc.trim()) {
@@ -508,28 +555,36 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     setCmoAnalysis(null)
     setGenerationMode(mode)
 
-    const finalDiag = diagData
-      ? {
-          ...diagData,
-          cliente_objetivo_tipo: clienteObjetivoTipo,
-          modalidad_entrega: modalidadEntrega,
-          volumen_compra: volumenCompra,
-        }
-      : {
-          cliente_objetivo_tipo: clienteObjetivoTipo,
-          modalidad_entrega: modalidadEntrega,
-          volumen_compra: volumenCompra,
-        }
+    const finalDiag = {
+      ...(diagData || {}),
+      cliente_objetivo_tipo: clienteObjetivoTipo,
+      modalidad_entrega: modalidadEntrega,
+      volumen_compra: volumenCompra,
+      ...(webUrlSitio ? { url_sitio_web: webUrlSitio } : {}),
+      ...(webLogoUrl ? { logo_url: webLogoUrl } : {}),
+      ...(webLogoDataUrl ? { logo_data_url: webLogoDataUrl } : {}),
+      ...(beneficiosClave.length > 0 ? { beneficios_clave: beneficiosClave } : {}),
+    }
 
     // Guardar de inmediato el modelo y perfil en SQLite para usuarios nuevos
     if (!isMallasOwner) {
       await syncNichoFromIdea({
-        nombre_negocio: productDesc.trim().split('.')[0].split('\n')[0].slice(0, 48) || 'Mi Negocio',
+        nombre_negocio:
+          webNombreNegocio ||
+          productDesc.trim().split('.')[0].split('\n')[0].slice(0, 48) ||
+          'Mi Negocio',
         giro_objetivo: diagData?.clientes_objetivo || niche,
         niche,
         productDesc: productDesc.trim(),
         oferta_gancho: productDesc.trim().slice(0, 180),
         keywords_busqueda: diagData?.keywords_sugeridas?.join(', ') || '',
+        catalogo_andrea: webCatalogoAndrea || undefined,
+        catalogo_prompt: webCatalogoAndrea || undefined,
+        logo_url: webLogoUrl || undefined,
+        logo_data_url: webLogoDataUrl || undefined,
+        url_sitio_web: webUrlSitio || undefined,
+        beneficios_clave: beneficiosClave.length > 0 ? beneficiosClave : undefined,
+        titular_anuncio: headline || undefined,
         modelo_negocio: chosenModel,
         cliente_objetivo_tipo: clienteObjetivoTipo,
         modalidad_entrega: modalidadEntrega,
@@ -625,10 +680,32 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
 
       if (modalidadEntrega === 'personalizado_bajo_pedido') {
         setBadgeText('HECHO A MEDIDA')
-      } else if (chosenModel === 'SERVICIOS_B2B') {
+      } else if (chosenModel === 'SERVICIOS_B2B' || modalidadEntrega === 'servicio_en_sitio') {
         setBadgeText('SERVICIO PROFESIONAL')
       } else {
         setBadgeText('EDICIÓN ESPECIAL')
+      }
+
+      if (chosenModel === 'SERVICIOS_B2B' || modalidadEntrega === 'servicio_en_sitio') {
+        setCtaText('Cotización y levantamiento técnico sin costo')
+      } else {
+        setCtaText('Cotiza directo por WhatsApp')
+      }
+
+      if (beneficiosClave.length === 0) {
+        const defaultBens =
+          chosenModel === 'SERVICIOS_B2B' || modalidadEntrega === 'servicio_en_sitio'
+            ? [
+                'Atención profesional a empresas y proyectos',
+                'Garantía por escrito y equipo certificado',
+                'Cotización rápida y visita técnica agendada',
+              ]
+            : [
+                data.cmoAnalysis?.angle?.slice(0, 56) || 'Calidad garantizada en cada pedido',
+                'Atención inmediata 24/7 por WhatsApp',
+                'Envío y entrega puntual asegurada',
+              ]
+        setBeneficiosClave(defaultBens.filter(Boolean).slice(0, 3))
       }
 
       // Si el usuario mencionó un precio en su idea (ej. $350), precargarlo en el lienzo
@@ -647,6 +724,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
           productDesc.trim().slice(0, 180)
         const angleText = data.cmoAnalysis?.angle || data.estrategia?.angulo_gancho || ''
         const catalogoPrompt = [
+          webCatalogoAndrea ? `Base de Conocimiento del Sitio Web:\n${webCatalogoAndrea}` : '',
           `Modelo Operativo: ${chosenModel}`,
           `Producto / Servicio: ${productDesc.trim()}`,
           `Nicho: ${niche} | Objetivo: ${goal}`,
@@ -662,15 +740,21 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
           .slice(0, 2500)
 
         syncNichoFromIdea({
-          nombre_negocio: headlineText,
+          nombre_negocio: webNombreNegocio || headlineText,
           giro_objetivo: avatarText ? `${avatarText.slice(0, 140)}` : niche,
           niche,
           productDesc: productDesc.trim(),
           oferta_gancho: offerText,
           keywords_busqueda: diagData?.keywords_sugeridas?.join(', ') || '',
+          catalogo_andrea: webCatalogoAndrea || undefined,
           catalogo_prompt: catalogoPrompt,
+          logo_url: webLogoUrl || undefined,
+          logo_data_url: webLogoDataUrl || undefined,
+          url_sitio_web: webUrlSitio || undefined,
+          beneficios_clave: beneficiosClave.length > 0 ? beneficiosClave : undefined,
+          titular_anuncio: headlineText,
           modelo_negocio: chosenModel,
-          diagnostico_ia: diagData || {},
+          diagnostico_ia: finalDiag,
           nombre_agente: 'Andrea',
         })
       }
@@ -886,6 +970,11 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
           customPrompt: promptToUse,
           theme: themeLabel,
           styleTheme: effectiveStyle,
+          isServiceMode:
+            !imageUrl ||
+            isVideoMedia ||
+            selectedModelo === 'SERVICIOS_B2B' ||
+            modalidadEntrega === 'servicio_en_sitio',
         }),
       })
 
@@ -1077,6 +1166,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         editableWaText ||
         productDesc.trim().slice(0, 180)
       const catalogoPrompt = [
+        webCatalogoAndrea ? `Base de Conocimiento del Sitio Web:\n${webCatalogoAndrea}` : '',
         `Modelo Operativo: ${selectedModelo}`,
         `Producto / Idea: ${productDesc.trim()}`,
         `Nicho: ${niche} | Objetivo: ${goal}`,
@@ -1091,15 +1181,27 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         .slice(0, 2500)
 
       syncNichoFromIdea({
-        nombre_negocio: headline || productDesc.trim().slice(0, 40),
+        nombre_negocio: webNombreNegocio || headline || productDesc.trim().slice(0, 40),
         giro_objetivo: avatarText ? `${avatarText.slice(0, 140)}` : niche,
         niche,
         productDesc: productDesc.trim(),
         oferta_gancho: offerText,
         keywords_busqueda: diagnosticoIA?.keywords_sugeridas?.join(', ') || '',
+        catalogo_andrea: webCatalogoAndrea || undefined,
         catalogo_prompt: catalogoPrompt,
+        logo_url: webLogoUrl || undefined,
+        logo_data_url: webLogoDataUrl || undefined,
+        url_sitio_web: webUrlSitio || undefined,
+        beneficios_clave: beneficiosClave.length > 0 ? beneficiosClave : undefined,
+        titular_anuncio: headline || undefined,
         modelo_negocio: selectedModelo,
-        diagnostico_ia: diagnosticoIA || {},
+        diagnostico_ia: {
+          ...(diagnosticoIA || {}),
+          ...(webUrlSitio ? { url_sitio_web: webUrlSitio } : {}),
+          ...(webLogoUrl ? { logo_url: webLogoUrl } : {}),
+          ...(webLogoDataUrl ? { logo_data_url: webLogoDataUrl } : {}),
+          ...(beneficiosClave.length > 0 ? { beneficios_clave: beneficiosClave } : {}),
+        },
         nombre_agente: 'Andrea',
       })
     }
@@ -1410,6 +1512,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
             setModalidadEntrega={setModalidadEntrega}
             volumenCompra={volumenCompra}
             setVolumenCompra={setVolumenCompra}
+            onWebsiteImported={handleWebsiteImported}
           />
 
           {/* TARJETA / MODAL DE DIAGNÓSTICO INTELIGENTE BLITZR (3 MODELOS) */}
@@ -2090,6 +2193,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
                       headline={headline}
                       editableHeadline={headline}
                       subline={subline}
+                      ctaText={ctaText}
                       badgeText={badgeText}
                       styleTheme={styleTheme}
                       editableIgCopy={editableIgCopy}
@@ -2102,8 +2206,61 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
                       onProductScaleChange={setStudioProductScale}
                       productPosY={studioProductOffsetY}
                       onProductPosYChange={setStudioProductOffsetY}
+                      logoUrl={webLogoUrl}
+                      logoDataUrl={webLogoDataUrl}
+                      showLogo={useLogoOverlay}
+                      isServiceMode={!imageUrl || isVideoMedia}
+                      beneficiosClave={
+                        beneficiosClave.length > 0
+                          ? beneficiosClave
+                          : selectedModelo === 'SERVICIOS_B2B' || modalidadEntrega === 'servicio_en_sitio'
+                          ? [
+                              'Atención profesional a empresas y proyectos',
+                              'Diagnóstico técnico y garantía por escrito',
+                              'Cotización directa vía WhatsApp 24/7',
+                            ]
+                          : [
+                              'Calidad garantizada en cada pedido',
+                              'Atención personalizada 24/7 por WhatsApp',
+                              'Entrega rápida y cotización sin compromiso',
+                            ]
+                      }
                     />
                   </div>
+
+                  {/* Aviso discreto Modo Servicio Editorial + Toggle de Logotipo Web */}
+                  {(!imageUrl || isVideoMedia) && (
+                    <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/25 text-[11px] text-cyan-200">
+                      <span>
+                        ✨ <strong>Modo Servicio Editorial activo</strong> (composición tipográfica limpia sin foto de producto)
+                      </span>
+                    </div>
+                  )}
+
+                  {(webLogoDataUrl || webLogoUrl) && (
+                    <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-zinc-950/80 border border-zinc-800/80 text-xs">
+                      <label className="flex items-center gap-2 cursor-pointer text-zinc-300 select-none">
+                        <input
+                          type="checkbox"
+                          checked={useLogoOverlay}
+                          onChange={(e) => setUseLogoOverlay(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-900 text-cyan-500 cursor-pointer"
+                        />
+                        <span>Mostrar logotipo de tu web en la esquina del arte</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setWebLogoUrl(null)
+                          setWebLogoDataUrl(null)
+                          setUseLogoOverlay(false)
+                        }}
+                        className="text-[11px] text-zinc-500 hover:text-rose-400 underline cursor-pointer"
+                      >
+                        Quitar logo
+                      </button>
+                    </div>
+                  )}
 
                   {/* Toggle de Recorte Alfa si el usuario subió foto de producto */}
                   {imageUrl && !isVideoMedia && (
@@ -2379,6 +2536,44 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
                             className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-200 resize-none focus:outline-none focus:border-cyan-500"
                           />
                         </div>
+
+                        {(!imageUrl || isVideoMedia) && (
+                          <>
+                            <div>
+                              <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">
+                                Llamado a la Acción (Pie del Lienzo)
+                              </label>
+                              <input
+                                type="text"
+                                value={ctaText}
+                                onChange={(e) => setCtaText(e.target.value)}
+                                placeholder="Cotización y levantamiento técnico sin costo"
+                                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-cyan-500"
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="block text-[10px] font-bold text-zinc-400 uppercase">
+                                Viñetas / Beneficios Clave (hasta 3)
+                              </label>
+                              {[0, 1, 2].map((bIdx) => (
+                                <input
+                                  key={bIdx}
+                                  type="text"
+                                  value={beneficiosClave[bIdx] || ''}
+                                  onChange={(e) => {
+                                    const next = [...beneficiosClave]
+                                    while (next.length < 3) next.push('')
+                                    next[bIdx] = e.target.value
+                                    setBeneficiosClave(next)
+                                  }}
+                                  placeholder={`Beneficio ${bIdx + 1}...`}
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-cyan-500"
+                                />
+                              ))}
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>

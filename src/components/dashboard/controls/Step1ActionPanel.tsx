@@ -5,7 +5,8 @@ import imageCompression from 'browser-image-compression'
 import { createClient } from '@/utils/supabase/client'
 import { uploadVideoToVault } from '@/lib/storage/upload-service'
 import { toast } from 'sonner'
-import { Sparkles, X, Plus } from 'lucide-react'
+import { Sparkles, X, Plus, Globe, Check } from 'lucide-react'
+import { fetchVpsPost, WebsiteExtractedKnowledge } from '@/lib/vps/types'
 
 export const MAX_FILE_SIZE_BYTES = 40 * 1024 * 1024 // 40 MB
 export const ACCEPTED_MEDIA_TYPES = 'image/*,video/mp4,video/quicktime,video/x-m4v'
@@ -35,6 +36,7 @@ export interface Step1ActionPanelProps {
   setModalidadEntrega?: (val: 'catalogo_estandar' | 'personalizado_bajo_pedido' | 'servicio_en_sitio') => void
   volumenCompra?: 'menudeo' | 'mayoreo' | 'proyecto'
   setVolumenCompra?: (val: 'menudeo' | 'mayoreo' | 'proyecto') => void
+  onWebsiteImported?: (data: WebsiteExtractedKnowledge) => void
 }
 
 export function Step1ActionPanel({
@@ -62,11 +64,53 @@ export function Step1ActionPanel({
   setModalidadEntrega,
   volumenCompra = 'menudeo',
   setVolumenCompra,
+  onWebsiteImported,
 }: Step1ActionPanelProps) {
   const [localPreview, setLocalPreview] = useState<string | null>(null)
   const [fileName, setFileName] = useState<string | null>(null)
+  const [websiteUrl, setWebsiteUrl] = useState<string>('')
+  const [isImportingWeb, setIsImportingWeb] = useState<boolean>(false)
+  const [importedWebDomain, setImportedWebDomain] = useState<string>('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
+
+  const handleImportWebsite = async () => {
+    const cleanUrl = websiteUrl.trim()
+    if (!cleanUrl) {
+      toast.error('Ingresa la URL de tu página web (ej. https://tunegocio.com)')
+      return
+    }
+    setIsImportingWeb(true)
+    const toastId = toast.loading('🌐 Leyendo tu sitio web y extrayendo catálogo, precios y servicios con IA...')
+    try {
+      const res = await fetchVpsPost('/api/extraer-web', { url: cleanUrl })
+      if (!res || res.ok === false || !res.descripcion_idea) {
+        toast.error(res?.error || 'No se pudo extraer información del sitio web.', { id: toastId })
+        return
+      }
+      const extracted = res as WebsiteExtractedKnowledge
+      setProductDesc(extracted.descripcion_idea)
+      if (setClienteObjetivoTipo && extracted.cliente_objetivo_tipo) {
+        setClienteObjetivoTipo(extracted.cliente_objetivo_tipo)
+      }
+      if (setModalidadEntrega && extracted.modalidad_entrega) {
+        setModalidadEntrega(extracted.modalidad_entrega)
+      }
+      if (setVolumenCompra && extracted.volumen_compra) {
+        setVolumenCompra(extracted.volumen_compra)
+      }
+      onWebsiteImported?.(extracted)
+      setImportedWebDomain(extracted.nombre_negocio || cleanUrl)
+      toast.success(
+        '¡Sitio web importado! Base de conocimiento lista para Andrea IA y Estudio Creativo.',
+        { id: toastId }
+      )
+    } catch (err: any) {
+      toast.error(err?.message || 'Error al analizar la página web.', { id: toastId })
+    } finally {
+      setIsImportingWeb(false)
+    }
+  }
 
   // Clean object URL on unmount
   useEffect(() => {
@@ -209,7 +253,7 @@ export function Step1ActionPanel({
 
   return (
     <div
-      className={`relative w-full mt-4 lg:mt-0 lg:fixed lg:bottom-8 lg:right-8 lg:max-w-[450px] z-30 space-y-3 pointer-events-auto select-none ${className}`}
+      className={`relative w-full mt-4 lg:mt-0 lg:fixed lg:bottom-8 lg:right-8 lg:max-w-[450px] lg:max-h-[calc(100vh-5.5rem)] lg:overflow-y-auto z-30 space-y-3 pointer-events-auto select-none ${className}`}
     >
       {/* 1. TOP ROW: MOTOR GEMINI BADGE & COMPACT MEDIA DROPZONE */}
       <div className="flex items-center justify-between gap-2">
@@ -293,6 +337,56 @@ export function Step1ActionPanel({
 
       {/* 3. IDEA INPUT GLASS BOX */}
       <div className="rounded-2xl bg-zinc-900/70 backdrop-blur-xl border border-white/15 p-3.5 shadow-2xl focus-within:border-cyan-400/50 focus-within:shadow-[0_0_20px_rgba(6,182,212,0.15)] transition-all space-y-2.5">
+        {/* BARRA COMPACTA: ¿TIENES PÁGINA WEB? -> IMPORTAR CON IA */}
+        <div className="pb-2 border-b border-white/10 space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-cyan-300">
+              <Globe className="w-3.5 h-3.5 text-cyan-400" />
+              <span>¿Tienes página web? Importa servicios, precios y logo:</span>
+            </span>
+            {importedWebDomain && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full truncate max-w-[140px]">
+                <Check className="w-3 h-3 shrink-0" />
+                {importedWebDomain}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={websiteUrl}
+              onChange={(e) => setWebsiteUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  handleImportWebsite()
+                }
+              }}
+              disabled={isImportingWeb || isGenerating}
+              placeholder="https://tuempresa.com"
+              className="flex-1 px-2.5 py-1.5 rounded-xl bg-zinc-950/90 border border-white/10 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-cyan-400/60 disabled:opacity-50"
+            />
+            <button
+              type="button"
+              onClick={handleImportWebsite}
+              disabled={isImportingWeb || isGenerating || !websiteUrl.trim()}
+              className="px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-[11px] font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-40"
+            >
+              {isImportingWeb ? (
+                <>
+                  <span className="w-3 h-3 border-2 border-cyan-300 border-t-transparent rounded-full animate-spin" />
+                  <span>Importando...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3 h-3 text-cyan-300" />
+                  <span>Importar con IA</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
         <textarea
           rows={3}
           value={productDesc}

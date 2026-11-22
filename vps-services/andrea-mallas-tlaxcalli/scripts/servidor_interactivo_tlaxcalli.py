@@ -769,6 +769,571 @@ def diagnosticar_modelo_negocio_ia(
     return base_heuristica
 
 
+def _validar_url_ssrf_segura(raw_url: str) -> tuple[bool, str, str]:
+    import ipaddress
+    import socket
+
+    u = str(raw_url or "").strip()
+    if not u:
+        return False, "", "Por favor ingresa la URL de tu sitio web."
+
+    # Si trae un esquema explícito distinto de http/https, rechazar con HTTP 400
+    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", u):
+        if not re.match(r"^https?://", u, flags=re.I):
+            return False, "", "Esquema no permitido. Solo se aceptan direcciones http:// o https://."
+        url_norm = u
+    elif u.lower().startswith(("javascript:", "file:", "data:", "ftp:", "gopher:")):
+        return False, "", "Esquema de URL no permitido."
+    else:
+        url_norm = "https://" + u.lstrip("/")
+
+    try:
+        parsed = urllib.parse.urlparse(url_norm)
+    except Exception:
+        return False, "", "Formato de URL inválido."
+
+    if parsed.scheme.lower() not in ("http", "https"):
+        return False, "", "Solo se permiten esquemas http o https."
+
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False, "", "La URL no contiene un dominio válido."
+
+    # Bloqueo directo de nombres locales o metadatos cloud
+    dominios_bloqueados = {
+        "localhost",
+        "localhost.localdomain",
+        "127.0.0.1",
+        "0.0.0.0",
+        "::1",
+        "[::1]",
+        "metadata.google.internal",
+        "169.254.169.254",
+    }
+    if (
+        host in dominios_bloqueados
+        or host.endswith(".local")
+        or host.endswith(".internal")
+        or host.endswith(".localhost")
+        or host.endswith(".lan")
+    ):
+        return False, "", "URL bloqueada por seguridad SSRF: no se permiten dominios locales ni internos."
+
+    # Revisión rápida de rangos IPv4 privados en texto
+    if re.match(
+        r"^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|0\.)",
+        host,
+    ):
+        return False, "", "URL bloqueada por seguridad SSRF: no se permiten direcciones IP privadas o loopback."
+
+    def _ip_es_prohibida(ip_txt: str) -> bool:
+        try:
+            ip_obj = ipaddress.ip_address(ip_txt)
+            return (
+                ip_obj.is_private
+                or ip_obj.is_loopback
+                or ip_obj.is_link_local
+                or ip_obj.is_multicast
+                or ip_obj.is_reserved
+                or ip_obj.is_unspecified
+            )
+        except Exception:
+            return True
+
+    # Si el host ya es una IP literal
+    try:
+        ipaddress.ip_address(host)
+        if _ip_es_prohibida(host):
+            return False, "", "URL bloqueada por seguridad SSRF: dirección IP privada o reservada."
+    except ValueError:
+        pass
+
+    # Resolver DNS y verificar todas las IPs asociadas
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80))
+        if not infos:
+            return False, "", "No se pudo resolver el dominio del sitio web."
+        for info in infos:
+            sockaddr = info[4]
+            if sockaddr and len(sockaddr) >= 1:
+                ip_res = str(sockaddr[0]).split("%")[0]
+                if _ip_es_prohibida(ip_res):
+                    return False, "", "URL bloqueada por seguridad SSRF: el dominio resuelve a una IP privada o local."
+    except Exception:
+        return False, "", "No se pudo resolver el dominio indicado. Verifica que la URL exista."
+
+    return True, url_norm, ""
+
+
+def _limpiar_html_a_texto_estructurado(html_raw: str) -> dict:
+    import html as html_lib
+
+    raw = str(html_raw or "")
+    m_title = re.search(r"<title[^>]*>([\s\S]*?)</title>", raw, flags=re.I)
+    title = html_lib.unescape(re.sub(r"\s+", " ", m_title.group(1)).strip()) if m_title else ""
+
+    def _buscar_meta(attr_name: str, attr_val: str) -> str:
+        pat1 = rf'<meta[^>]+{attr_name}\s*=\s*["\']{re.escape(attr_val)}["\'][^>]+content\s*=\s*["\']([^"\']+)["\']'
+        pat2 = rf'<meta[^>]+content\s*=\s*["\']([^"\']+)["\'][^>]+{attr_name}\s*=\s*["\']{re.escape(attr_val)}["\']'
+        m = re.search(pat1, raw, flags=re.I) or re.search(pat2, raw, flags=re.I)
+        return html_lib.unescape(m.group(1).strip()) if m else ""
+
+    meta_desc = _buscar_meta("name", "description")
+    og_title = _buscar_meta("property", "og:title")
+    og_desc = _buscar_meta("property", "og:description")
+    og_site = _buscar_meta("property", "og:site_name")
+    og_image = _buscar_meta("property", "og:image") or _buscar_meta("name", "twitter:image")
+
+    # Extraer encabezados H1, H2, H3 antes de limpiar etiquetas
+    headings = []
+    for m_h in re.finditer(r"<h[1-3][^>]*>([\s\S]*?)</h[1-3]>", raw, flags=re.I):
+        h_txt = re.sub(r"<[^>]+>", " ", m_h.group(1))
+        h_txt = html_lib.unescape(re.sub(r"\s+", " ", h_txt)).strip()
+        if 3 <= len(h_txt) <= 140 and h_txt not in headings:
+            headings.append(h_txt)
+        if len(headings) >= 18:
+            break
+
+    # Eliminar scripts, estilos, nav, svg y comentarios
+    limpio = re.sub(r"<!--[\s\S]*?-->", " ", raw)
+    limpio = re.sub(r"<(script|style|noscript|svg|nav|iframe)[^>]*>[\s\S]*?</\1>", " ", limpio, flags=re.I)
+    limpio = re.sub(r"<[^>]+>", " ", limpio)
+    limpio = html_lib.unescape(limpio)
+    limpio = re.sub(r"\s+", " ", limpio).strip()
+
+    # Detectar menciones de precios ($1,200, $350 MXN, etc.)
+    precios = []
+    for m_p in re.finditer(r"\$\s?\d{1,3}(?:[.,]\d{3})*(?:\.\d{2})?(?:\s*(?:MXN|USD|pesos|c/u|mes))?", limpio, flags=re.I):
+        p_val = m_p.group(0).strip()
+        if p_val not in precios:
+            precios.append(p_val)
+        if len(precios) >= 10:
+            break
+
+    return {
+        "title": title,
+        "og_site": og_site,
+        "og_title": og_title,
+        "meta_desc": meta_desc or og_desc,
+        "og_image": og_image,
+        "headings": headings,
+        "precios": precios,
+        "texto": limpio[:4500],
+    }
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        es_segura, _, err_msg = _validar_url_ssrf_segura(newurl)
+        if not es_segura:
+            raise urllib.error.URLError(err_msg or "Redirect bloqueado por seguridad SSRF")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _leer_respuesta_html_segura(resp, max_bytes: int = 450 * 1024) -> str:
+    import gzip
+
+    raw_bytes = resp.read(max_bytes)
+    enc = str(resp.headers.get("Content-Encoding") or "").lower()
+    if "gzip" in enc:
+        try:
+            raw_bytes = gzip.decompress(raw_bytes)
+        except Exception:
+            pass
+    charset = resp.headers.get_content_charset() or "utf-8"
+    try:
+        return raw_bytes.decode(charset, errors="ignore")
+    except Exception:
+        return raw_bytes.decode("utf-8", errors="ignore")
+
+
+def _extraer_logo_de_html(
+    html_raw: str,
+    base_url: str,
+    og_image: str,
+    t_inicio: float,
+    opener=None,
+) -> tuple[str | None, str | None]:
+    raw = str(html_raw or "")
+    candidatos = []
+
+    # 1. Buscar etiquetas <img> que contengan 'logo' en class, id, alt o src
+    for m_img in re.finditer(r"<img\b([^>]+)>", raw, flags=re.I):
+        attrs = m_img.group(1)
+        if not re.search(r"logo|brand|marca", attrs, flags=re.I):
+            continue
+        m_src = re.search(r'\bsrc\s*=\s*["\']([^"\']+)["\']', attrs, flags=re.I)
+        if m_src:
+            src_val = m_src.group(1).strip()
+            if src_val and not src_val.startswith("data:image/svg"):
+                candidatos.append(src_val)
+
+    # 2. Buscar apple-touch-icon o icon en <link>
+    for m_lnk in re.finditer(r'<link\b[^>]+rel\s*=\s*["\'](?:apple-touch-icon|icon|shortcut icon)["\'][^>]*>', raw, flags=re.I):
+        tag_lnk = m_lnk.group(0)
+        m_href = re.search(r'\bhref\s*=\s*["\']([^"\']+)["\']', tag_lnk, flags=re.I)
+        if m_href:
+            candidatos.append(m_href.group(1).strip())
+
+    # 3. Fallback a og:image
+    if og_image:
+        candidatos.append(og_image.strip())
+
+    headers_ua = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    }
+
+    fallback_logo_url = None
+    for cand in candidatos[:5]:
+        if not cand:
+            continue
+        if cand.startswith("data:image/"):
+            if len(cand) < 550000:
+                return None, cand
+            continue
+
+        abs_url = urllib.parse.urljoin(base_url, cand)
+        es_segura, abs_norm, _ = _validar_url_ssrf_segura(abs_url)
+        if not es_segura:
+            continue
+        if not fallback_logo_url:
+            fallback_logo_url = abs_norm
+
+        # Si aún tenemos presupuesto de tiempo, descargar el logo (< 500 KB) y convertir a base64
+        if (time.time() - t_inicio) < 8.8:
+            try:
+                req_img = urllib.request.Request(abs_norm, headers=headers_ua)
+                resp_ctx = (
+                    opener.open(req_img, timeout=2.5)
+                    if opener is not None
+                    else urllib.request.urlopen(req_img, context=SSL_CTX, timeout=2.5)
+                )
+                with resp_ctx as resp_img:
+                    ctype = (resp_img.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                    if ctype.startswith(("text/", "application/json", "application/javascript")):
+                        continue
+                    raw_bytes = resp_img.read(500 * 1024 + 1)
+                    if 100 < len(raw_bytes) <= 500 * 1024:
+                        head_low = raw_bytes[:120].lstrip().lower()
+                        if head_low.startswith((b"<!doctype", b"<html")):
+                            continue
+                        if not ctype.startswith("image/"):
+                            if abs_norm.lower().endswith(".png"):
+                                ctype = "image/png"
+                            elif abs_norm.lower().endswith((".jpg", ".jpeg")):
+                                ctype = "image/jpeg"
+                            elif abs_norm.lower().endswith(".webp"):
+                                ctype = "image/webp"
+                            elif abs_norm.lower().endswith(".svg") or b"<svg" in head_low:
+                                ctype = "image/svg+xml"
+                            elif abs_norm.lower().endswith(".ico"):
+                                ctype = "image/x-icon"
+                            else:
+                                ctype = "image/png"
+                        b64_str = base64.b64encode(raw_bytes).decode("ascii")
+                        return abs_norm, f"data:{ctype};base64,{b64_str}"
+            except Exception:
+                continue
+
+    return fallback_logo_url, None
+
+
+def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
+    t_inicio = time.time()
+    es_segura, url_norm, err_ssrf = _validar_url_ssrf_segura(raw_url)
+    if not es_segura:
+        return 400, {"ok": False, "error": err_ssrf}
+
+    headers_nav = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "es-MX,es;q=0.9,en;q=0.8",
+    }
+
+    safe_opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=SSL_CTX),
+        _SafeRedirectHandler(),
+    )
+
+    html_principal = ""
+    final_url = url_norm
+    try:
+        req = urllib.request.Request(url_norm, headers=headers_nav)
+        with safe_opener.open(req, timeout=7.5) as resp:
+            final_url = resp.geturl() or url_norm
+            es_seg_final, _, err_red = _validar_url_ssrf_segura(final_url)
+            if not es_seg_final:
+                return 400, {"ok": False, "error": err_red}
+            html_principal = _leer_respuesta_html_segura(resp, 450 * 1024)
+    except urllib.error.HTTPError as e_http:
+        return 400, {"ok": False, "error": f"El sitio web respondió con código HTTP {e_http.code}. Verifica la URL."}
+    except Exception as e_net:
+        return 400, {"ok": False, "error": f"No se pudo conectar al sitio web ({str(e_net)[:90]})."}
+
+    info_main = _limpiar_html_a_texto_estructurado(html_principal)
+    parsed_base = urllib.parse.urlparse(final_url)
+    host_base = (parsed_base.hostname or "").lower()
+
+    # Detectar hasta 2 enlaces internos relevantes (servicios, precios, catálogo, nosotros)
+    subpaginas_texto = []
+    patron_internos = re.compile(
+        r"(servicio|service|precio|pricing|plan|catalogo|producto|shop|tienda|nosotros|about|solucion|red|instalacion|cotiza|paquete)",
+        flags=re.I,
+    )
+    enlaces_candidatos = []
+    for m_a in re.finditer(r'<a\b[^>]+href\s*=\s*["\']([^"\'#]+)["\']', html_principal, flags=re.I):
+        href = m_a.group(1).strip()
+        if not href or href.lower().startswith(("mailto:", "tel:", "javascript:", "whatsapp:")):
+            continue
+        abs_link = urllib.parse.urljoin(final_url, href)
+        p_link = urllib.parse.urlparse(abs_link)
+        if (p_link.hostname or "").lower() != host_base:
+            continue
+        if abs_link.rstrip("/") == final_url.rstrip("/"):
+            continue
+        if patron_internos.search(p_link.path or ""):
+            if abs_link not in enlaces_candidatos:
+                enlaces_candidatos.append(abs_link)
+        if len(enlaces_candidatos) >= 2:
+            break
+
+    for sub_url in enlaces_candidatos[:2]:
+        if (time.time() - t_inicio) >= 6.8:
+            break
+        ok_sub, sub_norm, _ = _validar_url_ssrf_segura(sub_url)
+        if not ok_sub:
+            continue
+        try:
+            req_sub = urllib.request.Request(sub_norm, headers=headers_nav)
+            with safe_opener.open(req_sub, timeout=2.0) as resp_sub:
+                sub_html = _leer_respuesta_html_segura(resp_sub, 220 * 1024)
+                info_sub = _limpiar_html_a_texto_estructurado(sub_html)
+                if info_sub["texto"]:
+                    subpaginas_texto.append(
+                        f"[Subpágina {sub_norm}]: Encabezados: {' | '.join(info_sub['headings'][:6])}. Texto: {info_sub['texto'][:1500]}"
+                    )
+                for pr in info_sub["precios"]:
+                    if pr not in info_main["precios"]:
+                        info_main["precios"].append(pr)
+        except Exception:
+            continue
+
+    logo_url, logo_data_url = _extraer_logo_de_html(
+        html_principal, final_url, info_main.get("og_image") or "", t_inicio, opener=safe_opener
+    )
+
+    nombre_sitio = (
+        info_main.get("og_site")
+        or (info_main.get("title") or "").split("|")[0].split("—")[0].split("-")[0].strip()
+        or host_base.replace("www.", "").split(".")[0].capitalize()
+    )[:60]
+
+    contexto_consolidado = (
+        f"URL: {final_url}\n"
+        f"Nombre detectado: {nombre_sitio}\n"
+        f"Título: {info_main.get('title')}\n"
+        f"Descripción Meta: {info_main.get('meta_desc')}\n"
+        f"Encabezados principales: {' | '.join(info_main.get('headings', [])[:12])}\n"
+        f"Precios detectados: {', '.join(info_main.get('precios', [])[:10]) or 'Cotización personalizada'}\n"
+        f"Contenido página principal: {info_main.get('texto', '')[:2800]}\n"
+        + ("\n".join(subpaginas_texto)[:1800] if subpaginas_texto else "")
+    )
+
+    # Heuristic fallback por si Gemini agota presupuesto de 12s
+    texto_low = _quitar_acentos_visual(contexto_consolidado.lower())
+    es_servicio_sitio = any(
+        w in texto_low
+        for w in (
+            "instalacion",
+            "cableado",
+            "redes",
+            "cctv",
+            "mantenimiento",
+            "consultoria",
+            "levantamiento",
+            "soporte",
+            "ingenieria",
+            "servicio tecnico",
+            "corporativo",
+            "proyectos",
+        )
+    )
+    es_personalizado = any(
+        w in texto_low
+        for w in ("personaliz", "a medida", "3d", "bajo pedido", "diseno personalizado", "cotiza tu")
+    )
+    es_b2b = es_servicio_sitio or any(
+        w in texto_low for w in ("empresas", "corporativo", "industrial", "mayoreo", "distribuidor", "b2b", "oficinas")
+    )
+
+    cli_fallback = "empresas_b2b" if es_b2b else "consumidor_final"
+    mod_fallback = (
+        "servicio_en_sitio"
+        if es_servicio_sitio
+        else ("personalizado_bajo_pedido" if es_personalizado else "catalogo_estandar")
+    )
+    vol_fallback = "proyecto" if es_servicio_sitio else ("mayoreo" if "mayoreo" in texto_low else "menudeo")
+
+    desc_base = (
+        info_main.get("meta_desc")
+        or " | ".join(info_main.get("headings", [])[:3])
+        or info_main.get("title")
+        or nombre_sitio
+    ).strip()
+    desc_base = re.sub(
+        r"^(?:nosotros\s+|en\s+[\w\s]+)?(?:somos|ofrecemos|hacemos|vendemos|realizamos|brindamos)\s+",
+        "",
+        desc_base,
+        flags=re.I,
+    ).strip()
+    desc_base = desc_base[:230].rsplit(" ", 1)[0] if len(desc_base) > 230 else desc_base
+    if desc_base and nombre_sitio.lower() not in desc_base.lower():
+        descripcion_fallback = f"{nombre_sitio}: {desc_base}."[:340]
+    else:
+        descripcion_fallback = (desc_base or nombre_sitio)[:340]
+
+    headings_limpios = [h for h in info_main.get("headings", []) if len(h) >= 6][:4]
+    beneficios_fallback = (
+        headings_limpios[:3]
+        if len(headings_limpios) >= 3
+        else [
+            "Atención profesional y garantía de calidad",
+            "Cotización rápida por WhatsApp 24/7",
+            "Cobertura y entrega puntual garantizada",
+        ]
+    )
+    beneficios_fallback = [b[:60] for b in beneficios_fallback[:3]]
+
+    catalogo_fallback = (
+        f"BASE DE CONOCIMIENTO EXTRAÍDA DE {final_url}:\n"
+        f"• Negocio: {nombre_sitio}\n"
+        f"• Resumen Comercial: {descripcion_fallback}\n"
+        f"• Servicios / Productos Detectados: {' | '.join(info_main.get('headings', [])[:10]) or descripcion_fallback}\n"
+        f"• Precios Referenciales: {', '.join(info_main.get('precios', [])[:8]) or 'Cotización según alcance o pedido'}\n"
+        f"• Instrucción para Andrea IA: Atiende dudas técnicas o de catálogo con base en estos servicios, califica el requerimiento del cliente y solicita sus datos para cerrar pedido o agendar visita técnica."
+    )[:2400]
+
+    titular_fallback = (info_main.get("headings", [nombre_sitio])[0] if info_main.get("headings") else nombre_sitio).upper()[:46]
+
+    resultado_base = {
+        "ok": True,
+        "url_analizada": final_url,
+        "nombre_negocio": nombre_sitio,
+        "descripcion_idea": descripcion_fallback,
+        "catalogo_andrea": catalogo_fallback,
+        "cliente_objetivo_tipo": cli_fallback,
+        "modalidad_entrega": mod_fallback,
+        "volumen_compra": vol_fallback,
+        "logo_url": logo_url,
+        "logo_data_url": logo_data_url,
+        "titular_anuncio": titular_fallback,
+        "beneficios_clave": beneficios_fallback,
+    }
+
+    llaves = obtener_llaves_ia_backend()
+    if not llaves or (time.time() - t_inicio) >= 9.5:
+        return 200, resultado_base
+
+    prompt_web = (
+        "Eres un Analista Comercial Senior de BLITZR. Analiza el contenido extraído del sitio web del usuario "
+        "y sintetiza toda su oferta comercial para configurar automáticamente su embudo de ventas y su agente de WhatsApp Andrea IA.\n\n"
+        f"DATOS EXTRAÍDOS DEL SITIO WEB:\n{contexto_consolidado}\n\n"
+        "REGLAS ESTRICTAS:\n"
+        "1. 'descripcion_idea': Resumen comercial claro y natural en 2 a 3 líneas (máx 320 caracteres) de qué ofrece la empresa, SIN verbos en primera persona al inicio (NO empieces con 'Somos', 'Vendemos', 'Hacemos'; empieza directo con el servicio o producto, ej. 'Instalación y mantenimiento de redes corporativas, cableado estructurado y WiFi empresarial...').\n"
+        "2. 'catalogo_andrea': Base de conocimiento estructurada para que la IA Andrea responda en WhatsApp: incluye lista de servicios/productos detectados, precios o paquetes si aparecen, forma de trabajo y las 3 preguntas clave que Andrea debe hacer para cotizar o cerrar.\n"
+        "3. Clasifica con precisión:\n"
+        "   - 'cliente_objetivo_tipo': 'consumidor_final' | 'empresas_b2b' | 'ambos'\n"
+        "   - 'modalidad_entrega': 'catalogo_estandar' | 'personalizado_bajo_pedido' | 'servicio_en_sitio'\n"
+        "   - 'volumen_compra': 'menudeo' | 'mayoreo' | 'proyecto'\n"
+        "4. 'titular_anuncio': Titular publicitario de alto impacto en MAYÚSCULAS (máx 44 caracteres) para el póster 1080x1350.\n"
+        "5. 'beneficios_clave': Array de exactamente 3 puntos cortos y contundentes (máx 52 caracteres cada uno) con los diferenciadores o servicios clave.\n\n"
+        "Devuelve ÚNICAMENTE un objeto JSON válido (sin markdown) con estas llaves exactas:\n"
+        "{\n"
+        '  "nombre_negocio": "string",\n'
+        '  "descripcion_idea": "string",\n'
+        '  "catalogo_andrea": "string",\n'
+        '  "cliente_objetivo_tipo": "consumidor_final" | "empresas_b2b" | "ambos",\n'
+        '  "modalidad_entrega": "catalogo_estandar" | "personalizado_bajo_pedido" | "servicio_en_sitio",\n'
+        '  "volumen_compra": "menudeo" | "mayoreo" | "proyecto",\n'
+        '  "titular_anuncio": "string",\n'
+        '  "beneficios_clave": ["beneficio 1", "beneficio 2", "beneficio 3"]\n'
+        "}"
+    )
+
+    payload_ia = {
+        "contents": [{"role": "user", "parts": [{"text": prompt_web}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 900,
+            "responseMimeType": "application/json",
+        },
+    }
+
+    for modelo in ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3-flash-preview", "gemini-2.5-flash"]:
+        for key in llaves[:2]:
+            restante = 11.5 - (time.time() - t_inicio)
+            if restante <= 1.2:
+                return 200, resultado_base
+            url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={key}"
+            try:
+                req_ia = urllib.request.Request(
+                    url_api,
+                    data=json.dumps(payload_ia).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req_ia, context=SSL_CTX, timeout=min(5.0, max(1.3, restante))) as resp_ia:
+                    res_json = json.loads(resp_ia.read().decode("utf-8"))
+                    txt_ia = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    m_obj = re.search(r"\{[\s\S]*\}", txt_ia)
+                    if not m_obj:
+                        continue
+                    parsed_ia = json.loads(m_obj.group(0))
+
+                    cli_ia = str(parsed_ia.get("cliente_objetivo_tipo") or cli_fallback).strip().lower()
+                    if cli_ia not in ("consumidor_final", "empresas_b2b", "ambos"):
+                        cli_ia = cli_fallback
+
+                    mod_ia = str(parsed_ia.get("modalidad_entrega") or mod_fallback).strip().lower()
+                    if mod_ia not in ("catalogo_estandar", "personalizado_bajo_pedido", "servicio_en_sitio"):
+                        mod_ia = mod_fallback
+
+                    vol_ia = str(parsed_ia.get("volumen_compra") or vol_fallback).strip().lower()
+                    if vol_ia not in ("menudeo", "mayoreo", "proyecto"):
+                        vol_ia = vol_fallback
+
+                    bens_ia = parsed_ia.get("beneficios_clave")
+                    if not isinstance(bens_ia, list) or len(bens_ia) == 0:
+                        bens_ia = beneficios_fallback
+                    bens_clean = [str(b).strip()[:60] for b in bens_ia if str(b).strip()][:3]
+                    while len(bens_clean) < 3:
+                        bens_clean.append(beneficios_fallback[len(bens_clean) % len(beneficios_fallback)])
+
+                    desc_ia = str(parsed_ia.get("descripcion_idea") or descripcion_fallback).strip()
+                    cat_ia = str(parsed_ia.get("catalogo_andrea") or catalogo_fallback).strip()[:2400]
+                    tit_ia = str(parsed_ia.get("titular_anuncio") or titular_fallback).strip().upper()[:48]
+                    nom_ia = str(parsed_ia.get("nombre_negocio") or nombre_sitio).strip()[:60]
+
+                    return 200, {
+                        "ok": True,
+                        "url_analizada": final_url,
+                        "nombre_negocio": nom_ia,
+                        "descripcion_idea": desc_ia,
+                        "catalogo_andrea": cat_ia,
+                        "cliente_objetivo_tipo": cli_ia,
+                        "modalidad_entrega": mod_ia,
+                        "volumen_compra": vol_ia,
+                        "logo_url": logo_url,
+                        "logo_data_url": logo_data_url,
+                        "titular_anuncio": tit_ia,
+                        "beneficios_clave": bens_clean,
+                    }
+            except Exception:
+                continue
+
+    return 200, resultado_base
+
+
 def obtener_nicho_bd(cliente_id: str = "mallas_tlaxcalli") -> dict:
     cid = motor_m1.normalizar_cliente_id(cliente_id)
     conn = sqlite3.connect(DB_PATH)
@@ -1162,6 +1727,16 @@ def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict
             diag_obj["modalidad_entrega"] = mod_ent
         if vol_com:
             diag_obj["volumen_compra"] = vol_com
+        if data.get("logo_url"):
+            diag_obj["logo_url"] = str(data.get("logo_url"))[:600]
+        if data.get("logo_data_url") and len(str(data.get("logo_data_url"))) <= 180000:
+            diag_obj["logo_data_url"] = str(data.get("logo_data_url"))
+        if data.get("url_sitio_web"):
+            diag_obj["url_sitio_web"] = str(data.get("url_sitio_web"))[:400]
+        if isinstance(data.get("beneficios_clave"), list):
+            diag_obj["beneficios_clave"] = [str(b).strip()[:80] for b in data.get("beneficios_clave") if str(b).strip()][:3]
+        if data.get("titular_anuncio"):
+            diag_obj["titular_anuncio"] = str(data.get("titular_anuncio")).strip()[:80]
 
     modelo_raw = (
         data.get("modelo_negocio")
@@ -1212,7 +1787,12 @@ def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict
         or f"Promoción especial de {nombre_negocio}"
     ).strip()[:240]
 
-    catalogo_custom = str(data.get("catalogo_prompt") or data.get("catalogo_y_reglas") or "").strip()
+    catalogo_custom = str(
+        data.get("catalogo_prompt")
+        or data.get("catalogo_andrea")
+        or data.get("catalogo_y_reglas")
+        or ""
+    ).strip()
     if catalogo_custom and len(catalogo_custom) >= 80:
         catalogo_reglas = catalogo_custom[:2500]
     else:
@@ -3808,8 +4388,8 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 }
 
         clean_path = self.path.split("?", 1)[0]
+        qs_url = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         if clean_path == "/api/diagnosticar-modelo":
-            qs_url = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             desc = str(
                 data.get("descripcion_idea")
                 or data.get("productDesc")
@@ -3831,6 +4411,21 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 volumen_compra=vol_compra
             )
             self._send_json(res_diag, status=200)
+            return
+
+        if clean_path == "/api/extraer-web":
+            raw_url = str(
+                data.get("url")
+                or data.get("website")
+                or (qs_url.get("url", [""])[0])
+                or ""
+            ).strip()
+            if not raw_url and raw:
+                m_u = re.search(r"url\s*[\\:]*[:=]\s*([^\s,}\"]+)", raw)
+                if m_u:
+                    raw_url = re.sub(r'^[\\"\s]+|[\\"\s]+$', '', m_u.group(1))
+            status_web, res_web = extraer_conocimiento_web_ia(raw_url)
+            self._send_json(res_web, status=status_web)
             return
 
         if self.path == "/api/mi-nicho":

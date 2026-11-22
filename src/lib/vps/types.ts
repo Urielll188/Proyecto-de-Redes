@@ -31,6 +31,11 @@ export interface DiagnosticoModeloIA {
   cliente_objetivo_tipo?: string
   modalidad_entrega?: string
   volumen_compra?: string
+  url_sitio_web?: string
+  logo_url?: string | null
+  logo_data_url?: string | null
+  titular_anuncio?: string
+  beneficios_clave?: string[]
 }
 
 export interface NichoVps {
@@ -51,6 +56,22 @@ export interface NichoVps {
 }
 
 export type EstrategiaRutaType = 'cercanos_primero' | 'lejanos_primero' | 'por_horario'
+
+export interface WebsiteExtractedKnowledge {
+  ok?: boolean
+  error?: string
+  url_analizada?: string
+  nombre_negocio?: string
+  descripcion_idea: string
+  catalogo_andrea: string
+  cliente_objetivo_tipo: 'consumidor_final' | 'empresas_b2b' | 'ambos'
+  modalidad_entrega: 'catalogo_estandar' | 'personalizado_bajo_pedido' | 'servicio_en_sitio'
+  volumen_compra: 'menudeo' | 'mayoreo' | 'proyecto'
+  logo_url?: string | null
+  logo_data_url?: string | null
+  titular_anuncio?: string
+  beneficios_clave?: string[]
+}
 
 export interface PedidoVps {
   id: number
