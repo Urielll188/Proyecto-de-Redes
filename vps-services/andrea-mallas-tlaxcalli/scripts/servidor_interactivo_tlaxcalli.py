@@ -3144,7 +3144,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/mi-nicho":
             qs = urllib.parse.parse_qs(parsed.query)
-            email_q = (qs.get("email", [""])[0] or "").strip().lower()
+            email_q = (qs.get("owner_email", [""])[0] or qs.get("email", [""])[0] or "").strip().lower()
             cid_q = (qs.get("cliente_id", [""])[0] or "").strip()
             if not email_q and cid_q:
                 cid_norm = motor_m1.normalizar_cliente_id(cid_q)
@@ -3330,7 +3330,8 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length).decode("utf-8", errors="ignore") if length > 0 else "{}"
         try:
-            data = json.loads(raw) if raw.strip() else {}
+            clean_raw = raw.replace('\\"', '"').replace('\\:', ':').replace('\\,', ',')
+            data = json.loads(clean_raw) if clean_raw.strip() else {}
             if not isinstance(data, dict):
                 data = {"descripcion_idea": str(data)}
         except Exception:
@@ -3338,8 +3339,16 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             if qs_body:
                 data = {k: v[0] for k, v in qs_body.items() if v}
             else:
-                m_desc = re.search(r"descripcion_idea\s*[:=]\s*(.+?)(?:[,}]|$)", raw)
-                data = {"descripcion_idea": m_desc.group(1).strip(' "\'') if m_desc else raw.strip()}
+                m_desc = re.search(r"descripcion_idea\s*[\\:]*[:=]\s*(.+?)(?:[,}]|$)", raw)
+                m_cli = re.search(r"cliente_objetivo_tipo\s*[\\:]*[:=]\s*(.+?)(?:[,}]|$)", raw)
+                m_mod = re.search(r"modalidad_entrega\s*[\\:]*[:=]\s*(.+?)(?:[,}]|$)", raw)
+                m_vol = re.search(r"volumen_compra\s*[\\:]*[:=]\s*(.+?)(?:[,}]|$)", raw)
+                data = {
+                    "descripcion_idea": re.sub(r'^[\\"\s]+|[\\"\s]+$', '', m_desc.group(1)) if m_desc else raw.strip(),
+                    "cliente_objetivo_tipo": re.sub(r'^[\\"\s]+|[\\"\s]+$', '', m_cli.group(1)) if m_cli else "",
+                    "modalidad_entrega": re.sub(r'^[\\"\s]+|[\\"\s]+$', '', m_mod.group(1)) if m_mod else "",
+                    "volumen_compra": re.sub(r'^[\\"\s]+|[\\"\s]+$', '', m_vol.group(1)) if m_vol else ""
+                }
 
         clean_path = self.path.split("?", 1)[0]
         if clean_path == "/api/diagnosticar-modelo":
