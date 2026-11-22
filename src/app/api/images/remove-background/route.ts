@@ -263,10 +263,12 @@ export async function POST(request: NextRequest) {
       data: { publicUrl },
     } = supabase.storage.from(targetBucket).getPublicUrl(fileName)
 
-    // 7. Retornar URL pública con canal alfa transparente
+    // 7. Retornar URL pública y Data URL base64 con canal alfa transparente para exportación sin bloqueo CORS
+    const transparentDataUrl = `data:image/png;base64,${transparentBuffer.toString('base64')}`
     return NextResponse.json({
       success: true,
       transparentUrl: publicUrl,
+      transparentDataUrl,
     })
   } catch (error: unknown) {
     console.error('Error en /api/images/remove-background:', error)

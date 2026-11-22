@@ -6,54 +6,137 @@ import sharp from 'sharp'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-async function generateProceduralBackdrop(nicheCategory: 'kitchen' | 'tech' | 'retail' = 'retail'): Promise<Buffer> {
-  const isKitchen = nicheCategory === 'kitchen'
-  const isTech = nicheCategory === 'tech'
+type BackdropMood = 'editorial-dark' | 'clean-light' | 'warm-wood' | 'neon-tech' | 'retail-gold'
 
-  const wallBgStart = isKitchen ? '#fef3c7' : isTech ? '#050b14' : '#18181b'
-  const wallBgMid = isKitchen ? '#f5efe6' : isTech ? '#0a192f' : '#27272a'
-  const wallBgEnd = isKitchen ? '#e7dfd5' : isTech ? '#020617' : '#000000'
+function detectMood(text: string, styleTheme?: string): BackdropMood {
+  const low = `${text} ${styleTheme || ''}`.toLowerCase()
+  if (/(madera|plantas|c[aá]lido|artesanal|wood|natural|comida|cocina|kitchen)/i.test(low)) {
+    return 'warm-wood'
+  }
+  if (/(ne[oó]n|cyber|3d|gamer|led|tech|redes|software|futur)/i.test(low)) {
+    return 'neon-tech'
+  }
+  if (/(minimalista claro|clean-light|clean light|blanco|m[aá]rmol|luminoso|claro|lifestyle)/i.test(low)) {
+    return 'clean-light'
+  }
+  if (/(bold-retail|bold retail|oferta|dorado|gold|amarillo|promo)/i.test(low)) {
+    return 'retail-gold'
+  }
+  return 'editorial-dark'
+}
 
-  const tableColorStart = isKitchen ? '#d4a373' : isTech ? '#0f172a' : '#d6d3d1'
-  const tableColorEnd = isKitchen ? '#bc8a5f' : isTech ? '#020617' : '#a8a29e'
-  const tableEdge = isKitchen ? '#a9714b' : isTech ? '#0284c7' : '#78716c'
+async function generateProceduralBackdrop(mood: BackdropMood = 'editorial-dark'): Promise<Buffer> {
+  const palettes: Record<
+    BackdropMood,
+    {
+      wallStart: string
+      wallMid: string
+      wallEnd: string
+      spotColor: string
+      spotOpacity: string
+      tableStart: string
+      tableEnd: string
+      tableEdge: string
+      accentLine: string
+    }
+  > = {
+    'editorial-dark': {
+      wallStart: '#18181b',
+      wallMid: '#09090b',
+      wallEnd: '#020617',
+      spotColor: '#e4e4e7',
+      spotOpacity: '0.18',
+      tableStart: '#27272a',
+      tableEnd: '#09090b',
+      tableEdge: '#3f3f46',
+      accentLine: '#a1a1aa',
+    },
+    'clean-light': {
+      wallStart: '#f8fafc',
+      wallMid: '#e2e8f0',
+      wallEnd: '#cbd5e1',
+      spotColor: '#ffffff',
+      spotOpacity: '0.65',
+      tableStart: '#f1f5f9',
+      tableEnd: '#cbd5e1',
+      tableEdge: '#94a3b8',
+      accentLine: '#ffffff',
+    },
+    'warm-wood': {
+      wallStart: '#292524',
+      wallMid: '#1c1917',
+      wallEnd: '#0c0a09',
+      spotColor: '#fde68a',
+      spotOpacity: '0.24',
+      tableStart: '#b45309',
+      tableEnd: '#78350f',
+      tableEdge: '#92400e',
+      accentLine: '#fcd34d',
+    },
+    'neon-tech': {
+      wallStart: '#020617',
+      wallMid: '#0f172a',
+      wallEnd: '#030712',
+      spotColor: '#22d3ee',
+      spotOpacity: '0.28',
+      tableStart: '#0f172a',
+      tableEnd: '#020617',
+      tableEdge: '#06b6d4',
+      accentLine: '#22d3ee',
+    },
+    'retail-gold': {
+      wallStart: '#1c1917',
+      wallMid: '#18181b',
+      wallEnd: '#09090b',
+      spotColor: '#fbbf24',
+      spotOpacity: '0.26',
+      tableStart: '#27272a',
+      tableEnd: '#09090b',
+      tableEdge: '#f59e0b',
+      accentLine: '#fbbf24',
+    },
+  }
+
+  const p = palettes[mood] || palettes['editorial-dark']
 
   const svg = `
   <svg width="1080" height="1350" viewBox="0 0 1080 1350" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="wallBg" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${wallBgStart}"/>
-        <stop offset="60%" stop-color="${wallBgMid}"/>
-        <stop offset="100%" stop-color="${wallBgEnd}"/>
+        <stop offset="0%" stop-color="${p.wallStart}"/>
+        <stop offset="62%" stop-color="${p.wallMid}"/>
+        <stop offset="100%" stop-color="${p.wallEnd}"/>
       </linearGradient>
-      <radialGradient id="spotLight" cx="50%" cy="35%" r="60%">
-        <stop offset="0%" stop-color="${isTech ? '#38bdf8' : '#ffffff'}" stop-opacity="${isKitchen ? '0.35' : isTech ? '0.25' : '0.2'}"/>
-        <stop offset="45%" stop-color="${isTech ? '#0284c7' : '#ffffff'}" stop-opacity="${isKitchen ? '0.1' : '0.04'}"/>
-        <stop offset="100%" stop-color="#000000" stop-opacity="0.8"/>
+      <radialGradient id="spotLight" cx="50%" cy="42%" r="58%">
+        <stop offset="0%" stop-color="${p.spotColor}" stop-opacity="${p.spotOpacity}"/>
+        <stop offset="55%" stop-color="${p.spotColor}" stop-opacity="0.05"/>
+        <stop offset="100%" stop-color="#000000" stop-opacity="${mood === 'clean-light' ? '0.12' : '0.75'}"/>
       </radialGradient>
       <linearGradient id="tableTop" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${tableColorStart}"/>
-        <stop offset="100%" stop-color="${tableColorEnd}"/>
+        <stop offset="0%" stop-color="${p.tableStart}"/>
+        <stop offset="100%" stop-color="${p.tableEnd}"/>
       </linearGradient>
       <linearGradient id="tableFront" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${tableEdge}"/>
-        <stop offset="100%" stop-color="#09090b"/>
+        <stop offset="0%" stop-color="${p.tableEdge}"/>
+        <stop offset="100%" stop-color="${p.wallEnd}"/>
       </linearGradient>
     </defs>
-    <!-- Background Wall / Studio Atmosphere -->
+    <!-- Studio Wall & Ambient Spotlight -->
     <rect width="1080" height="1350" fill="url(#wallBg)"/>
     <rect width="1080" height="1350" fill="url(#spotLight)"/>
 
-    <!-- Wide Flat Tabletop Surface (No Pillars) -->
-    <polygon points="0,880 1080,880 1080,1080 0,1080" fill="url(#tableTop)"/>
-    <line x1="0" y1="880" x2="1080" y2="880" stroke="${isTech ? '#38bdf8' : '#ffffff'}" stroke-width="2" stroke-opacity="0.5"/>
+    <!-- Subtle Architectural Studio Ring Light Reflection -->
+    <circle cx="540" cy="540" r="310" fill="none" stroke="${p.accentLine}" stroke-opacity="0.12" stroke-width="2"/>
 
-    <!-- Soft Horizontal Shadow on table plane -->
-    <ellipse cx="540" cy="1000" rx="420" ry="60" fill="#000000" fill-opacity="0.65"/>
+    <!-- Commercial Studio Tabletop Podium -->
+    <polygon points="0,890 1080,890 1080,1110 0,1110" fill="url(#tableTop)"/>
+    <line x1="0" y1="890" x2="1080" y2="890" stroke="${p.accentLine}" stroke-width="2" stroke-opacity="0.45"/>
 
-    <!-- Table Front Edge / Countertop Thickness -->
-    <rect x="0" y="1080" width="1080" height="270" fill="url(#tableFront)"/>
-    <line x1="0" y1="1080" x2="1080" y2="1080" stroke="${isTech ? '#0ea5e9' : '#52525b'}" stroke-width="2"/>
+    <!-- Contact Ambient Shadow on Podium -->
+    <ellipse cx="540" cy="995" rx="380" ry="52" fill="#000000" fill-opacity="${mood === 'clean-light' ? '0.18' : '0.58'}"/>
+
+    <!-- Podium Front Edge -->
+    <rect x="0" y="1110" width="1080" height="240" fill="url(#tableFront)"/>
   </svg>
   `
   return sharp(Buffer.from(svg)).png().toBuffer()
@@ -61,7 +144,6 @@ async function generateProceduralBackdrop(nicheCategory: 'kitchen' | 'tech' | 'r
 
 export async function POST(request: NextRequest) {
   try {
-    // 1. Validar sesión con Supabase Auth
     const supabase = await createClient()
     const {
       data: { user },
@@ -80,16 +162,8 @@ export async function POST(request: NextRequest) {
       select: { id: true },
     })
 
-    if (!dbUser) {
-      return NextResponse.json(
-        { success: false, error: 'Usuario no registrado en la base de datos' },
-        { status: 401 }
-      )
-    }
+    const userId = dbUser?.id || user.id
 
-    const userId = dbUser.id
-
-    // 2. Extraer payload: { niche, theme, styleTheme, stylePrompt }
     let body: any = {}
     try {
       body = await request.json()
@@ -97,39 +171,43 @@ export async function POST(request: NextRequest) {
       // Body vacío permitido
     }
 
-    const niche = body?.niche || body?.productNiche || body?.stylePrompt || ''
-    const productNiche = niche || 'Producto Físico'
+    const customPrompt = (body?.customPrompt || body?.prompt_fondo || '').trim()
+    const productDesc = (body?.productDesc || body?.descripcion_producto || '').trim()
+    const niche = (body?.niche || body?.productNiche || body?.stylePrompt || 'Producto Físico').trim()
+    const styleTheme = (body?.styleTheme || body?.theme || 'minimal-dark').trim()
 
-    // 3. FONDOS CONTEXTUALES BASADOS EN EL NICHO (ZIMZEE-STYLE)
+    const combinedContext = `${customPrompt} ${productDesc} ${niche} ${styleTheme}`
+    const mood = detectMood(combinedContext, styleTheme)
+
     let scenePrompt = ''
-    let nicheCategory: 'kitchen' | 'tech' | 'retail' = 'retail'
-
-    if (productNiche.includes('Comida') || productNiche.includes('Hogar')) {
-      nicheCategory = 'kitchen'
+    if (customPrompt) {
+      scenePrompt = `${customPrompt}, commercial studio photography stage, clean empty foreground podium surface, professional lighting, NO text, NO letters, NO watermark, 8k`
+    } else if (/3d|impresi[oó]n|figura|coleccion|prototipo/i.test(combinedContext)) {
       scenePrompt =
-        'Bright modern luxury kitchen countertop, light wood surface, soft morning sunlight, blurred airy minimalist kitchen in background, magazine commercial photography, completely empty tabletop foreground, NO objects, NO cups, NO text, 8k'
-    } else if (productNiche.includes('Tech') || productNiche.includes('Servicio')) {
-      nicheCategory = 'tech'
+        'Modern creative studio desk podium, soft cyan and warm rim lighting, matte dark architectural surface, commercial product photography background, completely empty center stage, NO text, NO objects, 8k'
+    } else if (mood === 'warm-wood') {
       scenePrompt =
-        'Modern dark matte desk surface, subtle cyan ambient rim lighting, clean minimal workspace background, tech studio showcase, completely empty flat foreground, NO devices, NO text, 8k'
+        'Warm natural oak wood tabletop surface, soft golden sunlight shadows, blurred modern studio background, commercial photography stage, completely empty foreground tabletop, NO text, 8k'
+    } else if (mood === 'clean-light') {
+      scenePrompt =
+        'Bright minimalist architectural studio podium, white travertine stone surface, soft daylight shadows, luxury editorial product photography backdrop, empty center stage, NO text, 8k'
+    } else if (mood === 'neon-tech') {
+      scenePrompt =
+        'Modern dark matte studio desk surface, subtle cyan ambient rim lighting, clean minimal tech studio background, completely empty flat foreground, NO devices, NO text, 8k'
     } else {
-      // Retail / Ropa / General
-      nicheCategory = 'retail'
       scenePrompt =
-        'Minimalist luxury retail boutique floor, soft warm architectural shadows, light neutral travertine stone podium, high fashion editorial lighting, completely empty stage, NO shoes, NO objects, NO text, 8k'
+        'Luxury commercial photography studio podium, dark matte stone surface, dramatic soft studio spotlight, clean architectural background, empty foreground stage, NO objects, NO text, 8k'
     }
 
-    // 4. Inyección de entropía y llamada a Pollinations Flux con seed aleatorio
     const randomSeed = Math.floor(Math.random() * 9000000) + 1000000
     const encodedPrompt = encodeURIComponent(scenePrompt)
     const pollUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1080&height=1350&seed=${randomSeed}&nologo=true&model=flux`
 
     let buffer: Buffer | null = null
 
-    // Descargar el buffer con timeout controlado (AbortController de 9s para evitar Error 504 de Vercel)
     try {
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 9000)
+      const timeoutId = setTimeout(() => controller.abort(), 7500)
 
       const response = await fetch(pollUrl, { signal: controller.signal })
       clearTimeout(timeoutId)
@@ -141,15 +219,17 @@ export async function POST(request: NextRequest) {
         }
       }
     } catch (aiErr) {
-      console.warn('Inferencia remota no disponible o lenta, usando generador procedural:', aiErr)
+      console.warn('Inferencia remota lenta, usando estudio procedural HD:', aiErr)
     }
 
-    // Si la llamada remota falla o se agota el tiempo, generar escena procedural de superficie plana
     if (!buffer) {
-      buffer = await generateProceduralBackdrop(nicheCategory)
+      buffer = await generateProceduralBackdrop(mood)
     }
 
-    // 5. Guardar en Supabase con nombre de archivo ÚNICO (Evita sobreescritura y caché)
+    // Convertir a data URL base64 para garantizar exportación 1080x1350 100% libre de bloqueo CORS
+    const sceneDataUrl = `data:image/png;base64,${buffer.toString('base64')}`
+
+    // Guardar también en Supabase Storage para persistencia en Bóveda
     const uniqueFileName = `${userId}/scenes/pedestal-${Date.now()}-${randomSeed}.png`
     let targetBucket = 'blitzr-vault'
 
@@ -171,22 +251,20 @@ export async function POST(request: NextRequest) {
       uploadError = fallbackUpload.error
     }
 
-    if (uploadError) {
-      console.error('Error subiendo escena visual:', uploadError)
-      return NextResponse.json(
-        { success: false, error: `Error en almacenamiento: ${uploadError.message}` },
-        { status: 500 }
-      )
+    let publicUrl = sceneDataUrl
+    if (!uploadError) {
+      const { data } = supabase.storage.from(targetBucket).getPublicUrl(uniqueFileName)
+      if (data?.publicUrl) {
+        publicUrl = data.publicUrl
+      }
     }
-
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from(targetBucket).getPublicUrl(uniqueFileName)
 
     return NextResponse.json({
       success: true,
       sceneUrl: publicUrl,
       publicUrl,
+      sceneDataUrl,
+      promptUsed: scenePrompt,
     })
   } catch (error: unknown) {
     console.error('Error en /api/generate/visual:', error)

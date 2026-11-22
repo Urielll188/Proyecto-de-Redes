@@ -115,8 +115,8 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   const { isMallasOwner, nicho, modeloNegocio, syncNichoFromIdea, diagnosticarModelo } = useNicho()
   const hasInitialCampaign = Boolean(initialData?.copies || initialData?.strategyData)
 
-  // Paso 1: Ingesta | Paso 2: Centro de Mando | Paso 3: Generación Visual de Estudio
-  const [step, setStep] = useState<1 | 2 | 3>(hasInitialCampaign ? 2 : 1)
+  // Paso 1: Ingesta | Paso 2: Centro de Mando | Paso 3: Estudio Publicitario Profesional
+  const [step, setStep] = useState<1 | 2 | 3>(hasInitialCampaign ? 3 : 1)
 
   // Diagnóstico Inteligente BLITZR (3 Modelos: DISTRIBUIDOR_B2B | SERVICIOS_B2B | EMPRENDEDOR_B2C)
   const [diagnosticoIA, setDiagnosticoIA] = useState<DiagnosticoModeloIA | null>(null)
@@ -285,11 +285,8 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     setTimeout(() => setIsCopied(false), 2000)
   }
 
-  // ===================== ESTADOS PASO 3: GENERACIÓN VISUAL DE ESTUDIO =====================
-  const [sceneUrl, setSceneUrl] = useState<string | null>(
-    initialData?.bannerUrl ||
-      'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1080&q=80'
-  )
+  // ===================== ESTADOS PASO 3: ESTUDIO PUBLICITARIO UNIFICADO (1080×1350) + COPILOTO IA =====================
+  const [sceneUrl, setSceneUrl] = useState<string | null>(initialData?.bannerUrl || null)
   const setVisualOutput = (url: string | null) => setSceneUrl(url)
   const [isGeneratingScene, setIsGeneratingScene] = useState(false)
   const [cutoutProductUrl, setCutoutProductUrl] = useState<string | null>(null)
@@ -297,12 +294,34 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   const [useCutout, setUseCutout] = useState(true)
   const [isBakingBanner, setIsBakingBanner] = useState(false)
   const [headline, setHeadline] = useState(
-    initialData?.productDesc ? initialData.productDesc.slice(0, 32).toUpperCase() : 'LOOK LIKE YOU, ON YOUR BEST DAY'
+    initialData?.productDesc
+      ? cleanGiroTexto(initialData.productDesc).toUpperCase().slice(0, 42)
+      : 'EDICIÓN ESPECIAL'
   )
-  const [subline, setSubline] = useState('Reacts hook like you, on your best day.')
+  const [subline, setSubline] = useState('Calidad superior y atención personalizada')
   const [ctaText, setCtaText] = useState('Pedir por WhatsApp')
-  const [badgeText, setBadgeText] = useState('OFERTA EXCLUSIVA')
+  const [badgeText, setBadgeText] = useState('DESTACADO')
   const [styleTheme, setStyleTheme] = useState<StudioStyleTheme>('minimal-dark')
+
+  // Estados de precio, escala, posición y Sala de Chat Creativa IA
+  const [studioPrice, setStudioPrice] = useState<string>('')
+  const [studioComparePrice, setStudioComparePrice] = useState<string>('')
+  const [studioProductScale, setStudioProductScale] = useState<number>(1.0)
+  const [studioProductOffsetY, setStudioProductOffsetY] = useState<number>(0)
+  const [customScenePrompt, setCustomScenePrompt] = useState<string>('')
+  const [showCmoStrategyPanel, setShowCmoStrategyPanel] = useState<boolean>(false)
+  const [showManualControls, setShowManualControls] = useState<boolean>(false)
+  const [studioChatMessages, setStudioChatMessages] = useState<
+    Array<{ role: 'assistant' | 'user'; text: string }>
+  >([
+    {
+      role: 'assistant',
+      text: '¡Hola! Soy tu Copiloto de Diseño en Vivo. Pídeme cambios de fondo fotográfico IA, iluminación, textos, precios, descuentos o tamaño del producto y actualizaré tu arte 1080×1350 al instante.',
+    },
+  ])
+  const [studioChatInput, setStudioChatInput] = useState<string>('')
+  const [isSendingStudioChat, setIsSendingStudioChat] = useState<boolean>(false)
+  const studioFileInputRef = useRef<HTMLInputElement>(null)
 
   // Estados de carga y publicación
   const [isUploadingToStorage, setIsUploadingToStorage] = useState(false)
@@ -588,10 +607,22 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         setSubline(data.cmoAnalysis.angle)
       } else if (data.estrategia?.angulo_gancho) {
         setSubline(data.estrategia.angulo_gancho)
+      } else {
+        setSubline(diagData?.enfoque_andrea || 'Atención personalizada y calidad garantizada')
       }
 
-      if (niche) {
-        setBadgeText(niche.toUpperCase())
+      if (modalidadEntrega === 'personalizado_bajo_pedido') {
+        setBadgeText('HECHO A MEDIDA')
+      } else if (chosenModel === 'SERVICIOS_B2B') {
+        setBadgeText('SERVICIO PROFESIONAL')
+      } else {
+        setBadgeText('EDICIÓN ESPECIAL')
+      }
+
+      // Si el usuario mencionó un precio en su idea (ej. $350), precargarlo en el lienzo
+      const priceMatch = productDesc.match(/\$\s*(\d{2,6})/)
+      if (priceMatch && priceMatch[1]) {
+        setStudioPrice(priceMatch[1])
       }
 
       // Sincronizar automáticamente el perfil del negocio con perfiles_nicho en SQLite para usuarios nuevos
@@ -632,18 +663,8 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         })
       }
 
-      // Si mode === 'fast' (o !data.cmoAnalysis), avanzar directamente al paso del Estudio Visual (Step 3)
-      if (mode === 'fast' || !data.cmoAnalysis) {
-        setCmoAnalysis(null)
-        setStep(3)
-        if (!isVideoMedia && imageUrl && !cutoutProductUrl && !isRemovingBg) {
-          handleRemoveBackground(imageUrl)
-        }
-        toast.success('¡Despliegue rápido listo! Personaliza tu anuncio en el Estudio Visual.', {
-          id: toastId,
-        })
-      } else {
-        // Si mode === 'strategic', guardar setCmoAnalysis(data.cmoAnalysis) y mostrar la vista estratégica completa (Step 2)
+      // Guardar la estrategia CMO para el panel colapsable y pasar DIRECTO a 03 • ESTUDIO sin bloqueo
+      if (data.cmoAnalysis) {
         setCmoAnalysis(data.cmoAnalysis)
         setCampaignData({
           titulo_campana: headlineText,
@@ -654,11 +675,19 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
             oferta_irresistible: data.cmoAnalysis.irresistibleOffer || '',
           },
         })
-        setStep(2)
-        toast.success('¡Centro de mando listo! Puedes editar cualquier texto antes de publicar.', {
-          id: toastId,
-        })
+      } else {
+        setCmoAnalysis(null)
       }
+
+      setStep(3)
+      // Disparar generación del escenario fotográfico IA acorde al giro y recorte del producto si existe foto
+      handleGenerateStudioScene(undefined, styleTheme)
+      if (!isVideoMedia && imageUrl && !cutoutProductUrl && !isRemovingBg) {
+        handleRemoveBackground(imageUrl)
+      }
+      toast.success('¡Estudio Creativo listo! Personaliza tu arte con el Copiloto IA en vivo.', {
+        id: toastId,
+      })
     } catch (err: any) {
       if (err.name === 'AbortError') {
         toast.error('La solicitud superó los 58 segundos. Prueba con Despliegue Rápido.', { id: toastId })
@@ -671,30 +700,73 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     }
   }
 
-  // 2. Publicar en Instagram Feed (/api/meta/feed/publish) usando publicationProxy
+  // 2. Publicar en Instagram / Facebook Feed (/api/meta/feed/publish) compilando el lienzo si aún no se ha horneado
   const handlePublishIgFeed = async () => {
-    const targetMedia = publicationProxy.bannerUrl || publicationProxy.publicUrl
-
-    if (!targetMedia) {
-      toast.error('Sube una imagen o genera una pancarta antes de publicar en el Feed.')
-      return
-    }
-
     if (isVideoMedia) {
-      toast.error('El archivo actual es un video. Usa el botón de Meta Reels en la columna izquierda.')
+      toast.error('El archivo actual es un video. Usa el botón de Meta Reels.')
       return
     }
 
     setIsPublishingFeed(true)
-    const toastId = toast.loading('Publicando imagen en tu Feed de Instagram...')
+    const toastId = toast.loading('Preparando arte 1080×1350 y publicando en Instagram / Facebook...')
 
     try {
+      let targetMedia = bannerUrl
+      const canvasElement = document.getElementById('studio-canvas-container')
+
+      if (canvasElement) {
+        if (typeof document !== 'undefined' && document.fonts) {
+          await document.fonts.ready
+        }
+        const blob = await toBlob(canvasElement, {
+          quality: 0.98,
+          canvasWidth: 1080,
+          canvasHeight: 1350,
+          pixelRatio: 2,
+          cacheBust: true,
+          filter: () => true,
+        })
+        if (blob) {
+          const supabase = createClient()
+          const {
+            data: { user },
+          } = await supabase.auth.getUser()
+          const safeUserId = user?.id || 'public'
+          const filePath = `${safeUserId}/banners/banner-${Date.now()}.png`
+          let targetBucket = 'blitzr-vault'
+          const { error: uploadError } = await supabase.storage
+            .from(targetBucket)
+            .upload(filePath, blob, { contentType: 'image/png', upsert: true })
+          if (uploadError) {
+            targetBucket = 'product-images'
+            await supabase.storage
+              .from(targetBucket)
+              .upload(filePath, blob, { contentType: 'image/png', upsert: true })
+          }
+          const {
+            data: { publicUrl: compiledUrl },
+          } = supabase.storage.from(targetBucket).getPublicUrl(filePath)
+          if (compiledUrl) {
+            targetMedia = compiledUrl
+            setBannerUrl(compiledUrl)
+          }
+        }
+      }
+
+      if (!targetMedia) {
+        targetMedia = publicationProxy.bannerUrl || publicationProxy.publicUrl
+      }
+
+      if (!targetMedia) {
+        throw new Error('Primero genera el arte en el lienzo antes de publicar.')
+      }
+
       const res = await fetch('/api/meta/feed/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           imageUrl: targetMedia,
-          caption: publicationProxy.instagramCopy,
+          caption: publicationProxy.instagramCopy || copyMarketplaceEstudio,
           publicationId: publicationProxy.id || undefined,
         }),
       })
@@ -706,7 +778,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
       }
 
       setIsFeedPublished(true)
-      toast.success('¡Publicado en tu Feed de Instagram con éxito!', { id: toastId })
+      toast.success('¡Arte 1080×1350 publicado en tu Feed con éxito!', { id: toastId })
     } catch (err: any) {
       toast.error(err.message || 'Fallo al publicar en Instagram Feed', { id: toastId })
     } finally {
@@ -773,34 +845,43 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     }
   }
 
-  // 5. Paso 3: Generación de Escena Fotográfica de Estudio con IA
-  const handleGenerateStudioScene = async () => {
+  // 5. Paso 3: Generación de Escena Fotográfica de Estudio con IA (100% contextual y libre de CORS)
+  const handleGenerateStudioScene = async (
+    customPromptOverride?: string,
+    themeOverride?: StudioStyleTheme
+  ) => {
     setIsGeneratingScene(true)
-    const toastId = toast.loading('Generando nueva escena fotográfica de estudio con IA...')
+    const toastId = toast.loading('🎨 Renderizando escenario fotográfico de estudio 1080×1350 con IA...')
 
     try {
+      const effectiveStyle = themeOverride || styleTheme
       const themeLabel =
-        styleTheme === 'clean-light'
+        effectiveStyle === 'clean-light'
           ? 'Clean Light'
-          : styleTheme === 'bold-retail'
+          : effectiveStyle === 'bold-retail'
           ? 'Bold Retail'
           : 'Minimal Dark'
+
+      const promptToUse =
+        customPromptOverride !== undefined ? customPromptOverride : customScenePrompt
 
       const res = await fetch('/api/generate/visual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           niche,
+          productDesc: productDesc.trim(),
+          customPrompt: promptToUse,
           theme: themeLabel,
-          styleTheme,
+          styleTheme: effectiveStyle,
         }),
       })
 
       const data = await res.json()
-      if (res.ok && data?.success && (data?.sceneUrl || data?.publicUrl)) {
-        const rawUrl = data.sceneUrl || data.publicUrl
-        setSceneUrl(`${rawUrl}?v=${Date.now()}`)
-        toast.success('¡Nueva variante de estudio generada!', { id: toastId })
+      if (res.ok && data?.success && (data?.sceneDataUrl || data?.sceneUrl || data?.publicUrl)) {
+        const rawUrl = data.sceneDataUrl || `${data.sceneUrl || data.publicUrl}?v=${Date.now()}`
+        setSceneUrl(rawUrl)
+        toast.success('¡Escenario fotográfico de estudio actualizado!', { id: toastId })
       } else {
         toast.error(data?.error || 'La IA tardó en responder. Intenta de nuevo.', { id: toastId })
       }
@@ -817,7 +898,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     if (!urlToProcess || isVideoMedia) return
 
     setIsRemovingBg(true)
-    const toastId = toast.loading('✨ Aislando producto de su fondo...')
+    const toastId = toast.loading('✨ Integrando producto con fondo transparente...')
 
     try {
       const res = await fetch('/api/images/remove-background', {
@@ -827,17 +908,128 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
       })
 
       const data = await res.json()
-      if (!res.ok || !data.success || !data.transparentUrl) {
+      if (!res.ok || !data.success || (!data.transparentDataUrl && !data.transparentUrl)) {
         throw new Error(data.error || 'No se pudo aislar el fondo')
       }
 
-      setCutoutProductUrl(data.transparentUrl)
+      setCutoutProductUrl(data.transparentDataUrl || data.transparentUrl)
       setUseCutout(true)
-      toast.success('¡Fondo aislado con canal alfa transparente!', { id: toastId })
+      toast.success('¡Producto recortado e integrado sobre la escena!', { id: toastId })
     } catch (err: any) {
-      toast.error(err.message || 'Error al eliminar fondo, usando imagen original', { id: toastId })
+      toast.error(err.message || 'Usando imagen original en el escenario', { id: toastId })
     } finally {
       setIsRemovingBg(false)
+    }
+  }
+
+  // 6B. Subir o Cambiar Foto del Producto directamente dentro de 03 • ESTUDIO
+  const handleStudioProductUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      toast.error('Selecciona un archivo de imagen (JPG, PNG o WebP).')
+      return
+    }
+
+    setIsUploadingToStorage(true)
+    const toastId = toast.loading('Subiendo foto del producto y recortando fondo...')
+    try {
+      const supabase = createClient()
+      const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
+      const filePath = `${userId}/${Date.now()}_${cleanName}`
+      const { data, error } = await supabase.storage
+        .from('product-images')
+        .upload(filePath, file, { cacheControl: '3600', upsert: false })
+      if (error) throw error
+
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from('product-images').getPublicUrl(data.path)
+
+      setMediaType('image')
+      setImageUrl(publicUrl)
+      setStoragePath(data.path)
+      setCutoutProductUrl(null)
+      toast.success('¡Foto cargada! Integrando en el escenario...', { id: toastId })
+      await handleRemoveBackground(publicUrl)
+    } catch (err: any) {
+      toast.error(err.message || 'No se pudo subir la imagen', { id: toastId })
+    } finally {
+      setIsUploadingToStorage(false)
+      if (studioFileInputRef.current) studioFileInputRef.current.value = ''
+    }
+  }
+
+  // 6C. Sala de Chat Creativa IA (Copiloto de Diseño en Vivo -> POST /api/estudio/editar-arte)
+  const handleSendStudioChat = async (quickPrompt?: string) => {
+    const msg = (quickPrompt !== undefined ? quickPrompt : studioChatInput).trim()
+    if (!msg || isSendingStudioChat) return
+
+    if (quickPrompt === undefined) {
+      setStudioChatInput('')
+    }
+
+    setStudioChatMessages((prev) => [...prev, { role: 'user', text: msg }])
+    setIsSendingStudioChat(true)
+
+    try {
+      const res = await fetch('/api/estudio/editar-arte', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mensaje: msg,
+          estado_actual: {
+            titular: headline,
+            subtitulo: subline,
+            badge: badgeText,
+            precio: studioPrice,
+            precio_anterior: studioComparePrice,
+            estilo: styleTheme,
+            escala_producto: studioProductScale,
+            offset_y_producto: studioProductOffsetY,
+            prompt_fondo: customScenePrompt,
+            descripcion_producto: productDesc,
+          },
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'No se pudo procesar el ajuste de diseño.')
+      }
+
+      if (data.titular !== undefined) setHeadline(data.titular)
+      if (data.subtitulo !== undefined) setSubline(data.subtitulo)
+      if (data.badge !== undefined) setBadgeText(data.badge)
+      if (data.precio !== undefined) setStudioPrice(data.precio)
+      if (data.precio_anterior !== undefined) setStudioComparePrice(data.precio_anterior)
+      if (data.estilo) setStyleTheme(data.estilo)
+      if (typeof data.escala_producto === 'number') setStudioProductScale(data.escala_producto)
+      if (typeof data.offset_y_producto === 'number') setStudioProductOffsetY(data.offset_y_producto)
+
+      setStudioChatMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: data.respuesta_chat || '¡Listo! Actualicé el diseño en tu lienzo.',
+        },
+      ])
+
+      if (data.regenerar_fondo) {
+        const nextPrompt = data.nuevo_prompt_fondo || msg
+        setCustomScenePrompt(nextPrompt)
+        await handleGenerateStudioScene(nextPrompt, data.estilo || styleTheme)
+      }
+    } catch (err: any) {
+      setStudioChatMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: err.message || 'Ocurrió un detalle al aplicar el cambio. Intenta de nuevo.',
+        },
+      ])
+    } finally {
+      setIsSendingStudioChat(false)
     }
   }
 
@@ -887,15 +1079,10 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     }
   }
 
-  // 7. Paso 3: Compilación Final de Pancarta (Bake / Exportación Segura)
+  // 7. Paso 3: Compilación Final de Pancarta (Bake / Exportación Segura 1080x1350 HD)
   const handleBakeBanner = async () => {
-    if (!sceneUrl) {
-      toast.error('Primero genera una escena de estudio.')
-      return
-    }
-
     setIsBakingBanner(true)
-    const toastId = toast.loading('Renderizando anuncio en alta resolución...')
+    const toastId = toast.loading('Renderizando arte 1080×1350 HD y guardando en Bóveda...')
 
     try {
       // 1. Asegurar carga de tipografías web
@@ -908,10 +1095,12 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         throw new Error('No se encontró el contenedor #studio-canvas-container.')
       }
 
-      // 2. Renderizado nativo a Blob (compatible con lab(), oklch() y Tailwind moderno)
+      // 2. Renderizado nativo a Blob 1080x1350 HD
       const blob = await toBlob(canvasElement, {
-        quality: 0.95,
-        pixelRatio: 2, // Calidad retina 2x nítida
+        quality: 0.98,
+        canvasWidth: 1080,
+        canvasHeight: 1350,
+        pixelRatio: 2,
         cacheBust: true,
         filter: () => true,
       })
@@ -929,7 +1118,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
       const filePath = `${safeUserId}/banners/banner-${Date.now()}.png`
 
       let targetBucket = 'blitzr-vault'
-      let { error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from(targetBucket)
         .upload(filePath, blob, {
           contentType: 'image/png',
@@ -970,7 +1159,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
       }
 
       setBannerUrl(finalBannerUrl)
-      toast.success('¡Pancarta guardada con éxito en tu Bóveda!', { id: toastId })
+      toast.success('¡Arte 1080×1350 guardado con éxito en tu Bóveda!', { id: toastId })
       router.push('/dashboard/history')
     } catch (err: any) {
       console.error('🔥 Error crítico en exportación:', err)
@@ -996,10 +1185,10 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     }
   }
 
-  // Descarga local directa de Pieza Visual / Flyer 4:5 en PNG desde 03 • ESTUDIO
+  // Descarga local directa de Pieza Visual / Flyer 1080x1350 HD en PNG desde 03 • ESTUDIO
   const handleDownloadFlyerLocal = async () => {
     setIsDownloadingFlyer(true)
-    const toastId = toast.loading('Preparando flyer 4:5 en alta resolución para descargar...')
+    const toastId = toast.loading('Exportando PNG HD (1080×1350 px)...')
     try {
       if (typeof document !== 'undefined' && document.fonts) {
         await document.fonts.ready
@@ -1009,7 +1198,9 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         throw new Error('No se encontró el lienzo del estudio.')
       }
       const blob = await toBlob(canvasElement, {
-        quality: 0.95,
+        quality: 0.98,
+        canvasWidth: 1080,
+        canvasHeight: 1350,
         pixelRatio: 2,
         cacheBust: true,
         filter: () => true,
@@ -1020,7 +1211,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `blitzr-flyer-${Date.now()}.png`
+      a.download = `blitzr-arte-1080x1350-${Date.now()}.png`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -1685,313 +1876,490 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         </div>
       )}
 
-      {/* ===================== PASO 3: GENERACIÓN VISUAL DE ESTUDIO (DESACOPLADA) ===================== */}
+      {/* ===================== PASO 3: ESTUDIO PUBLICITARIO PROFESIONAL (LIENZO UNIFICADO 1080×1350 + SALA DE CHAT IA EN VIVO) ===================== */}
       {step === 3 && (
         <div className="w-full min-h-full lg:h-full lg:overflow-y-auto overflow-x-hidden relative select-auto">
-          <div className="max-w-6xl mx-auto pt-20 md:pt-24 pb-24 px-4 sm:px-6 md:px-10 space-y-6 animate-in fade-in duration-300">
-            {/* Header Barra de Acciones Paso 3 */}
-            <div className="flex items-center justify-between pb-2">
-              <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
-                <span className="text-emerald-400">03.</span>
-                Generación Visual de Estudio (4:5)
-              </h2>
-              <button
-                type="button"
-                onClick={() => setStep(generationMode === 'fast' ? 1 : 2)}
-                className="bg-zinc-900/60 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-white/10 rounded-full px-3.5 py-1.5 text-xs font-medium backdrop-blur-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
-              >
-                <span>←</span>
-                <span>{generationMode === 'fast' ? 'Ajustar Ingesta' : 'Volver al Centro de Mando'}</span>
-              </button>
-            </div>
-
-            {/* Header Barra de Acciones */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
-            <div>
-              <h3 className="font-bold text-white text-sm flex items-center gap-2">
-                <span>🎨</span> Generación Visual de Estudio Desacoplada
-              </h3>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Genera fondos de estudio fotográfico con IA y personaliza la tipografía en tiempo real sin latencia.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleBakeBanner}
-              disabled={isBakingBanner || isGeneratingScene}
-              className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-zinc-950 font-bold text-xs rounded-xl transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer flex-shrink-0 active:scale-95"
-            >
-              {isBakingBanner ? (
-                <>
-                  <div className="w-3.5 h-3.5 border-2 border-zinc-950 border-t-transparent rounded-full animate-spin" />
-                  <span>Compilando 4:5...</span>
-                </>
-              ) : (
-                <>
-                  <span>💾</span>
-                  <span>Guardar y Desplegar</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Layout de 2 Paneles: Izquierdo (Escena IA) y Derecho (Pancartas Listas + Controles) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Panel Izquierdo: "Imágenes con IA" */}
-            <div className="lg:col-span-5 space-y-4">
-              <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-5 shadow-xl space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-bold text-zinc-100 text-sm flex items-center gap-1.5">
-                    <span>📸</span> Escena de Estudio con IA
-                  </h4>
-                  <span className="text-[10px] uppercase font-bold text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded border border-zinc-700">
-                    Fondo Neutral 4:5
-                  </span>
-                </div>
-
-                {/* Previsualización de la escena generada con indicador de carga */}
-                <div className="relative aspect-[4/5] rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800/80 shadow-inner group">
-                  {sceneUrl ? (
-                    <img
-                      src={sceneUrl}
-                      alt="Escena de Estudio"
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-zinc-600 text-xs">
-                      Sin escena seleccionada
-                    </div>
-                  )}
-
-                  {isGeneratingScene && (
-                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-4 text-center z-20 animate-in fade-in">
-                      <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-3" />
-                      <span className="text-xs font-bold text-blue-400 tracking-wider animate-pulse uppercase">
-                        PROCESANDO IMAGEN DE ESTUDIO...
-                      </span>
-                      <p className="text-[11px] text-zinc-400 mt-1 max-w-[80%]">
-                        Diseñando iluminación arquitectónica, pedestal y sombras suaves.
-                      </p>
-                    </div>
-                  )}
-                </div>
-
+          <div className="max-w-6xl mx-auto pt-20 md:pt-24 pb-24 px-4 sm:px-6 md:px-10 space-y-5 animate-in fade-in duration-300">
+            {/* Header Superior de Estudio */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
+              <div>
+                <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
+                  <span className="text-emerald-400">03 •</span>
+                  <span>Estudio Publicitario Profesional (1080×1350 HD)</span>
+                </h2>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Lienzo unificado de nivel agencia con integración de producto sin fondo y Copiloto de Diseño IA en tiempo real.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleGenerateStudioScene}
-                  disabled={isGeneratingScene}
-                  className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-100 font-semibold text-xs rounded-xl transition border border-zinc-700/80 flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-95"
+                  onClick={() => setShowCmoStrategyPanel((prev) => !prev)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                    showCmoStrategyPanel
+                      ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
+                      : 'bg-zinc-900/80 text-zinc-300 border-white/10 hover:border-cyan-400/40 hover:text-white'
+                  }`}
                 >
-                  {isGeneratingScene ? '⏳ Renderizando nuevo ángulo...' : '🖼️ Generar Variante de Escena'}
+                  <span>🧠</span>
+                  <span>{showCmoStrategyPanel ? 'Ocultar Estrategia CMO' : 'Ver Estrategia CMO'}</span>
                 </button>
-
-                {/* Control de Aislamiento Alpha (rembg) */}
-                {imageUrl && !isVideoMedia && (
-                  <div className="bg-zinc-950/70 border border-zinc-800 rounded-xl p-3.5 space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-zinc-200 flex items-center gap-1.5">
-                        <span>✨</span> Aislamiento de Producto (Alpha)
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveBackground()}
-                        disabled={isRemovingBg}
-                        className="text-[11px] text-blue-400 hover:text-blue-300 font-medium underline underline-offset-2 disabled:opacity-50 cursor-pointer"
-                      >
-                        {isRemovingBg ? 'Extrayendo...' : cutoutProductUrl ? 'Re-extraer fondo' : 'Aislar fondo'}
-                      </button>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-3 pt-1">
-                      <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-300 select-none">
-                        <input
-                          type="checkbox"
-                          checked={useCutout && Boolean(cutoutProductUrl)}
-                          disabled={!cutoutProductUrl || isRemovingBg}
-                          onChange={(e) => setUseCutout(e.target.checked)}
-                          className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-blue-600 focus:ring-blue-500/50 cursor-pointer disabled:opacity-40"
-                        />
-                        <span>Fondo eliminado (Canal Alfa Transparente)</span>
-                      </label>
-
-                      {cutoutProductUrl && (
-                        <span className="text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full font-semibold">
-                          Alfa PNG activo
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="bg-zinc-900/60 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-white/10 rounded-full px-3.5 py-1.5 text-xs font-medium backdrop-blur-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
+                >
+                  <span>←</span>
+                  <span>Editar Idea (01)</span>
+                </button>
               </div>
             </div>
 
-            {/* Panel Derecho: "Pancartas Listas Con Textos" */}
-            <div className="lg:col-span-7 space-y-4">
-              <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-5 shadow-xl space-y-5">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-bold text-zinc-100 text-sm flex items-center gap-1.5">
-                      <span>🎨</span> Pancartas Listas Con Textos
-                    </h4>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      Edición en vivo en el cliente con 0ms de latencia.
+            {/* PANEL COLAPSABLE SUPERIOR: ESTRATEGIA CMO (AVATAR, ÁNGULO DE GANCHO Y OFERTA) */}
+            {showCmoStrategyPanel && (
+              <div className="bg-zinc-900/90 border border-cyan-500/30 rounded-2xl p-5 shadow-xl space-y-4 animate-in fade-in duration-200">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-cyan-400" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+                      Estrategia Comercial CMO • Modelo Activo: {selectedModelo}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setStep(2)}
+                    className="text-[11px] text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+                  >
+                    Abrir vista extendida de guiones (02) →
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                  <div className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">
+                      🎯 Avatar / Clientes Objetivo
+                    </span>
+                    <p className="text-xs text-zinc-200 leading-relaxed">
+                      {diagnosticoIA?.clientes_objetivo ||
+                        cmoAnalysis?.avatar ||
+                        campaignData?.estrategia?.avatar_cliente ||
+                        'Clientes interesados en atención rápida y garantía de calidad.'}
+                    </p>
+                  </div>
+                  <div className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400">
+                      ⚡ Ángulo de Gancho
+                    </span>
+                    <p className="text-xs text-zinc-200 leading-relaxed">
+                      {cmoAnalysis?.angle ||
+                        campaignData?.estrategia?.angulo_gancho ||
+                        subline ||
+                        'Atención personalizada e inmediata por WhatsApp.'}
+                    </p>
+                  </div>
+                  <div className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                      🤖 Rol de Cierre ({nombreAgenteEstudio} IA)
+                    </span>
+                    <p className="text-xs text-zinc-200 leading-relaxed">
+                      {diagnosticoIA?.enfoque_andrea ||
+                        cmoAnalysis?.irresistibleOffer ||
+                        campaignData?.estrategia?.oferta_irresistible ||
+                        'Cierre consultivo automatizado 24/7 en WhatsApp.'}
                     </p>
                   </div>
                 </div>
+              </div>
+            )}
 
-                {/* Previsualización en Tiempo Real */}
-                <div className="py-2 flex justify-center">
-                  <StudioCanvasPreview
-                    sceneUrl={
-                      sceneUrl ||
-                      'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1080&q=80'
-                    }
-                    productImageUrl={imageUrl}
-                    cutoutProductUrl={useCutout ? cutoutProductUrl : null}
-                    isLoadingProduct={isRemovingBg}
-                    headline={headline}
-                    editableHeadline={headline}
-                    subline={subline}
-                    ctaText={ctaText}
-                    badgeText={badgeText}
-                    styleTheme={styleTheme}
-                    editableIgCopy={editableIgCopy}
-                    niche={niche}
-                  />
-                </div>
+            {/* LAYOUT PRINCIPAL DE ESTUDIO: IZQUIERDA (LIENZO UNIFICADO 1080×1350) + DERECHA (SALA DE CHAT CREATIVA IA EN VIVO) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* COLUMNA IZQUIERDA: LIENZO UNIFICADO 4:5 (1080×1350) + PLANTILLAS + EJECUCIÓN */}
+              <div className="lg:col-span-6 space-y-4">
+                <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-4 sm:p-5 shadow-2xl space-y-4">
+                  {/* Barra Superior del Lienzo: 3 Plantillas Profesionales de 1 Clic */}
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 flex items-center gap-1.5">
+                        <Palette className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Plantilla de Diseño (1 Clic)</span>
+                      </span>
 
-                {/* Controles de Edición Inline */}
-                <div className="space-y-4 pt-3 border-t border-zinc-800/80">
-                  {/* Selector de Estilo Visual */}
-                  <div className="space-y-1.5">
-                    <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-                      Tema de Estilo Visual
-                    </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          ref={studioFileInputRef}
+                          type="file"
+                          accept="image/*"
+                          onChange={handleStudioProductUpload}
+                          className="hidden"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => studioFileInputRef.current?.click()}
+                          disabled={isUploadingToStorage || isRemovingBg}
+                          className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 text-[11px] text-zinc-200 font-medium transition cursor-pointer"
+                        >
+                          {isUploadingToStorage
+                            ? 'Subiendo...'
+                            : imageUrl && !isVideoMedia
+                            ? '📷 Cambiar Foto Producto'
+                            : '📷 Subir Foto Producto'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleGenerateStudioScene(undefined, styleTheme)}
+                          disabled={isGeneratingScene}
+                          className="px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/30 text-[11px] text-cyan-200 font-semibold transition cursor-pointer"
+                        >
+                          {isGeneratingScene ? '⏳ Generando...' : '🔄 Nuevo Fondo IA'}
+                        </button>
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-3 gap-2">
-                      {(['minimal-dark', 'bold-retail', 'clean-light'] as const).map((theme) => {
-                        const active = styleTheme === theme
-                        const labels = {
-                          'minimal-dark': 'Minimal Dark',
-                          'bold-retail': 'Bold Retail',
-                          'clean-light': 'Clean Light',
-                        }
+                      {(
+                        [
+                          { id: 'minimal-dark', label: '1. Estudio Editorial' },
+                          { id: 'clean-light', label: '2. Escena Lifestyle IA' },
+                          { id: 'bold-retail', label: '3. Oferta Marketplace' },
+                        ] as const
+                      ).map((tpl) => {
+                        const active = styleTheme === tpl.id
                         return (
                           <button
-                            key={theme}
+                            key={tpl.id}
                             type="button"
-                            onClick={() => setStyleTheme(theme)}
-                            className={`py-2 px-3 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                            onClick={() => setStyleTheme(tpl.id)}
+                            className={`py-2 px-2.5 text-[11px] font-bold rounded-xl transition-all cursor-pointer ${
                               active
-                                ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30 border border-blue-400/40'
-                                : 'bg-zinc-950 text-zinc-400 border border-zinc-800 hover:text-white hover:border-zinc-700'
+                                ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-md shadow-cyan-500/20 border border-cyan-300/40'
+                                : 'bg-zinc-950 text-zinc-400 border border-zinc-800 hover:text-zinc-200 hover:border-zinc-700'
                             }`}
                           >
-                            {labels[theme]}
+                            {tpl.label}
                           </button>
                         )
                       })}
                     </div>
                   </div>
 
-                  {/* Inputs de Textos */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
-                        Badge Superior (Marca / Oferta)
-                      </label>
-                      <input
-                        type="text"
-                        value={badgeText}
-                        onChange={(e) => setBadgeText(e.target.value)}
-                        placeholder="Ej. OFERTA EXCLUSIVA"
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 outline-none focus:border-blue-500 transition-colors"
-                      />
-                    </div>
+                  {/* Contenedor Único del Lienzo Interactivo 1080×1350 */}
+                  <div className="relative">
+                    {isGeneratingScene && (
+                      <div className="absolute inset-0 z-40 rounded-2xl bg-black/75 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center">
+                        <div className="w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin mb-3" />
+                        <span className="text-xs font-bold text-cyan-300 uppercase tracking-wider">
+                          Renderizando Escenario Fotográfico IA (1080×1350)...
+                        </span>
+                        <p className="text-[11px] text-zinc-400 mt-1">
+                          Diseñando iluminación comercial y superficie acorde a tu giro.
+                        </p>
+                      </div>
+                    )}
 
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
-                        Botón de Acción (CTA)
-                      </label>
-                      <input
-                        type="text"
-                        value={ctaText}
-                        onChange={(e) => setCtaText(e.target.value)}
-                        placeholder="Ej. Pedir por WhatsApp"
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 outline-none focus:border-blue-500 transition-colors"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
-                      Titular Principal (Headline)
-                    </label>
-                    <input
-                      type="text"
-                      value={headline}
-                      onChange={(e) => setHeadline(e.target.value)}
-                      placeholder="Ej. LOOK LIKE YOU, ON YOUR BEST DAY"
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 font-semibold outline-none focus:border-blue-500 transition-colors"
+                    <StudioCanvasPreview
+                      sceneUrl={sceneUrl}
+                      productImageUrl={!isVideoMedia ? imageUrl : null}
+                      cutoutProductUrl={useCutout ? cutoutProductUrl : null}
+                      isLoadingProduct={isRemovingBg}
+                      headline={headline}
+                      editableHeadline={headline}
+                      subline={subline}
+                      badgeText={badgeText}
+                      styleTheme={styleTheme}
+                      editableIgCopy={editableIgCopy}
+                      niche={niche}
+                      price={studioPrice}
+                      onPriceChange={setStudioPrice}
+                      comparePrice={studioComparePrice}
+                      onComparePriceChange={setStudioComparePrice}
+                      productScale={studioProductScale}
+                      onProductScaleChange={setStudioProductScale}
+                      productPosY={studioProductOffsetY}
+                      onProductPosYChange={setStudioProductOffsetY}
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
-                      Subtítulo de Valor (Subline)
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={subline}
-                      onChange={(e) => setSubline(e.target.value)}
-                      placeholder="Ej. Reacts hook like you, on your best day."
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 outline-none focus:border-blue-500 resize-none leading-relaxed transition-colors"
-                    />
+                  {/* Toggle de Recorte Alfa si el usuario subió foto de producto */}
+                  {imageUrl && !isVideoMedia && (
+                    <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-zinc-950/80 border border-zinc-800/80 text-xs">
+                      <label className="flex items-center gap-2 cursor-pointer text-zinc-300 select-none">
+                        <input
+                          type="checkbox"
+                          checked={useCutout && Boolean(cutoutProductUrl)}
+                          disabled={!cutoutProductUrl || isRemovingBg}
+                          onChange={(e) => setUseCutout(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-900 text-cyan-500 cursor-pointer"
+                        />
+                        <span>Integrar producto sin fondo (Recorte Alfa PNG)</span>
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveBackground()}
+                          disabled={isRemovingBg}
+                          className="text-[11px] text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+                        >
+                          {isRemovingBg ? 'Recortando...' : 'Re-aislar fondo'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setImageUrl(null)
+                            setCutoutProductUrl(null)
+                          }}
+                          className="text-[11px] text-zinc-500 hover:text-rose-400 underline cursor-pointer"
+                        >
+                          Quitar foto
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* BOTONES REALES DE EJECUCIÓN: DESCARGAR PNG HD (1080×1350) + GUARDAR EN BÓVEDA + PUBLICAR EN IG/FB */}
+                  <div className="pt-2 space-y-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={handleDownloadFlyerLocal}
+                        disabled={isDownloadingFlyer || isBakingBanner || isGeneratingScene}
+                        className="w-full py-3 px-4 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 text-white font-bold text-xs md:text-sm rounded-xl transition-all shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
+                      >
+                        {isDownloadingFlyer ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            <span>Exportando 1080×1350...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-4 h-4" />
+                            <span>Descargar PNG HD (1080×1350)</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleBakeBanner}
+                        disabled={isBakingBanner || isGeneratingScene}
+                        className="w-full py-3 px-4 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-zinc-950 font-bold text-xs md:text-sm rounded-xl transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
+                      >
+                        {isBakingBanner ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-zinc-950 border-t-transparent rounded-full animate-spin" />
+                            <span>Guardando en Bóveda...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>💾</span>
+                            <span>Guardar en Bóveda</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handlePublishIgFeed}
+                      disabled={isPublishingFeed || isFeedPublished || isVideoMedia}
+                      className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                        isFeedPublished
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : 'bg-zinc-950 hover:bg-zinc-800/90 text-zinc-200 border border-purple-500/40 hover:border-purple-400'
+                      } disabled:opacity-40`}
+                    >
+                      {isPublishingFeed
+                        ? '⏳ Publicando arte 1080×1350 en Instagram / Facebook...'
+                        : isFeedPublished
+                        ? '✅ Publicado en Instagram / Facebook Feed'
+                        : '🚀 Publicar Directo en Instagram / Facebook'}
+                    </button>
                   </div>
                 </div>
+              </div>
 
-                {/* Botones de Cierre: Descargar Flyer PNG + Guardar y Desplegar en Bóveda */}
-                <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={handleDownloadFlyerLocal}
-                    disabled={isDownloadingFlyer || isBakingBanner || isGeneratingScene}
-                    className="w-full py-3.5 bg-zinc-800 hover:bg-zinc-700 border border-cyan-500/40 disabled:opacity-50 text-cyan-200 font-bold text-xs md:text-sm rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
-                  >
-                    {isDownloadingFlyer ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-cyan-300 border-t-transparent rounded-full animate-spin" />
-                        <span>Generando PNG...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4 text-cyan-400" />
-                        <span>Descargar Flyer (4:5)</span>
-                      </>
-                    )}
-                  </button>
+              {/* COLUMNA DERECHA: SALA DE CHAT CREATIVA IA (COPILOTO DE DISEÑO EN VIVO) + AJUSTES MANUALES */}
+              <div className="lg:col-span-6 space-y-4">
+                <div className="bg-zinc-900/90 border border-cyan-500/30 rounded-2xl p-5 shadow-[0_0_40px_rgba(6,182,212,0.12)] flex flex-col justify-between space-y-4">
+                  {/* Cabecera del Copiloto */}
+                  <div className="flex items-start justify-between gap-3 border-b border-zinc-800 pb-3.5">
+                    <div className="space-y-1">
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 text-[10px] font-bold uppercase tracking-wider">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                        <span>Copiloto de Diseño en Vivo • Gemini IA</span>
+                      </div>
+                      <h3 className="text-base font-bold text-white">
+                        Sala de Chat Creativa IA
+                      </h3>
+                      <p className="text-xs text-zinc-400">
+                        Pide cambios de escenario/fondo, iluminación, textos, precios, descuentos o tamaño del producto con lenguaje natural.
+                      </p>
+                    </div>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={handleBakeBanner}
-                    disabled={isBakingBanner || isGeneratingScene}
-                    className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-zinc-950 font-bold text-xs md:text-sm rounded-xl transition-all shadow-xl shadow-emerald-500/25 flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
-                  >
-                    {isBakingBanner ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-zinc-950 border-t-transparent rounded-full animate-spin" />
-                        <span>Compilando en Bóveda...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>💾</span>
-                        <span>Guardar en Bóveda</span>
-                      </>
+                  {/* Chips Rápidos de 1 Clic */}
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                      Acciones Rápidas (1 Clic):
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        'Fondo minimalista claro',
+                        'Ambiente oscuro con luz neón',
+                        'Mesa de madera con iluminación cálida',
+                        'Cambiar a modo oferta con 20% de descuento',
+                        'Agrandar producto',
+                        'Quitar etiqueta de precio',
+                      ].map((chip) => (
+                        <button
+                          key={chip}
+                          type="button"
+                          disabled={isSendingStudioChat || isGeneratingScene}
+                          onClick={() => handleSendStudioChat(chip)}
+                          className="text-[11px] px-2.5 py-1 rounded-full bg-zinc-950 hover:bg-cyan-500/15 text-zinc-300 hover:text-cyan-200 border border-zinc-800 hover:border-cyan-400/40 transition cursor-pointer disabled:opacity-50"
+                        >
+                          ✨ {chip}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Historial de Mensajes del Chat Creativo */}
+                  <div className="bg-zinc-950/90 border border-zinc-800/90 rounded-xl p-3.5 h-[250px] overflow-y-auto space-y-3">
+                    {studioChatMessages.map((m, idx) => (
+                      <div
+                        key={idx}
+                        className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div
+                          className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed ${
+                            m.role === 'user'
+                              ? 'bg-cyan-600 text-white font-medium rounded-br-sm'
+                              : 'bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-bl-sm'
+                          }`}
+                        >
+                          {m.text}
+                        </div>
+                      </div>
+                    ))}
+                    {isSendingStudioChat && (
+                      <div className="flex justify-start">
+                        <div className="bg-zinc-900 border border-cyan-500/30 text-cyan-300 rounded-2xl px-3.5 py-2 text-xs flex items-center gap-2">
+                          <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                          <span>Aplicando cambios al lienzo...</span>
+                        </div>
+                      </div>
                     )}
-                  </button>
+                  </div>
+
+                  {/* Input Conversacional del Chat Creativo */}
+                  <div className="flex items-end gap-2 bg-zinc-950 border border-zinc-800 focus-within:border-cyan-400/60 rounded-xl p-2 transition">
+                    <textarea
+                      rows={2}
+                      value={studioChatInput}
+                      onChange={(e) => setStudioChatInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          handleSendStudioChat()
+                        }
+                      }}
+                      disabled={isSendingStudioChat}
+                      placeholder='Ej. "Pon el fondo sobre una mesa de madera con plantas y cambia el título a Impresión 3D a Medida en $250"...'
+                      className="w-full bg-transparent border-0 text-xs text-zinc-100 placeholder-zinc-500 focus:ring-0 focus:outline-none resize-none px-2 py-1 leading-relaxed"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleSendStudioChat()}
+                      disabled={!studioChatInput.trim() || isSendingStudioChat}
+                      className="p-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-40 text-white transition cursor-pointer flex-shrink-0"
+                      title="Aplicar al lienzo"
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Acordeón Opcional de Edición Manual Directa */}
+                  <div className="pt-2 border-t border-zinc-800/80">
+                    <button
+                      type="button"
+                      onClick={() => setShowManualControls((prev) => !prev)}
+                      className="w-full flex items-center justify-between text-xs font-semibold text-zinc-400 hover:text-zinc-200 py-1 cursor-pointer"
+                    >
+                      <span>⌨️ Edición Manual de Textos y Precios</span>
+                      <span>{showManualControls ? '▲' : '▼'}</span>
+                    </button>
+
+                    {showManualControls && (
+                      <div className="mt-3 space-y-3 pt-2 border-t border-zinc-800/50 animate-in fade-in duration-150">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div>
+                            <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">
+                              Insignia Superior
+                            </label>
+                            <input
+                              type="text"
+                              value={badgeText}
+                              onChange={(e) => setBadgeText(e.target.value)}
+                              placeholder="Ej. HECHO A MEDIDA"
+                              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-cyan-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">
+                              Precio ($ MXN)
+                            </label>
+                            <input
+                              type="text"
+                              value={studioPrice}
+                              onChange={(e) => setStudioPrice(e.target.value)}
+                              placeholder="Vacío = sin precio"
+                              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:outline-none focus:border-cyan-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">
+                              Precio Anterior
+                            </label>
+                            <input
+                              type="text"
+                              value={studioComparePrice}
+                              onChange={(e) => setStudioComparePrice(e.target.value)}
+                              placeholder="Opcional (tachado)"
+                              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:outline-none focus:border-cyan-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">
+                            Titular Principal
+                          </label>
+                          <input
+                            type="text"
+                            value={headline}
+                            onChange={(e) => setHeadline(e.target.value)}
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-200 font-semibold focus:outline-none focus:border-cyan-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">
+                            Subtítulo Editorial
+                          </label>
+                          <textarea
+                            rows={2}
+                            value={subline}
+                            onChange={(e) => setSubline(e.target.value)}
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-200 resize-none focus:outline-none focus:border-cyan-500"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
           {/* ================= KIT DE ATRACCIÓN INBOUND 1-CLIC CONECTADO A ANDREA IA (wa.me + COPYS) ================= */}
           <div className="bg-zinc-900/90 border border-cyan-500/25 rounded-2xl p-5 md:p-6 shadow-[0_0_40px_rgba(6,182,212,0.1)] space-y-5">
