@@ -3156,13 +3156,31 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
-        raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
-        data = json.loads(raw)
+        raw = self.rfile.read(length).decode("utf-8", errors="ignore") if length > 0 else "{}"
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+            if not isinstance(data, dict):
+                data = {"descripcion_idea": str(data)}
+        except Exception:
+            qs_body = urllib.parse.parse_qs(raw)
+            if qs_body:
+                data = {k: v[0] for k, v in qs_body.items() if v}
+            else:
+                m_desc = re.search(r"descripcion_idea\s*[:=]\s*(.+?)(?:[,}]|$)", raw)
+                data = {"descripcion_idea": m_desc.group(1).strip(' "\'') if m_desc else raw.strip()}
 
-        if self.path == "/api/diagnosticar-modelo":
-            desc = str(data.get("descripcion_idea") or data.get("productDesc") or data.get("idea") or "").strip()
-            cat = str(data.get("nicho_categoria") or data.get("niche") or "").strip()
-            obj = str(data.get("objetivo") or data.get("objective") or "").strip()
+        clean_path = self.path.split("?", 1)[0]
+        if clean_path == "/api/diagnosticar-modelo":
+            qs_url = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            desc = str(
+                data.get("descripcion_idea")
+                or data.get("productDesc")
+                or data.get("idea")
+                or (qs_url.get("descripcion_idea", [""])[0])
+                or ""
+            ).strip()
+            cat = str(data.get("nicho_categoria") or data.get("niche") or (qs_url.get("nicho_categoria", [""])[0]) or "").strip()
+            obj = str(data.get("objetivo") or data.get("objective") or (qs_url.get("objetivo", [""])[0]) or "").strip()
             res_diag = diagnosticar_modelo_negocio_ia(desc, cat, obj)
             self._send_json(res_diag, status=200)
             return
