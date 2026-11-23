@@ -2364,16 +2364,18 @@ def llamar_pool_ia_real(session_id: str, mensaje_usuario: str, incluir_voz: bool
         role = "user" if m["role"] == "user" else "model"
         contents.append({"role": role, "parts": [{"text": m["content"]}]})
 
-    payload = {
-        "system_instruction": {"parts": [{"text": sys_prompt_completo}]},
-        "contents": contents,
-        "generationConfig": {
-            "temperature": 0.6,
-            "maxOutputTokens": 400
-        }
-    }
-
     for modelo in MODELOS_POOL_INFINITO:
+        gen_cfg_chat = {
+            "temperature": 0.3,
+            "maxOutputTokens": 1000
+        }
+        if "2.5" in modelo:
+            gen_cfg_chat["thinkingConfig"] = {"thinkingBudget": 0}
+        payload = {
+            "system_instruction": {"parts": [{"text": sys_prompt_completo}]},
+            "contents": contents,
+            "generationConfig": gen_cfg_chat
+        }
         for key in llaves:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={key}"
             try:
