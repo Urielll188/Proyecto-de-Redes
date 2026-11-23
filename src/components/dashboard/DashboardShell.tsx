@@ -18,6 +18,7 @@ import {
   Menu,
   CheckSquare,
   SlidersHorizontal,
+  Building2,
 } from 'lucide-react'
 import { CinematicWarpTransition } from '@/components/transitions/CinematicWarpTransition'
 import { NichoProvider, OWNER_EMAIL_MALLAS } from '@/context/NichoContext'
@@ -43,6 +44,7 @@ export function DashboardShell({
   const pathname = usePathname()
   const nonStepperPrefixes = [
     '/dashboard/facil',
+    '/dashboard/mallas',
     '/dashboard/history',
     '/dashboard/billing',
     '/dashboard/integrations',
@@ -101,6 +103,7 @@ export function DashboardShell({
   }
 
   const navItems = [
+    { name: 'Mallas Tlaxcalli (Cliente)', href: '/dashboard/mallas', icon: Building2 },
     { name: 'Panel Fácil (Guía)', href: '/dashboard/facil', icon: CheckSquare },
     { name: 'Generador AI (Avanzado)', href: '/dashboard', icon: Sparkles },
     { name: 'Bóveda de Contenido', href: '/dashboard/history', icon: Archive },
@@ -174,6 +177,18 @@ export function DashboardShell({
               <span>Panel Fácil</span>
             </>
           )}
+        </Link>
+
+        <Link
+          href="/dashboard/mallas"
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-bold backdrop-blur-xl border transition-all shadow-[0_4px_20px_rgba(0,0,0,0.35)] ${
+            pathname === '/dashboard/mallas'
+              ? 'bg-amber-400 text-zinc-950 border-amber-300'
+              : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border-amber-400/40'
+          }`}
+        >
+          <Building2 className="w-3.5 h-3.5" />
+          <span>Mallas</span>
         </Link>
       </div>
 

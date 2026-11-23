@@ -41,6 +41,7 @@ const ALLOWED_POST_ENDPOINTS = [
   '/api/pedir_codigo_wa',
   '/api/agente_ceo_pau',
   '/api/subir_foto_pau',
+  '/api/verificar_dueno_wa',
 ]
 
 function normalizeVpsEndpoint(ep: string): string {
@@ -82,14 +83,21 @@ export async function GET(req: NextRequest) {
   try {
     const userEmail = (user.email || '').toLowerCase().trim()
     const queryParams = new URLSearchParams(req.nextUrl.searchParams)
+    const isMallasDemo = queryParams.get('mallas_demo') === '1'
     queryParams.delete('endpoint')
-    if (userEmail) {
-      queryParams.set('email', userEmail)
-    }
-    if (userEmail !== OWNER_EMAIL_MALLAS) {
-      const requestedCid = (queryParams.get('cliente_id') || '').toLowerCase().trim()
-      if (requestedCid === 'mallas_tlaxcalli') {
-        queryParams.delete('cliente_id')
+    queryParams.delete('mallas_demo')
+    if (isMallasDemo) {
+      queryParams.set('email', OWNER_EMAIL_MALLAS)
+      queryParams.set('cliente_id', 'mallas_tlaxcalli')
+    } else {
+      if (userEmail) {
+        queryParams.set('email', userEmail)
+      }
+      if (userEmail !== OWNER_EMAIL_MALLAS) {
+        const requestedCid = (queryParams.get('cliente_id') || '').toLowerCase().trim()
+        if (requestedCid === 'mallas_tlaxcalli') {
+          queryParams.delete('cliente_id')
+        }
       }
     }
     const qs = queryParams.toString()
@@ -162,15 +170,23 @@ export async function POST(req: NextRequest) {
   try {
     const userEmail = (user.email || '').toLowerCase().trim()
     const payload = { ...body }
+    const isMallasDemo = payload.mallas_demo === true || payload.mallas_demo === '1'
     delete payload.endpoint
-    if (userEmail) {
-      payload.owner_email = userEmail
-      payload.email = userEmail
-    }
-    if (userEmail !== OWNER_EMAIL_MALLAS) {
-      const requestedCid = String(payload.cliente_id || '').toLowerCase().trim()
-      if (requestedCid === 'mallas_tlaxcalli') {
-        delete payload.cliente_id
+    delete payload.mallas_demo
+    if (isMallasDemo) {
+      payload.owner_email = OWNER_EMAIL_MALLAS
+      payload.email = OWNER_EMAIL_MALLAS
+      payload.cliente_id = 'mallas_tlaxcalli'
+    } else {
+      if (userEmail) {
+        payload.owner_email = userEmail
+        payload.email = userEmail
+      }
+      if (userEmail !== OWNER_EMAIL_MALLAS) {
+        const requestedCid = String(payload.cliente_id || '').toLowerCase().trim()
+        if (requestedCid === 'mallas_tlaxcalli') {
+          delete payload.cliente_id
+        }
       }
     }
 
