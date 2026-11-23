@@ -684,6 +684,24 @@ export function MallasClientHub() {
                 ✓ Al conectar, Andrea y Maximus quedan activos de inmediato.
               </p>
             </div>
+
+            {/* Tarjeta Conexión Facebook + Instagram */}
+            <div className="rounded-2xl bg-blue-950/30 border border-blue-500/30 p-4 space-y-3">
+              <div>
+                <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
+                  📘 Conectar Página de Facebook e Instagram
+                </h4>
+                <p className="text-xs text-zinc-300 mt-1">
+                  Inicia sesión con el Facebook administrador de Mallas Tlaxcalli para vincular su Fan Page e Instagram Business.
+                </p>
+              </div>
+              <a
+                href="/api/auth/meta"
+                className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg transition"
+              >
+                Iniciar sesión con Facebook
+              </a>
+            </div>
           </div>
         </section>
       )}
