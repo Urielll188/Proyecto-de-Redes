@@ -16,6 +16,8 @@ import {
   RefreshCw,
   Camera,
   Menu,
+  CheckSquare,
+  SlidersHorizontal,
 } from 'lucide-react'
 import { CinematicWarpTransition } from '@/components/transitions/CinematicWarpTransition'
 import { NichoProvider, OWNER_EMAIL_MALLAS } from '@/context/NichoContext'
@@ -40,6 +42,7 @@ export function DashboardShell({
   const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const pathname = usePathname()
   const nonStepperPrefixes = [
+    '/dashboard/facil',
     '/dashboard/history',
     '/dashboard/billing',
     '/dashboard/integrations',
@@ -51,6 +54,7 @@ export function DashboardShell({
     '/dashboard/marketing-realista',
     '/dashboard/whatsapp',
   ]
+  const isPanelFacil = Boolean(pathname?.startsWith('/dashboard/facil'))
   const isStepperWorkspace =
     pathname === '/dashboard' ||
     (Boolean(pathname?.startsWith('/dashboard/')) &&
@@ -97,7 +101,8 @@ export function DashboardShell({
   }
 
   const navItems = [
-    { name: 'Generador AI', href: '/dashboard', icon: Sparkles },
+    { name: 'Panel Fácil (Guía)', href: '/dashboard/facil', icon: CheckSquare },
+    { name: 'Generador AI (Avanzado)', href: '/dashboard', icon: Sparkles },
     { name: 'Bóveda de Contenido', href: '/dashboard/history', icon: Archive },
     { name: 'Canales Conectados', href: '/dashboard/integrations', icon: Share2 },
     { name: 'Créditos y Facturación', href: '/dashboard/billing', icon: CreditCard },
@@ -133,21 +138,44 @@ export function DashboardShell({
         />
       </div>
 
-      {/* ================= 1.1 BOTÓN DE MARCA / MENÚ HAMBURGUESA (SUPERIOR IZQUIERDO) ================= */}
-      <button
-        type="button"
-        onClick={() => setIsDrawerOpen((prev) => !prev)}
-        className="fixed top-4 left-4 lg:top-6 lg:left-8 z-40 flex items-center gap-2.5 px-4 py-2 rounded-full bg-white/[0.04] hover:bg-white/[0.08] backdrop-blur-xl border border-white/10 transition-all cursor-pointer pointer-events-auto shadow-[0_4px_24px_rgba(0,0,0,0.4)] group"
-        aria-label="Abrir menú de navegación"
-      >
-        <Menu className="w-4 h-4 text-zinc-300 group-hover:text-white transition-colors" />
-        <span className="font-bold text-sm tracking-wider text-white">
-          BLITZR
-        </span>
-        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shadow-[0_0_8px_rgba(34,211,238,0.3)]">
-          IA
-        </span>
-      </button>
+      {/* ================= 1.1 BOTÓN DE MARCA / MENÚ HAMBURGUESA + SWITCH PANEL FÁCIL ================= */}
+      <div className="fixed top-4 left-4 lg:top-6 lg:left-8 z-40 flex items-center gap-2 pointer-events-auto">
+        <button
+          type="button"
+          onClick={() => setIsDrawerOpen((prev) => !prev)}
+          className="flex items-center gap-2.5 px-3.5 py-2 rounded-full bg-white/[0.06] hover:bg-white/[0.1] backdrop-blur-xl border border-white/10 transition-all cursor-pointer shadow-[0_4px_24px_rgba(0,0,0,0.4)] group"
+          aria-label="Abrir menú de navegación"
+        >
+          <Menu className="w-4 h-4 text-zinc-300 group-hover:text-white transition-colors" />
+          <span className="font-bold text-sm tracking-wider text-white">
+            BLITZR
+          </span>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shadow-[0_0_8px_rgba(34,211,238,0.3)]">
+            IA
+          </span>
+        </button>
+
+        <Link
+          href={isPanelFacil ? '/dashboard' : '/dashboard/facil'}
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold backdrop-blur-xl border transition-all shadow-[0_4px_20px_rgba(0,0,0,0.35)] ${
+            isPanelFacil
+              ? 'bg-zinc-900/90 hover:bg-zinc-800 text-zinc-200 border-white/15'
+              : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-400/40 shadow-[0_0_16px_rgba(16,185,129,0.2)]'
+          }`}
+        >
+          {isPanelFacil ? (
+            <>
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>Vista Avanzada</span>
+            </>
+          ) : (
+            <>
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span>Panel Fácil</span>
+            </>
+          )}
+        </Link>
+      </div>
 
       {/* Overlay backdrop en móvil para cerrar drawer */}
       {isDrawerOpen && (
@@ -268,7 +296,11 @@ export function DashboardShell({
       </motion.aside>
 
       {/* ================= 3. WIDGET FLOTANTE SUPERIOR DERECHO ================= */}
-      <div className="fixed top-6 right-6 z-40 flex items-center gap-3 px-4 py-2 rounded-full bg-white/[0.04] backdrop-blur-xl border border-white/10 shadow-[0_4px_24px_rgba(0,0,0,0.4)] pointer-events-auto">
+      <div
+        className={`fixed top-4 right-4 lg:top-6 lg:right-6 z-40 items-center gap-3 px-4 py-2 rounded-full bg-white/[0.04] backdrop-blur-xl border border-white/10 shadow-[0_4px_24px_rgba(0,0,0,0.4)] pointer-events-auto ${
+          isPanelFacil ? 'hidden md:flex' : 'flex'
+        }`}
+      >
         {/* Indicador de Bóveda */}
         <Link
           href="/dashboard/history"
@@ -322,6 +354,8 @@ export function DashboardShell({
           } ${
             isStepperWorkspace
               ? 'overflow-y-auto overflow-x-hidden'
+              : isPanelFacil
+              ? 'overflow-y-auto pt-20 pb-24 px-4 sm:px-6 max-w-2xl mx-auto'
               : 'overflow-y-auto pt-24 pb-12 px-4 md:px-8 max-w-6xl mx-auto'
           }`}
         >

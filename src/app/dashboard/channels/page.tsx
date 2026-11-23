@@ -191,34 +191,6 @@ export default async function ChannelsPage({ searchParams }: PageProps) {
             {tiktokAccount ? 'Reconectar TikTok' : 'Vincular TikTok'}
           </a>
         </div>
-
-        {/* B) WhatsApp & Redes Personales Card */}
-        <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">📲</span>
-              <div>
-                <h3 className="font-bold text-white text-sm">WhatsApp & Redes Personales</h3>
-                <p className="text-xs text-zinc-400">Distribución asistida a Estados y chats familiares</p>
-              </div>
-            </div>
-            <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              Activo / Fricción Cero
-            </span>
-          </div>
-
-          <div className="p-3 bg-zinc-950/60 border border-zinc-800/60 rounded-xl text-xs text-zinc-300">
-            Canal móvil nativo (Web Share API sin verificaciones)
-          </div>
-
-          <button
-            disabled
-            type="button"
-            className="block text-center w-full py-2.5 px-4 font-semibold rounded-xl text-xs transition shadow-sm bg-zinc-800 text-zinc-400 border border-zinc-700/50 opacity-50 cursor-not-allowed"
-          >
-            Siempre Disponible en Móvil
-          </button>
-        </div>
       </div>
     </div>
   )

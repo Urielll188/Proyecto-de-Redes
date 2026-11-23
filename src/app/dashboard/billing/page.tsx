@@ -50,14 +50,11 @@ export default async function BillingPage() {
               <span className="text-sm font-medium text-gray-500">créditos</span>
             </div>
           </div>
-          <button 
-            type="button" 
-            className="mt-6 w-full rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-gray-800 flex items-center justify-center gap-2"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
-            Comprar más créditos
-          </button>
-          <p className="text-xs text-center text-gray-400 mt-3">Próximamente integración con pagos</p>
+          <div className="mt-6 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-center">
+            <p className="text-xs font-medium text-gray-600">
+              Recargas de créditos administradas por tu asesor Blitzr.
+            </p>
+          </div>
         </div>
 
         {/* Historial de Transacciones */}
