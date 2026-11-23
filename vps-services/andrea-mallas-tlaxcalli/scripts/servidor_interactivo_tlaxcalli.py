@@ -2196,6 +2196,41 @@ def generar_nota_voz_femenina_wav(texto_hablado: str) -> dict:
     limpio = _texto_para_oido(texto_hablado)
     if not limpio:
         return {"ok": False, "error": "Texto vacío"}
+
+    # Motor primario ultrarrápido y sin cuota: Microsoft Neural es-MX-DaliaNeural (edge-tts)
+    try:
+        ts_e = int(datetime.now().timestamp() * 1000)
+        tmp_mp3 = f"/tmp/etts_{ts_e}.mp3"
+        tmp_wav = f"/tmp/etts_{ts_e}.wav"
+        edge_bin = "/config/python/bin/edge-tts" if os.path.exists("/config/python/bin/edge-tts") else "edge-tts"
+        ffmpeg_static = "/config/workspace/AGENCIA_AUTOMATIZACION/MALLAS_TLAXCALLI/whatsapp_bridge/node_modules/ffmpeg-static/ffmpeg"
+        ffmpeg_bin = ffmpeg_static if os.path.exists(ffmpeg_static) else "ffmpeg"
+        subprocess.run(
+            [edge_bin, "--voice", "es-MX-DaliaNeural", "--text", limpio, "--write-media", tmp_mp3],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=18, check=True
+        )
+        subprocess.run(
+            [ffmpeg_bin, "-y", "-i", tmp_mp3, "-ar", "48000", "-ac", "1", tmp_wav],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15, check=True
+        )
+        wav = open(tmp_wav, "rb").read()
+        for f_ in (tmp_mp3, tmp_wav):
+            try:
+                os.remove(f_)
+            except Exception:
+                pass
+        if len(wav) > 2000:
+            ESTADISTICAS_POOL["notas_voz_generadas"] += 1
+            ESTADISTICAS_POOL["ultimo_modelo_voz"] = "edge-tts (es-MX-DaliaNeural)"
+            return {
+                "ok": True,
+                "audio_data_url": "data:audio/wav;base64," + base64.b64encode(wav).decode("ascii"),
+                "modelo_voz": "edge-tts (es-MX-DaliaNeural)",
+                "bloques_leidos": 1,
+            }
+    except Exception as e_edge:
+        print(f"[TTS edge-tts fallback] {str(e_edge)[:120]}")
+
     llaves = obtener_llaves_ia_backend()
     voz = os.environ.get("VOZ_GEMINI_ANDREA", "Aoede")
     payload = {
@@ -3268,7 +3303,7 @@ REGLAS ESTRICTAS DE RESPUESTA:
    • Crear o editar flyers publicitarios con IA directo aquí (o mejorar fotos que te manden).
    • Activar o pausar los envíos en frío ("Activa los envíos" / "Pausa los envíos").
    • Mandarle mensaje directo a un número nuevo que te pasen.
-3. Si te piden nota de voz o audio: responde con total honestidad y elegancia que el envío de notas de voz de Maximus está en fase final de activación y que ya mandas aviso al equipo técnico para apresurar y habilitar los audios en su línea cuanto antes (mientras tanto, responde su solicitud completa por texto).
+3. Si te piden nota de voz o audio: responde natural, breve y amigable porque el sistema enviará tu respuesta en nota de voz.
 4. Si preguntan por el desglose por municipio, lista los 5 municipios principales con su número exacto de tortillerías.
 5. Cero inventos de ventas. Si hay 0 pedidos cerrados, di 0 con total honestidad.
 6. Tono mexicano, cálido, seguro y ejecutivo.
