@@ -8,13 +8,13 @@ export async function GET() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').trim().replace(/\/+$/, '')
 
   if (!user) {
     return NextResponse.redirect(new URL('/login', baseUrl))
   }
 
-  const clientId = process.env.META_APP_ID
+  const clientId = (process.env.META_APP_ID || '').trim()
   if (!clientId) {
     return NextResponse.json({ error: 'META_APP_ID no configurado en .env.local' }, { status: 500 })
   }

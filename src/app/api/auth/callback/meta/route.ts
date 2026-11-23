@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   const code = searchParams.get('code')
   const error = searchParams.get('error')
   const supabaseAuthId = searchParams.get('state')
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').trim().replace(/\/+$/, '')
 
   if (error || !code || !supabaseAuthId) {
     console.error('Error de autorización en Meta:', error)
@@ -25,8 +25,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const clientId = process.env.META_APP_ID!
-    const clientSecret = process.env.META_APP_SECRET!
+    const clientId = (process.env.META_APP_ID || '').trim()
+    const clientSecret = (process.env.META_APP_SECRET || '').trim()
     const redirectUri = `${baseUrl}/api/auth/callback/meta`
 
     // 1. Obtener User Token inicial
