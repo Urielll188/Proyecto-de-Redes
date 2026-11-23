@@ -53,6 +53,24 @@ interface ChatMsg {
 }
 
 type TabKey = 'whatsapp' | 'agentes' | 'cazador';
+type FiltroWaKey = 'VERIFICADOS' | 'TODOS' | 'PENDIENTES' | 'FIJOS';
+
+function esWaConfirmado(estatus?: string): boolean {
+  const s = (estatus || '').toUpperCase();
+  return s === 'VERIFICADO_WA' || s === 'CONTACTADO_WA';
+}
+
+function esSinWa(estatus?: string): boolean {
+  return (estatus || '').toUpperCase() === 'SIN_WHATSAPP';
+}
+
+function construirUrlWaMexico(telefonoRaw?: string, mensaje?: string): string | null {
+  const digits = (telefonoRaw || '').replace(/\D/g, '');
+  if (digits.length < 10) return null;
+  const last10 = digits.slice(-10);
+  const textParam = mensaje ? `?text=${encodeURIComponent(mensaje)}` : '';
+  return `https://wa.me/52${last10}${textParam}`;
+}
 
 const ANDREA_CHIPS = [
   { label: 'Precio del Paquete Completo', text: 'Hola, ¿qué precio tiene el paquete completo de malla y bandas?' },
@@ -75,6 +93,7 @@ export function MallasClientHub() {
   // 1. Estado WhatsApp en vivo
   const [waStatus, setWaStatus] = useState<WaStatus | null>(null);
   const [loadingWa, setLoadingWa] = useState(true);
+  const [ultimaActualizacionWa, setUltimaActualizacionWa] = useState<string>('');
   const [telVincular, setTelVincular] = useState('');
   const [solicitandoCodigo, setSolicitandoCodigo] = useState(false);
   const [solicitandoQr, setSolicitandoQr] = useState(false);
@@ -87,6 +106,7 @@ export function MallasClientHub() {
   const [bitacoraTotal, setBitacoraTotal] = useState(0);
   const [loadingDb, setLoadingDb] = useState(true);
   const [municipioFiltro, setMunicipioFiltro] = useState('TODOS');
+  const [filtroWa, setFiltroWa] = useState<FiltroWaKey>('VERIFICADOS');
   const [busqueda, setBusqueda] = useState('');
   const [pagina, setPagina] = useState(0);
   const [cazandoLote, setCazandoLote] = useState(false);
@@ -125,6 +145,7 @@ export function MallasClientHub() {
       });
       if (res && !res.vpsOffline) {
         setWaStatus(res as WaStatus);
+        setUltimaActualizacionWa(new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       }
     } catch {
       // silencioso
@@ -155,7 +176,7 @@ export function MallasClientHub() {
   useEffect(() => {
     cargarWa();
     cargarDatos();
-    const timer = setInterval(cargarWa, 4000);
+    const timer = setInterval(cargarWa, 2500);
     return () => clearInterval(timer);
   }, [cargarWa, cargarDatos]);
 
@@ -242,18 +263,26 @@ export function MallasClientHub() {
     setAndreaMsgs((prev) => [...prev, { role: 'user', text: content }]);
     if (!texto) setAndreaInput('');
     setSendingAndrea(true);
-    const res = await fetchVpsPost('/api/chat', {
-      session_id: sessionId,
-      mensaje: content,
-      incluir_voz: andreaVoz,
-      cliente_id: 'mallas_tlaxcalli',
-      mallas_demo: true,
-    });
-    setSendingAndrea(false);
-    const reply = String(res?.respuesta || res?.reply || res?.error || 'Sin respuesta del servidor.');
-    const audioUrl = res?.audio_data_url as string | undefined;
-    setAndreaMsgs((prev) => [...prev, { role: 'assistant', text: reply, audioUrl }]);
-    if (andreaVoz && audioUrl) playAudio(audioUrl);
+    try {
+      const res = await fetchVpsPost('/api/chat', {
+        session_id: sessionId,
+        mensaje: content,
+        incluir_voz: andreaVoz,
+        cliente_id: 'mallas_tlaxcalli',
+        mallas_demo: true,
+      });
+      const reply = String(res?.respuesta || res?.reply || res?.error || 'Sin respuesta del servidor.');
+      const audioUrl = res?.audio_data_url as string | undefined;
+      setAndreaMsgs((prev) => [...prev, { role: 'assistant', text: reply, audioUrl }]);
+      if (andreaVoz && audioUrl) playAudio(audioUrl);
+    } catch {
+      setAndreaMsgs((prev) => [
+        ...prev,
+        { role: 'assistant', text: 'Hubo una pausa en la conexión. Intenta enviar el mensaje de nuevo.' },
+      ]);
+    } finally {
+      setSendingAndrea(false);
+    }
   };
 
   // Acciones Maximus
@@ -264,26 +293,28 @@ export function MallasClientHub() {
       toast.error('Ingresa los 10 dígitos del WhatsApp personal del dueño.');
       return;
     }
-    const jid = digits.startsWith('521')
-      ? `${digits}@s.whatsapp.net`
-      : digits.startsWith('52')
-      ? `521${digits.slice(2)}@s.whatsapp.net`
-      : `521${digits}@s.whatsapp.net`;
+    const last10 = digits.slice(-10);
+    const jid = `521${last10}@s.whatsapp.net`;
 
     setAutorizandoDueno(true);
-    const res = await fetchVpsPost('/api/verificar_dueno_wa', {
-      jid,
-      autorizar: true,
-      texto: 'Autorizado desde Panel Mallas',
-      mallas_demo: true,
-    });
-    setAutorizandoDueno(false);
-    if (res?.es_dueno) {
-      setDuenoAutorizadoMsg(`Número ${digits} autorizado con Maximus en WhatsApp.`);
-      toast.success('WhatsApp del dueño autorizado con Maximus.');
-      setTelDueno('');
-    } else {
-      toast.error(String(res?.error || 'No se pudo autorizar el número.'));
+    try {
+      const res = await fetchVpsPost('/api/verificar_dueno_wa', {
+        jid,
+        autorizar: true,
+        texto: 'Autorizado desde Panel Mallas',
+        mallas_demo: true,
+      });
+      if (res?.es_dueno) {
+        setDuenoAutorizadoMsg(`Número ${last10} autorizado con Maximus en WhatsApp.`);
+        toast.success('WhatsApp del dueño autorizado con Maximus.');
+        setTelDueno('');
+      } else {
+        toast.error(String(res?.error || 'No se pudo autorizar el número.'));
+      }
+    } catch {
+      toast.error('No se pudo conectar con la VPS para autorizar.');
+    } finally {
+      setAutorizandoDueno(false);
     }
   };
 
@@ -293,16 +324,31 @@ export function MallasClientHub() {
     setMaximusMsgs((prev) => [...prev, { role: 'user', text: content }]);
     if (!texto) setMaximusInput('');
     setSendingMaximus(true);
-    const res = await fetchVpsPost('/api/agente_ceo_pau', {
-      mensaje: content,
-      session_id: `maximus_demo_${sessionId}`,
-      mallas_demo: true,
-    });
-    setSendingMaximus(false);
-    const reply = String(
-      res?.respuesta_ceo || res?.respuesta || res?.reply || res?.error || 'Maximus no respondió en este momento.'
-    );
-    setMaximusMsgs((prev) => [...prev, { role: 'assistant', text: reply }]);
+    try {
+      const res = await fetchVpsPost('/api/agente_ceo_pau', {
+        mensaje: content,
+        session_id: `maximus_demo_${sessionId}`,
+        mallas_demo: true,
+      });
+      if (res?.vpsOffline) {
+        setMaximusMsgs((prev) => [
+          ...prev,
+          { role: 'assistant', text: 'La VPS tardó en responder. Intenta de nuevo con una pregunta corta.' },
+        ]);
+        return;
+      }
+      const reply = String(
+        res?.respuesta_ceo || res?.respuesta || res?.reply || res?.error || 'Maximus no respondió en este momento.'
+      );
+      setMaximusMsgs((prev) => [...prev, { role: 'assistant', text: reply }]);
+    } catch {
+      setMaximusMsgs((prev) => [
+        ...prev,
+        { role: 'assistant', text: 'Se agotó el tiempo de espera. Vuelve a intentar en un segundo.' },
+      ]);
+    } finally {
+      setSendingMaximus(false);
+    }
   };
 
   // Acción Cazar Lote +10 en vivo
@@ -334,8 +380,21 @@ export function MallasClientHub() {
 
   const maxPorMunicipio = estadisticasMunicipio[0]?.[1] || 1;
 
-  const conTelefono = useMemo(
-    () => prospectos.filter((p) => (p.telefono || '').replace(/\D/g, '').length >= 8).length,
+  const waConfirmadosCount = useMemo(
+    () => prospectos.filter((p) => esWaConfirmado(p.estatus_contacto_wa)).length,
+    [prospectos]
+  );
+
+  const pendientesCount = useMemo(
+    () =>
+      prospectos.filter(
+        (p) => !esWaConfirmado(p.estatus_contacto_wa) && !esSinWa(p.estatus_contacto_wa)
+      ).length,
+    [prospectos]
+  );
+
+  const fijosCount = useMemo(
+    () => prospectos.filter((p) => esSinWa(p.estatus_contacto_wa)).length,
     [prospectos]
   );
 
@@ -346,8 +405,20 @@ export function MallasClientHub() {
 
   const filtrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    return prospectos.filter((p) => {
+    const list = prospectos.filter((p) => {
       if (municipioFiltro !== 'TODOS' && (p.municipio || '').trim() !== municipioFiltro) {
+        return false;
+      }
+      if (filtroWa === 'VERIFICADOS' && !esWaConfirmado(p.estatus_contacto_wa)) {
+        return false;
+      }
+      if (
+        filtroWa === 'PENDIENTES' &&
+        (esWaConfirmado(p.estatus_contacto_wa) || esSinWa(p.estatus_contacto_wa))
+      ) {
+        return false;
+      }
+      if (filtroWa === 'FIJOS' && !esSinWa(p.estatus_contacto_wa)) {
         return false;
       }
       if (!q) return true;
@@ -358,7 +429,14 @@ export function MallasClientHub() {
         (p.fuente || '').toLowerCase().includes(q)
       );
     });
-  }, [prospectos, municipioFiltro, busqueda]);
+
+    // Priorizar siempre WhatsApp confirmado arriba, luego pendientes, luego fijos
+    return [...list].sort((a, b) => {
+      const rank = (p: ProspectoVps) =>
+        esWaConfirmado(p.estatus_contacto_wa) ? 0 : esSinWa(p.estatus_contacto_wa) ? 2 : 1;
+      return rank(a) - rank(b);
+    });
+  }, [prospectos, municipioFiltro, filtroWa, busqueda]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaSegura = Math.min(pagina, totalPaginas - 1);
@@ -491,6 +569,11 @@ export function MallasClientHub() {
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center rounded-2xl bg-zinc-950/80 border border-white/10 p-5 space-y-4">
+                <div className="w-full rounded-xl bg-amber-500/10 border border-amber-400/30 px-3.5 py-2.5 text-xs text-amber-200 leading-relaxed">
+                  <strong>Importante:</strong> No uses la cámara normal del celular. Abre{' '}
+                  <strong>WhatsApp → menú (⋮) → Dispositivos vinculados → Vincular un dispositivo</strong> y apunta a este QR.
+                </div>
+
                 {waStatus?.qr_data_url ? (
                   <div className="p-3 bg-white rounded-2xl shadow-2xl">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -505,6 +588,12 @@ export function MallasClientHub() {
                     <QrCode className="w-8 h-8 mb-2 text-zinc-500" />
                     Presiona &ldquo;Actualizar QR&rdquo; para generar un código fresco.
                   </div>
+                )}
+
+                {ultimaActualizacionWa && (
+                  <p className="text-[11px] text-emerald-300/90 font-mono">
+                    ● QR sincronizado en vivo ({ultimaActualizacionWa})
+                  </p>
                 )}
 
                 {pairingCode && (
@@ -836,8 +925,8 @@ export function MallasClientHub() {
                 <p className="text-2xl font-black text-white mt-1">{prospectos.length}</p>
               </div>
               <div className="rounded-2xl bg-zinc-950/80 border border-white/10 p-4">
-                <p className="text-xs text-zinc-400">Con Teléfono Válido</p>
-                <p className="text-2xl font-black text-emerald-400 mt-1">{conTelefono}</p>
+                <p className="text-xs text-zinc-400">WhatsApp Confirmado</p>
+                <p className="text-2xl font-black text-emerald-400 mt-1">{waConfirmadosCount}</p>
               </div>
               <div className="rounded-2xl bg-zinc-950/80 border border-white/10 p-4">
                 <p className="text-xs text-zinc-400">Municipios Cubiertos</p>
@@ -946,6 +1035,66 @@ export function MallasClientHub() {
 
           {/* 3.2 BASE DE DATOS DE NÚMEROS EXTRAÍDOS */}
           <div className="rounded-3xl bg-zinc-900/90 border border-white/10 p-5 sm:p-6 space-y-4">
+            {/* Pills de filtro por WhatsApp */}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setFiltroWa('VERIFICADOS');
+                  setPagina(0);
+                }}
+                className={`px-3.5 py-2 rounded-xl text-xs font-extrabold border transition cursor-pointer ${
+                  filtroWa === 'VERIFICADOS'
+                    ? 'bg-emerald-500 text-zinc-950 border-emerald-400'
+                    : 'bg-zinc-950 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/10'
+                }`}
+              >
+                ✓ WhatsApp Confirmado ({waConfirmadosCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFiltroWa('TODOS');
+                  setPagina(0);
+                }}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                  filtroWa === 'TODOS'
+                    ? 'bg-cyan-400 text-zinc-950 border-cyan-300'
+                    : 'bg-zinc-950 text-zinc-300 border-white/10 hover:bg-zinc-800'
+                }`}
+              >
+                Todos ({prospectos.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFiltroWa('PENDIENTES');
+                  setPagina(0);
+                }}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                  filtroWa === 'PENDIENTES'
+                    ? 'bg-zinc-200 text-zinc-950 border-white'
+                    : 'bg-zinc-950 text-zinc-300 border-white/10 hover:bg-zinc-800'
+                }`}
+              >
+                Por Verificar ({pendientesCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFiltroWa('FIJOS');
+                  setPagina(0);
+                }}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                  filtroWa === 'FIJOS'
+                    ? 'bg-amber-400 text-zinc-950 border-amber-300'
+                    : 'bg-zinc-950 text-amber-200 border-amber-500/20 hover:bg-amber-500/10'
+                }`}
+              >
+                Solo Llamada / Fijo ({fijosCount})
+              </button>
+            </div>
+
             <div className="flex flex-col sm:flex-row gap-3 justify-between">
               <div className="relative flex-1">
                 <Search className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -991,13 +1140,16 @@ export function MallasClientHub() {
             ) : (
               <div className="space-y-2.5">
                 {visibles.map((p, idx) => {
-                  const telClean = (p.telefono || '').replace(/\D/g, '');
-                  const waHref =
-                    telClean.length >= 10
-                      ? `https://wa.me/${telClean.startsWith('52') ? telClean : `52${telClean}`}?text=${encodeURIComponent(
-                          `Hola ${p.nombre}, te saludamos de Mallas Tlaxcalli. Manejamos mallas y bandas para máquina tortilladora con envío gratis y pago contra entrega.`
-                        )}`
-                      : null;
+                  const telDigits = (p.telefono || '').replace(/\D/g, '');
+                  const sinWa = esSinWa(p.estatus_contacto_wa);
+                  const confirmado = esWaConfirmado(p.estatus_contacto_wa);
+                  const waHref = !sinWa
+                    ? construirUrlWaMexico(
+                        p.telefono,
+                        `Hola ${p.nombre}, te saludamos de Mallas Tlaxcalli. Manejamos mallas y bandas para máquina tortilladora con envío gratis y pago contra entrega.`
+                      )
+                    : null;
+                  const telHref = telDigits.length >= 10 ? `tel:+52${telDigits.slice(-10)}` : null;
 
                   return (
                     <div
@@ -1009,6 +1161,16 @@ export function MallasClientHub() {
                           <h3 className="text-sm font-extrabold text-white truncate">
                             {p.nombre || 'Negocio sin nombre'}
                           </h3>
+                          {confirmado && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                              ✓ WhatsApp Confirmado
+                            </span>
+                          )}
+                          {sinWa && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-400/30">
+                              Teléfono Fijo
+                            </span>
+                          )}
                           {p.fuente && (
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/20">
                               {p.fuente}
@@ -1028,12 +1190,7 @@ export function MallasClientHub() {
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        {p.estatus_contacto_wa && (
-                          <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-300">
-                            {p.estatus_contacto_wa}
-                          </span>
-                        )}
-                        {waHref && (
+                        {waHref ? (
                           <a
                             href={waHref}
                             target="_blank"
@@ -1042,6 +1199,15 @@ export function MallasClientHub() {
                           >
                             <MessageCircle className="w-3.5 h-3.5" />
                             WhatsApp
+                          </a>
+                        ) : null}
+                        {telHref && (
+                          <a
+                            href={telHref}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-white/10 text-xs font-bold transition"
+                          >
+                            <Phone className="w-3.5 h-3.5" />
+                            Llamar
                           </a>
                         )}
                       </div>
