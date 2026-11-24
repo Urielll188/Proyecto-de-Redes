@@ -4384,6 +4384,29 @@ def _obtener_y_avanzar_offset(cid: str, frente_id: int, zona: str, fuente: str, 
     return offset_actual
 
 
+_obtener_offset_progreso = _obtener_y_avanzar_offset
+
+
+def _consultar_offsets_3_fuentes(cid: str, frente_id: int, zona: str) -> dict:
+    """Devuelve los offsets acumulados por fuente ('APIFY', 'FACEBOOK', 'INEGI') para un (frente_id, zona)."""
+    offsets = {"APIFY": 0, "FACEBOOK": 0, "INEGI": 0}
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT UPPER(fuente), COALESCE(ultimo_offset, 0)
+            FROM progreso_extraccion
+            WHERE LOWER(id_cliente_agencia) = LOWER(?) AND frente_id = ? AND LOWER(zona) = LOWER(?)
+        """, (cid, int(frente_id or 0), zona.strip()))
+        for f_name, off_val in cur.fetchall():
+            if f_name in offsets:
+                offsets[f_name] = int(off_val or 0)
+        conn.close()
+    except Exception:
+        pass
+    return offsets
+
+
 def _disparar_validacion_wa_batch_async(cid: str, min_id_antes: int):
     def _run_val():
         try:
@@ -4406,7 +4429,7 @@ def _disparar_validacion_wa_batch_async(cid: str, min_id_antes: int):
     threading.Thread(target=_run_val, daemon=True).start()
 
 
-def auto_abastecer_cliente(cid_raw: str, forzar: bool = False, frente_id_req: int | None = None, zona_override: str = "", fuente_preferida: str = "APIFY") -> dict:
+def auto_abastecer_cliente(cid_raw: str, forzar: bool = False, frente_id_req: int | None = None, zona_override: str = "", fuente_preferida: str = "") -> dict:
     cid = motor_m1.normalizar_cliente_id(cid_raw or "")
     # CANDADO ESTRICTO FAST-PATH LEGACY: nunca tocar mallas_tlaxcalli
     if not cid or cid == "mallas_tlaxcalli":
@@ -4464,28 +4487,86 @@ def auto_abastecer_cliente(cid_raw: str, forzar: bool = False, frente_id_req: in
     max_id_antes = conn.execute("SELECT COALESCE(MAX(id), 0) FROM prospectos_cazador").fetchone()[0]
     conn.close()
 
-    fuente_usada = str(fuente_preferida or "APIFY").upper()
-    offset_actual = _obtener_offset_progreso(cid, frente_id, zona_sel, fuente_usada, paso=10)
-    nuevos = []
-    if fuente_usada == "APIFY" and env.get("APIFY_API_TOKEN"):
-        q_maps = f"{kw_principal} en {zona_sel}, Mexico"
-        nuevos = motor_m1.extraer_apify_google_maps(q_maps, 10, env.get("APIFY_API_TOKEN", ""), perfil=perfil)
+    # Rotación Inteligente de 3 Fuentes por (frente_id, zona_sel):
+    # 1. APIFY (Google Maps) -> 2. FACEBOOK (Páginas y Posts B2B / wa.me) -> 3. INEGI (DENUE)
+    orden_calidad = ["APIFY", "FACEBOOK", "INEGI"]
+    offsets_actuales = _consultar_offsets_3_fuentes(cid, frente_id, zona_sel)
+    pref_clean = str(fuente_preferida or "").strip().upper()
+    if pref_clean in orden_calidad:
+        cola_fuentes = [pref_clean] + [f for f in orden_calidad if f != pref_clean]
+    else:
+        min_off = min(offsets_actuales.values())
+        primera_rot = next((f for f in orden_calidad if offsets_actuales.get(f, 0) <= min_off), "APIFY")
+        idx_start = orden_calidad.index(primera_rot)
+        cola_fuentes = orden_calidad[idx_start:] + orden_calidad[:idx_start]
 
-    if not nuevos and env.get("INEGI_DENUE_TOKEN"):
-        fuente_usada = "INEGI"
-        offset_inegi = _obtener_offset_progreso(cid, frente_id, zona_sel, "INEGI", paso=10)
-        nuevos = motor_m1.extraer_inegi_por_zona_dinamica(
-            kw_principal, zona_sel, 10, env.get("INEGI_DENUE_TOKEN", ""), reg_ini=max(1, offset_inegi + 1), perfil=perfil
-        )
+    fuente_usada = cola_fuentes[0]
+    offset_actual = 0
+    lote_extraido = 0
+    fuentes_intentadas = []
 
-    for r in nuevos:
-        r["frente_nombre"] = frente_nombre
-        r["angulo_contacto"] = angulo_contacto
-        if not r.get("municipio"):
-            r["municipio"] = zona_sel
+    for fuente_cand in cola_fuentes:
+        fuentes_intentadas.append(fuente_cand)
+        if fuente_cand == "APIFY" and env.get("APIFY_API_TOKEN"):
+            fuente_usada = "APIFY"
+            offset_actual = _obtener_offset_progreso(cid, frente_id, zona_sel, "APIFY", paso=10)
+            kw_rot = kw_list[(offset_actual // 10) % len(kw_list)] if kw_list else kw_principal
+            q_maps = f"{kw_rot} en {zona_sel}, Mexico"
+            nuevos_maps = motor_m1.extraer_apify_google_maps(q_maps, 10, env.get("APIFY_API_TOKEN", ""), perfil=perfil)
+            if nuevos_maps:
+                for r in nuevos_maps:
+                    r["frente_nombre"] = frente_nombre
+                    r["angulo_contacto"] = angulo_contacto
+                    if not r.get("municipio"):
+                        r["municipio"] = zona_sel
+                clasificados = [motor_m1.clasificar_negocio(r, perfil) for r in nuevos_maps]
+                motor_m1.guardar_y_exportar(clasificados, cid)
+                lote_extraido = len(nuevos_maps)
+                break
 
-    clasificados = [motor_m1.clasificar_negocio(r, perfil) for r in nuevos]
-    motor_m1.guardar_y_exportar(clasificados, cid)
+        elif fuente_cand == "FACEBOOK" and env.get("APIFY_API_TOKEN"):
+            fuente_usada = "FACEBOOK"
+            offset_actual = _obtener_offset_progreso(cid, frente_id, zona_sel, "FACEBOOK", paso=10)
+            kw_rot = kw_list[(offset_actual // 10) % len(kw_list)] if kw_list else kw_principal
+            try:
+                import modulo_1b_cazador_facebook as motor_fb
+            except ImportError:
+                from scripts import modulo_1b_cazador_facebook as motor_fb
+            res_fb = motor_fb.ejecutar_caza_facebook(
+                kw_rot,
+                municipio_default=zona_sel,
+                max_posts=15,
+                cliente_id=cid,
+                perfil_nicho=nicho,
+                frente_nombre=frente_nombre,
+                angulo_contacto=angulo_contacto,
+                zona=zona_sel,
+                offset=offset_actual,
+            )
+            lote_fb = int(res_fb.get("guardados_bd") or res_fb.get("aprobados_ia") or 0)
+            if lote_fb > 0:
+                lote_extraido = lote_fb
+                break
+
+        elif fuente_cand == "INEGI" and env.get("INEGI_DENUE_TOKEN"):
+            fuente_usada = "INEGI"
+            offset_actual = _obtener_offset_progreso(cid, frente_id, zona_sel, "INEGI", paso=10)
+            kw_rot = kw_list[(offset_actual // 10) % len(kw_list)] if kw_list else kw_principal
+            nuevos_inegi = motor_m1.extraer_inegi_por_zona_dinamica(
+                kw_rot, zona_sel, 10, env.get("INEGI_DENUE_TOKEN", ""), reg_ini=max(1, offset_actual + 1), perfil=perfil
+            )
+            if nuevos_inegi:
+                for r in nuevos_inegi:
+                    r["frente_nombre"] = frente_nombre
+                    r["angulo_contacto"] = angulo_contacto
+                    if not r.get("municipio"):
+                        r["municipio"] = zona_sel
+                clasificados = [motor_m1.clasificar_negocio(r, perfil) for r in nuevos_inegi]
+                motor_m1.guardar_y_exportar(clasificados, cid)
+                lote_extraido = len(nuevos_inegi)
+                break
+
+    # Validar automáticamente en lote contra puente WhatsApp (8095) cualquier prospecto nuevo
     _disparar_validacion_wa_batch_async(cid, max_id_antes)
 
     bd_info = obtener_datos_completos_bd(cid)
@@ -4497,8 +4578,9 @@ def auto_abastecer_cliente(cid_raw: str, forzar: bool = False, frente_id_req: in
         "frente_nombre": frente_nombre,
         "zona": zona_sel,
         "fuente": fuente_usada,
+        "fuentes_intentadas": fuentes_intentadas,
         "offset": offset_actual,
-        "lote_extraido": len(nuevos),
+        "lote_extraido": lote_extraido,
         "total_acumulado": len(bd_info["prospectos"]),
     }
 
@@ -5700,7 +5782,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             forzar_auto = bool(data.get("forzar", True))
             fid_req = data.get("frente_id")
             zona_ov = str(data.get("zona") or "").strip()
-            fuente_ov = str(data.get("fuente") or "APIFY").strip().upper()
+            fuente_ov = str(data.get("fuente") or "").strip().upper()
             res_auto = auto_abastecer_cliente(
                 cid,
                 forzar=forzar_auto,
@@ -5823,17 +5905,26 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
 
                 modo = str(data.get("modo", "KEYWORD") or "KEYWORD").upper()
                 target_custom = str(data.get("target", "") or "").strip()
-                target_query = target_custom if target_custom else f"{kw_principal} {muni}"
+                target_query = target_custom if target_custom else kw_principal
+                offset_fb = _obtener_offset_progreso(cid, frente_id, muni, "FACEBOOK", paso=10)
 
                 def _tarea_caza_fb():
                     try:
+                        conn_fb = sqlite3.connect(DB_PATH)
+                        max_id_fb_antes = conn_fb.execute("SELECT COALESCE(MAX(id), 0) FROM prospectos_cazador").fetchone()[0]
+                        conn_fb.close()
                         motor_fb.ejecutar_caza_facebook(
                             target_query,
                             municipio_default=muni,
                             max_posts=20,
                             cliente_id=cid,
-                            perfil_nicho=nicho
+                            perfil_nicho=nicho,
+                            frente_nombre=frente_nombre,
+                            angulo_contacto=angulo_contacto,
+                            zona=muni,
+                            offset=offset_fb,
                         )
+                        _disparar_validacion_wa_batch_async(cid, max_id_fb_antes)
                     except Exception as err_fb:
                         print(f"   [!] Error en hilo asíncrono Facebook ({cid}): {err_fb}")
 
@@ -5844,7 +5935,9 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                     "async": True,
                     "cliente_id": cid,
                     "fuente": "FACEBOOK",
-                    "mensaje": f"Cazando en Facebook ({target_query}) para {nicho['nombre_negocio']}...",
+                    "frente_nombre": frente_nombre,
+                    "zona": muni,
+                    "mensaje": f"Cazando en Facebook B2B ({target_query} en {muni}) para {nicho['nombre_negocio']}...",
                     "total_acumulado": len(bd_info["prospectos"]),
                     "prospectos": bd_info["prospectos"]
                 })
