@@ -64,7 +64,7 @@ export function PanelFacilView() {
               })
             : Promise.resolve(null),
           clienteId
-            ? fetchVpsGet('/estatus_wa', { cliente_id: clienteId })
+            ? fetchVpsGet('/api/estatus_wa', { cliente_id: clienteId })
             : Promise.resolve(null),
         ]);
 
@@ -80,7 +80,7 @@ export function PanelFacilView() {
 
         if (waRes && !waRes.vpsOffline) {
           setWaConectado(Boolean(waRes.conectado));
-          setWaNumero(String(waRes.numero || waRes.telefono || ''));
+          setWaNumero(String(waRes.numero_vinculado || waRes.miNumero || waRes.numero || waRes.telefono || ''));
         }
       } catch {
         // Silencioso para no bloquear la vista móvil
@@ -244,9 +244,16 @@ export function PanelFacilView() {
     <div className="space-y-5 pb-8 select-text">
       {/* 1. CABECERA CLARA Y PROMESA PRINCIPAL */}
       <section className="rounded-3xl bg-gradient-to-br from-zinc-900 via-zinc-900 to-emerald-950/40 border border-white/10 p-5 sm:p-6 shadow-xl">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-xs font-bold mb-3">
-          <Sparkles className="w-3.5 h-3.5" />
-          Panel Fácil • Paso a paso
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-xs font-bold">
+            <Sparkles className="w-3.5 h-3.5" />
+            Panel Fácil • Paso a paso
+          </div>
+          {tienePerfil && (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-400/30 text-cyan-300 text-xs font-semibold">
+              {modeloLegible}
+            </div>
+          )}
         </div>
 
         <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight leading-tight">

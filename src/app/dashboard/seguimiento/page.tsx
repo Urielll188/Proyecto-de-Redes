@@ -74,10 +74,14 @@ export default function SeguimientoPage() {
             Módulo 4 • Recuperación y Recompra
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
-            El Perseguidor (24h / 72h / VIP 15 Días)
+            {isMallasOwner
+              ? 'El Perseguidor (24h / 72h / VIP 15 Días)'
+              : `Seguimiento Automático • ${nicho?.nombre_negocio || 'Tu Negocio'}`}
           </h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Recuperación automática de prospectos tibios y desbloqueo de venta de baleros desde $26 MXN a los 15 días.
+            {isMallasOwner
+              ? 'Recuperación automática de prospectos tibios y desbloqueo de venta de baleros desde $26 MXN a los 15 días.'
+              : 'Recuperación automática de prospectos interesados (24h / 72h) y reactivación de clientes para generar recompras.'}
           </p>
         </div>
 
@@ -103,8 +107,8 @@ export default function SeguimientoPage() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-950/60 text-[11px] uppercase tracking-wider text-zinc-400">
-                <th className="py-3 px-4">Tortillería / Tel</th>
-                <th className="py-3 px-4">Municipio</th>
+                <th className="py-3 px-4">{isMallasOwner ? 'Tortillería / Tel' : 'Cliente / Tel'}</th>
+                <th className="py-3 px-4">Zona / Municipio</th>
                 <th className="py-3 px-4">Etapa</th>
                 <th className="py-3 px-4">Último Mensaje Cliente</th>
                 <th className="py-3 px-4">Mensaje IA Sugerido & Nota de Voz</th>

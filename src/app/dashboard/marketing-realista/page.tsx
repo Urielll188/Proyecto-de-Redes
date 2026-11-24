@@ -26,7 +26,7 @@ const FILTROS: Record<FiltroCss, { label: string; style: string }> = {
     style: 'contrast(1.22) saturate(1.08) brightness(0.98)',
   },
   calido: {
-    label: 'Cálido Tortillería (Maíz/Dorado)',
+    label: 'Cálido Dorado (Producto / Comercial)',
     style: 'sepia(0.15) saturate(1.25) contrast(1.05) brightness(1.04)',
   },
   original: {
@@ -47,7 +47,17 @@ export default function MarketingRealistaPage() {
       ? 'Paquete Completo ($1,713 MXN) + Envío Gratis'
       : nicho?.oferta_gancho || 'Promoción Principal + Entrega Rápida'
   );
-  const [zona, setZona] = useState('Norte CDMX y Edomex (Ecatepec, Tultitlán, Coacalco, Naucalpan)');
+  const [zona, setZona] = useState(
+    isMallasOwner
+      ? 'Norte CDMX y Edomex (Ecatepec, Tultitlán, Coacalco, Naucalpan)'
+      : 'Cobertura Local y Envíos a Todo México'
+  );
+
+  useEffect(() => {
+    if (!isMallasOwner && nicho?.oferta_gancho) {
+      setEnfoque(nicho.oferta_gancho);
+    }
+  }, [isMallasOwner, nicho?.oferta_gancho]);
   const [contenido, setContenido] = useState('');
   const [generando, setGenerando] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -256,42 +266,73 @@ export default function MarketingRealistaPage() {
               <label className="block text-xs font-medium text-zinc-400 mb-1">
                 Enfoque de Venta
               </label>
-              <select
-                value={enfoque}
-                onChange={(e) => setEnfoque(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="Paquete Completo ($1,713 MXN) + Envío Gratis">
-                  Paquete Completo ($1,713 MXN) + Envío Gratis
-                </option>
-                <option value="Acero Inoxidable Grado Alimenticio (Durabilidad)">
-                  Acero Inoxidable Grado Alimenticio (Durabilidad)
-                </option>
-                <option value="Pago Contra Entrega Sin Riesgos (Confianza)">
-                  Pago Contra Entrega Sin Riesgos (Confianza)
-                </option>
-                <option value="Refacciones y Baleros desde $26 MXN (Mecánicos)">
-                  Refacciones y Baleros desde $26 MXN (Mecánicos)
-                </option>
-              </select>
+              {isMallasOwner ? (
+                <select
+                  value={enfoque}
+                  onChange={(e) => setEnfoque(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="Paquete Completo ($1,713 MXN) + Envío Gratis">
+                    Paquete Completo ($1,713 MXN) + Envío Gratis
+                  </option>
+                  <option value="Acero Inoxidable Grado Alimenticio (Durabilidad)">
+                    Acero Inoxidable Grado Alimenticio (Durabilidad)
+                  </option>
+                  <option value="Pago Contra Entrega Sin Riesgos (Confianza)">
+                    Pago Contra Entrega Sin Riesgos (Confianza)
+                  </option>
+                  <option value="Refacciones y Baleros desde $26 MXN (Mecánicos)">
+                    Refacciones y Baleros desde $26 MXN (Mecánicos)
+                  </option>
+                </select>
+              ) : (
+                <select
+                  value={enfoque}
+                  onChange={(e) => setEnfoque(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-blue-500"
+                >
+                  {nicho?.oferta_gancho && (
+                    <option value={nicho.oferta_gancho}>{nicho.oferta_gancho}</option>
+                  )}
+                  <option value="Promoción Principal + Entrega Rápida">
+                    Promoción Principal + Entrega Rápida
+                  </option>
+                  <option value="Calidad Garantizada y Atención Personalizada">
+                    Calidad Garantizada y Atención Personalizada
+                  </option>
+                  <option value="Pedidos Personalizados y Cotización Directa por WhatsApp">
+                    Pedidos Personalizados y Cotización Directa por WhatsApp
+                  </option>
+                </select>
+              )}
             </div>
 
             <div>
               <label className="block text-xs font-medium text-zinc-400 mb-1">
                 Zona Objetivo
               </label>
-              <select
-                value={zona}
-                onChange={(e) => setZona(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="Norte CDMX y Edomex (Ecatepec, Tultitlán, Coacalco, Naucalpan)">
-                  Norte CDMX y Edomex (Ecatepec, Tultitlán, Coacalco, Naucalpan)
-                </option>
-                <option value="Todo México (Envíos Express)">
-                  Todo México (Envíos Express)
-                </option>
-              </select>
+              {isMallasOwner ? (
+                <select
+                  value={zona}
+                  onChange={(e) => setZona(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="Norte CDMX y Edomex (Ecatepec, Tultitlán, Coacalco, Naucalpan)">
+                    Norte CDMX y Edomex (Ecatepec, Tultitlán, Coacalco, Naucalpan)
+                  </option>
+                  <option value="Todo México (Envíos Express)">
+                    Todo México (Envíos Express)
+                  </option>
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={zona}
+                  onChange={(e) => setZona(e.target.value)}
+                  placeholder="Ej. Ciudad de México, Guadalajara o Envíos a Todo México"
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-blue-500"
+                />
+              )}
             </div>
 
             <button

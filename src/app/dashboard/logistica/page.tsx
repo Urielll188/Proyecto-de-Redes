@@ -1209,7 +1209,11 @@ export default function LogisticaPage() {
                     onChange={(e) =>
                       setFormParada((prev) => ({ ...prev, cliente: e.target.value }))
                     }
-                    placeholder="Ej. Tortillería San Juan / María López"
+                    placeholder={
+                      isMallasOwner
+                        ? 'Ej. Tortillería San Juan / María López'
+                        : 'Ej. María López / Comercializadora del Centro'
+                    }
                     className="w-full px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-sm text-white focus:outline-none focus:border-blue-500"
                   />
                 </div>
