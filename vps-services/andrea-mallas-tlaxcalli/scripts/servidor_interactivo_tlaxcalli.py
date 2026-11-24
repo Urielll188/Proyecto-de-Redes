@@ -1106,12 +1106,17 @@ def _es_subpagina_plantilla_ingles(sub_url: str, sub_info: dict, sitio_es_espano
 def _construir_frentes_fallback(nombre_sitio: str, headings: list, giro_txt: str, cli_tipo: str, mod_ent: str) -> list:
     candidatos = []
     vistos = set()
+    frases_slogan = (
+        "plumbing", "hvac", "lorem", "welcome", "inicio", "home", "contacto", "menu", "cookie", "privacy",
+        "impulsa", "protege tu negocio", "soluciones para tu empresa", "solicita tu cotizacion", "quienes somos",
+        "nuestros servicios", "servicios", "por que elegirnos", "clientes"
+    )
     for h in headings:
         h_clean = re.sub(r"\s+", " ", str(h or "")).strip(" -|•:")
-        if len(h_clean) < 4 or len(h_clean) > 65:
+        if len(h_clean) < 5 or len(h_clean) > 65:
             continue
         low = _quitar_acentos_visual(h_clean.lower())
-        if any(bad in low for bad in ("plumbing", "hvac", "lorem", "welcome", "inicio", "home", "contacto", "menu", "cookie", "privacy")):
+        if any(bad in low for bad in frases_slogan):
             continue
         if low in vistos:
             continue
@@ -1134,7 +1139,11 @@ def _construir_frentes_fallback(nombre_sitio: str, headings: list, giro_txt: str
     frentes = []
     for idx, c_nom in enumerate(candidatos[:4]):
         es_b2b = cli_tipo in ("empresas_b2b", "ambos") or mod_ent == "servicio_en_sitio"
-        kws = f"{c_nom}, empresas, oficinas, negocios" if es_b2b else f"{c_nom}, comercios, clientes"
+        c_low = _quitar_acentos_visual(c_nom.lower())
+        if any(w in c_low for w in ("red", "cctv", "camara", "telefonia", "conmutador", "soporte", "poliza", "aspel", "ti")):
+            kws = f"{c_nom}, oficinas, empresas, pymes, corporativos" if es_b2b else f"{c_nom}, comercios, clientes"
+        else:
+            kws = f"{c_nom}, empresas, oficinas, negocios" if es_b2b else f"{c_nom}, comercios, clientes"
         ticket = "$8,000 - $35,000 MXN" if mod_ent == "servicio_en_sitio" else "$2,500 - $12,000 MXN"
         angulo = (
             f"Ofrecer diagnóstico o cotización de {c_nom} con {nombre_sitio}, resaltando soporte profesional y respuesta rápida."
@@ -1306,8 +1315,20 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
     )
     vol_fallback = "proyecto" if es_servicio_sitio else ("mayoreo" if "mayoreo" in texto_low else "menudeo")
 
+    meta_clean = (info_main.get("meta_desc") or "").strip()
+    if len(meta_clean) < 35 or "solicita tu cotiz" in meta_clean.lower():
+        meta_clean = ""
+    frentes_fallback = _construir_frentes_fallback(
+        nombre_sitio,
+        info_main.get("headings", []),
+        meta_clean or nombre_sitio,
+        cli_fallback,
+        mod_fallback,
+    )
+    lista_servicios_fb = ", ".join([f["nombre_frente"] for f in frentes_fallback[:4]])
     desc_base = (
-        info_main.get("meta_desc")
+        meta_clean
+        or (f"Servicios empresariales en {lista_servicios_fb}" if lista_servicios_fb else "")
         or " | ".join(info_main.get("headings", [])[:4])
         or info_main.get("title")
         or nombre_sitio
@@ -1324,7 +1345,7 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
     else:
         descripcion_fallback = (desc_base or nombre_sitio)[:340]
 
-    headings_limpios = [h for h in info_main.get("headings", []) if len(h) >= 6][:6]
+    headings_limpios = [f["nombre_frente"] for f in frentes_fallback[:3]]
     beneficios_fallback = (
         headings_limpios[:3]
         if len(headings_limpios) >= 3
@@ -1340,19 +1361,12 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
         f"BASE DE CONOCIMIENTO EXTRAÍDA DE {final_url}:\n"
         f"• Negocio: {nombre_sitio}\n"
         f"• Resumen Comercial: {descripcion_fallback}\n"
-        f"• Servicios / Productos Detectados: {' | '.join(info_main.get('headings', [])[:10]) or descripcion_fallback}\n"
+        f"• Servicios / Productos Detectados: {' | '.join(info_main.get('headings', [])[:12]) or descripcion_fallback}\n"
         f"• Precios Referenciales: {', '.join(info_main.get('precios', [])[:8]) or 'Cotización según alcance o pedido'}\n"
         f"• Instrucción para Andrea IA: Atiende dudas técnicas o de catálogo con base en estos servicios, califica el requerimiento del cliente y solicita sus datos para cerrar pedido o agendar visita técnica."
     )[:2400]
 
     titular_fallback = (info_main.get("headings", [nombre_sitio])[0] if info_main.get("headings") else nombre_sitio).upper()[:46]
-    frentes_fallback = _construir_frentes_fallback(
-        nombre_sitio,
-        info_main.get("headings", []),
-        descripcion_fallback,
-        cli_fallback,
-        mod_fallback,
-    )
 
     resultado_base = {
         "ok": True,
@@ -1371,7 +1385,7 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
     }
 
     llaves = obtener_llaves_ia_backend()
-    if not llaves or (time.time() - t_inicio) >= 9.5:
+    if not llaves or (time.time() - t_inicio) >= 13.5:
         return 200, resultado_base
 
     prompt_web = (
@@ -1406,18 +1420,20 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
         "}"
     )
 
-    payload_ia = {
-        "contents": [{"role": "user", "parts": [{"text": prompt_web}]}],
-        "generationConfig": {
+    for modelo in ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3-flash-preview", "gemini-2.5-flash"]:
+        gen_cfg_w = {
             "temperature": 0.2,
             "maxOutputTokens": 1200,
             "responseMimeType": "application/json",
-        },
-    }
-
-    for modelo in ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3-flash-preview", "gemini-2.5-flash"]:
+        }
+        if "2.5" in modelo:
+            gen_cfg_w["thinkingConfig"] = {"thinkingBudget": 0}
+        payload_ia = {
+            "contents": [{"role": "user", "parts": [{"text": prompt_web}]}],
+            "generationConfig": gen_cfg_w,
+        }
         for key in llaves[:2]:
-            restante = 11.5 - (time.time() - t_inicio)
+            restante = 16.5 - (time.time() - t_inicio)
             if restante <= 1.2:
                 return 200, resultado_base
             url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={key}"
