@@ -120,6 +120,35 @@ def inicializar_tablas_ecosistema():
         cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN estatus_maps TEXT DEFAULT 'PENDIENTE_VERIFICAR'")
     if "fecha_ultimo_wa" not in cols:
         cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN fecha_ultimo_wa TEXT DEFAULT ''")
+    if "frente_nombre" not in cols:
+        cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN frente_nombre TEXT DEFAULT NULL")
+    if "angulo_contacto" not in cols:
+        cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN angulo_contacto TEXT DEFAULT NULL")
+
+    # Tablas aditivas para Motor de Caza Multi-Frente y progreso persistente por frente/zona
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS frentes_caza (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_cliente_agencia TEXT NOT NULL,
+            nombre_frente TEXT NOT NULL,
+            keywords_busqueda TEXT DEFAULT '',
+            ticket_estimado TEXT DEFAULT '',
+            angulo_andrea TEXT DEFAULT '',
+            activo INTEGER DEFAULT 1,
+            creado_en TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS progreso_extraccion (
+            id_cliente_agencia TEXT NOT NULL,
+            frente_id INTEGER NOT NULL DEFAULT 0,
+            zona TEXT NOT NULL,
+            fuente TEXT NOT NULL,
+            ultimo_offset INTEGER DEFAULT 0,
+            actualizado_en TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (id_cliente_agencia, frente_id, zona, fuente)
+        )
+    """)
 
     # Tabla Módulo 3: Pedidos Cerrados Reales (CERO PEDIDOS FALSOS INVENTADOS)
     cur.execute("""
@@ -291,6 +320,10 @@ def inicializar_tablas_ecosistema():
         cur.execute("ALTER TABLE perfiles_nicho ADD COLUMN modelo_negocio TEXT DEFAULT 'DISTRIBUIDOR_B2B'")
     if "diagnostico_ia" not in cols_nicho:
         cur.execute("ALTER TABLE perfiles_nicho ADD COLUMN diagnostico_ia TEXT DEFAULT '{}'")
+    if "zonas_objetivo" not in cols_nicho:
+        cur.execute("ALTER TABLE perfiles_nicho ADD COLUMN zonas_objetivo TEXT DEFAULT 'CDMX y Area Metropolitana'")
+    if "flujo_continuo_activo" not in cols_nicho:
+        cur.execute("ALTER TABLE perfiles_nicho ADD COLUMN flujo_continuo_activo INTEGER DEFAULT 1")
     cur.execute("""
         UPDATE perfiles_nicho
         SET modelo_negocio = 'DISTRIBUIDOR_B2B'
@@ -1039,6 +1072,82 @@ def _extraer_logo_de_html(
     return fallback_logo_url, None
 
 
+def _sitio_principal_es_espanol(html_raw: str, info_main: dict) -> bool:
+    head_lang = re.search(r'<html[^>]+lang\s*=\s*["\']([^"\']+)["\']', str(html_raw or "")[:1200], flags=re.I)
+    if head_lang and head_lang.group(1).lower().startswith("es"):
+        return True
+    sample = _quitar_acentos_visual(
+        f"{info_main.get('title', '')} {info_main.get('meta_desc', '')} {info_main.get('texto', '')[:1200]}".lower()
+    )
+    es_tokens = re.findall(r"\b(?:servicios|nosotros|empresas|soluciones|consultoria|soporte|mexico|redes|para|con|mas|productos|clientes|contacto)\b", sample)
+    return len(es_tokens) >= 2
+
+
+def _es_subpagina_plantilla_ingles(sub_url: str, sub_info: dict, sitio_es_espanol: bool) -> bool:
+    if not sitio_es_espanol:
+        return False
+    path_low = (urllib.parse.urlparse(sub_url).path or "").lower()
+    txt_low = _quitar_acentos_visual(
+        f"{sub_info.get('title', '')} {' '.join(sub_info.get('headings', [])[:6])} {sub_info.get('texto', '')[:1200]}".lower()
+    )
+    # Palabras clásicas de plantillas demo en inglés (Astra/Elementor/WordPress)
+    palabras_plantilla = ("plumbing", "hvac", "lorem ipsum", "dolor sit amet", "consectetur adipiscing", "roofing", "handyman", "sample page")
+    if any(w in txt_low for w in palabras_plantilla):
+        return True
+    rutas_en = ("/services/", "/services", "/about/", "/about", "/home/", "/home", "/sample-page")
+    if any(path_low.rstrip("/") == r.rstrip("/") for r in rutas_en):
+        en_hits = len(re.findall(r"\b(?:services|about|contact|plumbing|heating|cooling|welcome|learn more|get started|our team)\b", txt_low))
+        es_hits = len(re.findall(r"\b(?:servicios|nosotros|empresa|soluciones|soporte|contacto|clientes|mexico)\b", txt_low))
+        if en_hits > es_hits:
+            return True
+    return False
+
+
+def _construir_frentes_fallback(nombre_sitio: str, headings: list, giro_txt: str, cli_tipo: str, mod_ent: str) -> list:
+    candidatos = []
+    vistos = set()
+    for h in headings:
+        h_clean = re.sub(r"\s+", " ", str(h or "")).strip(" -|•:")
+        if len(h_clean) < 4 or len(h_clean) > 65:
+            continue
+        low = _quitar_acentos_visual(h_clean.lower())
+        if any(bad in low for bad in ("plumbing", "hvac", "lorem", "welcome", "inicio", "home", "contacto", "menu", "cookie", "privacy")):
+            continue
+        if low in vistos:
+            continue
+        vistos.add(low)
+        candidatos.append(h_clean)
+        if len(candidatos) >= 4:
+            break
+
+    if len(candidatos) < 3:
+        defaults = [
+            f"Empresas y Oficinas ({giro_txt[:28]})",
+            f"Pymes y Comercios Locales",
+            f"Proyectos e Instalaciones Corporativas",
+        ]
+        for d in defaults:
+            if len(candidatos) >= 3:
+                break
+            candidatos.append(d)
+
+    frentes = []
+    for idx, c_nom in enumerate(candidatos[:4]):
+        es_b2b = cli_tipo in ("empresas_b2b", "ambos") or mod_ent == "servicio_en_sitio"
+        kws = f"{c_nom}, empresas, oficinas, negocios" if es_b2b else f"{c_nom}, comercios, clientes"
+        ticket = "$8,000 - $35,000 MXN" if mod_ent == "servicio_en_sitio" else "$2,500 - $12,000 MXN"
+        angulo = (
+            f"Ofrecer diagnóstico o cotización de {c_nom} con {nombre_sitio}, resaltando soporte profesional y respuesta rápida."
+        )
+        frentes.append({
+            "nombre_frente": c_nom[:58],
+            "keywords_busqueda": kws[:120],
+            "ticket_estimado": ticket,
+            "angulo_andrea": angulo[:240],
+        })
+    return frentes
+
+
 def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
     t_inicio = time.time()
     es_segura, url_norm, err_ssrf = _validar_url_ssrf_segura(raw_url)
@@ -1072,16 +1181,19 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
         return 400, {"ok": False, "error": f"No se pudo conectar al sitio web ({str(e_net)[:90]})."}
 
     info_main = _limpiar_html_a_texto_estructurado(html_principal)
+    sitio_es = _sitio_principal_es_espanol(html_principal, info_main)
     parsed_base = urllib.parse.urlparse(final_url)
     host_base = (parsed_base.hostname or "").lower()
 
-    # Detectar hasta 2 enlaces internos relevantes (servicios, precios, catálogo, nosotros)
+    # Detectar enlaces internos relevantes priorizando rutas en español cuando el sitio está en español
     subpaginas_texto = []
-    patron_internos = re.compile(
-        r"(servicio|service|precio|pricing|plan|catalogo|producto|shop|tienda|nosotros|about|solucion|red|instalacion|cotiza|paquete)",
+    patron_es = re.compile(
+        r"(servicios|servicio|nosotros|soluciones|productos|catalogo|redes|cctv|soporte|telefonia|poliza|aspel|asesoria|capacitacion|instalacion|cotiza|paquete)",
         flags=re.I,
     )
-    enlaces_candidatos = []
+    patron_en = re.compile(r"(service|pricing|plan|product|shop|about)", flags=re.I)
+    enlaces_es = []
+    enlaces_otros = []
     for m_a in re.finditer(r'<a\b[^>]+href\s*=\s*["\']([^"\'#]+)["\']', html_principal, flags=re.I):
         href = m_a.group(1).strip()
         if not href or href.lower().startswith(("mailto:", "tel:", "javascript:", "whatsapp:")):
@@ -1092,14 +1204,22 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
             continue
         if abs_link.rstrip("/") == final_url.rstrip("/"):
             continue
-        if patron_internos.search(p_link.path or ""):
-            if abs_link not in enlaces_candidatos:
-                enlaces_candidatos.append(abs_link)
-        if len(enlaces_candidatos) >= 2:
+        p_path = p_link.path or ""
+        if sitio_es and re.match(r"^/(services|about|home)/?$", p_path, flags=re.I):
+            continue
+        if patron_es.search(p_path):
+            if abs_link not in enlaces_es:
+                enlaces_es.append(abs_link)
+        elif patron_en.search(p_path):
+            if abs_link not in enlaces_otros:
+                enlaces_otros.append(abs_link)
+        if len(enlaces_es) >= 6:
             break
 
-    for sub_url in enlaces_candidatos[:2]:
-        if (time.time() - t_inicio) >= 6.8:
+    enlaces_candidatos = (enlaces_es + enlaces_otros)[:6]
+
+    for sub_url in enlaces_candidatos:
+        if len(subpaginas_texto) >= 3 or (time.time() - t_inicio) >= 7.0:
             break
         ok_sub, sub_norm, _ = _validar_url_ssrf_segura(sub_url)
         if not ok_sub:
@@ -1109,13 +1229,18 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
             with safe_opener.open(req_sub, timeout=2.0) as resp_sub:
                 sub_html = _leer_respuesta_html_segura(resp_sub, 220 * 1024)
                 info_sub = _limpiar_html_a_texto_estructurado(sub_html)
+                if _es_subpagina_plantilla_ingles(sub_norm, info_sub, sitio_es):
+                    continue
                 if info_sub["texto"]:
                     subpaginas_texto.append(
-                        f"[Subpágina {sub_norm}]: Encabezados: {' | '.join(info_sub['headings'][:6])}. Texto: {info_sub['texto'][:1500]}"
+                        f"[Subpágina {sub_norm}]: Encabezados: {' | '.join(info_sub['headings'][:6])}. Texto: {info_sub['texto'][:1200]}"
                     )
                 for pr in info_sub["precios"]:
                     if pr not in info_main["precios"]:
                         info_main["precios"].append(pr)
+                for hd in info_sub["headings"]:
+                    if hd not in info_main["headings"] and len(info_main["headings"]) < 24:
+                        info_main["headings"].append(hd)
         except Exception:
             continue
 
@@ -1127,17 +1252,20 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
         info_main.get("og_site")
         or (info_main.get("title") or "").split("|")[0].split("—")[0].split("-")[0].strip()
         or host_base.replace("www.", "").split(".")[0].capitalize()
-    )[:60]
+    )
+    if len(nombre_sitio.strip(" .-")) < 2:
+        nombre_sitio = host_base.replace("www.", "").split(".")[0].upper()
+    nombre_sitio = nombre_sitio[:60]
 
     contexto_consolidado = (
         f"URL: {final_url}\n"
         f"Nombre detectado: {nombre_sitio}\n"
         f"Título: {info_main.get('title')}\n"
         f"Descripción Meta: {info_main.get('meta_desc')}\n"
-        f"Encabezados principales: {' | '.join(info_main.get('headings', [])[:12])}\n"
+        f"Encabezados principales: {' | '.join(info_main.get('headings', [])[:14])}\n"
         f"Precios detectados: {', '.join(info_main.get('precios', [])[:10]) or 'Cotización personalizada'}\n"
-        f"Contenido página principal: {info_main.get('texto', '')[:2800]}\n"
-        + ("\n".join(subpaginas_texto)[:1800] if subpaginas_texto else "")
+        f"Contenido página principal: {info_main.get('texto', '')[:2600]}\n"
+        + ("\n".join(subpaginas_texto)[:2200] if subpaginas_texto else "")
     )
 
     # Heuristic fallback por si Gemini agota presupuesto de 12s
@@ -1157,6 +1285,9 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
             "servicio tecnico",
             "corporativo",
             "proyectos",
+            "aspel",
+            "poliza",
+            "capacitacion",
         )
     )
     es_personalizado = any(
@@ -1177,7 +1308,7 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
 
     desc_base = (
         info_main.get("meta_desc")
-        or " | ".join(info_main.get("headings", [])[:3])
+        or " | ".join(info_main.get("headings", [])[:4])
         or info_main.get("title")
         or nombre_sitio
     ).strip()
@@ -1193,7 +1324,7 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
     else:
         descripcion_fallback = (desc_base or nombre_sitio)[:340]
 
-    headings_limpios = [h for h in info_main.get("headings", []) if len(h) >= 6][:4]
+    headings_limpios = [h for h in info_main.get("headings", []) if len(h) >= 6][:6]
     beneficios_fallback = (
         headings_limpios[:3]
         if len(headings_limpios) >= 3
@@ -1215,6 +1346,13 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
     )[:2400]
 
     titular_fallback = (info_main.get("headings", [nombre_sitio])[0] if info_main.get("headings") else nombre_sitio).upper()[:46]
+    frentes_fallback = _construir_frentes_fallback(
+        nombre_sitio,
+        info_main.get("headings", []),
+        descripcion_fallback,
+        cli_fallback,
+        mod_fallback,
+    )
 
     resultado_base = {
         "ok": True,
@@ -1229,6 +1367,7 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
         "logo_data_url": logo_data_url,
         "titular_anuncio": titular_fallback,
         "beneficios_clave": beneficios_fallback,
+        "frentes_caza": frentes_fallback,
     }
 
     llaves = obtener_llaves_ia_backend()
@@ -1237,17 +1376,22 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
 
     prompt_web = (
         "Eres un Analista Comercial Senior de BLITZR. Analiza el contenido extraído del sitio web del usuario "
-        "y sintetiza toda su oferta comercial para configurar automáticamente su embudo de ventas y su agente de WhatsApp Andrea IA.\n\n"
+        "y sintetiza toda su oferta comercial en ESPAÑOL para configurar automáticamente su embudo de ventas, su agente Andrea IA y sus frentes de prospección.\n\n"
         f"DATOS EXTRAÍDOS DEL SITIO WEB:\n{contexto_consolidado}\n\n"
         "REGLAS ESTRICTAS:\n"
-        "1. 'descripcion_idea': Resumen comercial claro y natural en 2 a 3 líneas (máx 320 caracteres) de qué ofrece la empresa, SIN verbos en primera persona al inicio (NO empieces con 'Somos', 'Vendemos', 'Hacemos'; empieza directo con el servicio o producto, ej. 'Instalación y mantenimiento de redes corporativas, cableado estructurado y WiFi empresarial...').\n"
-        "2. 'catalogo_andrea': Base de conocimiento estructurada para que la IA Andrea responda en WhatsApp: incluye lista de servicios/productos detectados, precios o paquetes si aparecen, forma de trabajo y las 3 preguntas clave que Andrea debe hacer para cotizar o cerrar.\n"
+        "1. 'descripcion_idea': Resumen comercial claro y natural en español en 2 a 3 líneas (máx 320 caracteres) de qué ofrece la empresa, SIN verbos en primera persona al inicio (NO empieces con 'Somos', 'Vendemos', 'Hacemos'; empieza directo con el servicio o producto).\n"
+        "2. 'catalogo_andrea': Base de conocimiento estructurada en español para que la IA Andrea responda en WhatsApp: incluye lista de servicios/productos detectados, precios o paquetes si aparecen, forma de trabajo y las 3 preguntas clave que Andrea debe hacer para cotizar o cerrar.\n"
         "3. Clasifica con precisión:\n"
         "   - 'cliente_objetivo_tipo': 'consumidor_final' | 'empresas_b2b' | 'ambos'\n"
         "   - 'modalidad_entrega': 'catalogo_estandar' | 'personalizado_bajo_pedido' | 'servicio_en_sitio'\n"
         "   - 'volumen_compra': 'menudeo' | 'mayoreo' | 'proyecto'\n"
         "4. 'titular_anuncio': Titular publicitario de alto impacto en MAYÚSCULAS (máx 44 caracteres) para el póster 1080x1350.\n"
-        "5. 'beneficios_clave': Array de exactamente 3 puntos cortos y contundentes (máx 52 caracteres cada uno) con los diferenciadores o servicios clave.\n\n"
+        "5. 'beneficios_clave': Array de exactamente 3 puntos cortos y contundentes (máx 52 caracteres cada uno) con los diferenciadores o servicios clave.\n"
+        "6. 'frentes_caza': Array de 3 a 4 líneas de prospección B2B/comercial reales extraídas del sitio, cada una con:\n"
+        "   - 'nombre_frente': Nombre corto de la línea de negocio/servicio (ej. 'Redes y Cableado Estructurado', 'Cámaras CCTV Empresarial')\n"
+        "   - 'keywords_busqueda': 3 a 5 palabras clave en español para buscar prospectos en Google Maps/INEGI (ej. 'oficinas corporativas, clinicas, escuelas, despachos')\n"
+        "   - 'ticket_estimado': Rango estimado en MXN (ej. '$12,000 - $45,000 MXN')\n"
+        "   - 'angulo_andrea': Qué debe destacar Andrea al abrir conversación para este frente (máx 180 caracteres).\n\n"
         "Devuelve ÚNICAMENTE un objeto JSON válido (sin markdown) con estas llaves exactas:\n"
         "{\n"
         '  "nombre_negocio": "string",\n'
@@ -1257,7 +1401,8 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
         '  "modalidad_entrega": "catalogo_estandar" | "personalizado_bajo_pedido" | "servicio_en_sitio",\n'
         '  "volumen_compra": "menudeo" | "mayoreo" | "proyecto",\n'
         '  "titular_anuncio": "string",\n'
-        '  "beneficios_clave": ["beneficio 1", "beneficio 2", "beneficio 3"]\n'
+        '  "beneficios_clave": ["beneficio 1", "beneficio 2", "beneficio 3"],\n'
+        '  "frentes_caza": [{"nombre_frente": "string", "keywords_busqueda": "string", "ticket_estimado": "string", "angulo_andrea": "string"}]\n'
         "}"
     )
 
@@ -1265,7 +1410,7 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
         "contents": [{"role": "user", "parts": [{"text": prompt_web}]}],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 900,
+            "maxOutputTokens": 1200,
             "responseMimeType": "application/json",
         },
     }
@@ -1309,6 +1454,26 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
                     while len(bens_clean) < 3:
                         bens_clean.append(beneficios_fallback[len(bens_clean) % len(beneficios_fallback)])
 
+                    frentes_raw = parsed_ia.get("frentes_caza")
+                    frentes_clean = []
+                    if isinstance(frentes_raw, list):
+                        for fr in frentes_raw[:4]:
+                            if not isinstance(fr, dict):
+                                continue
+                            nf = str(fr.get("nombre_frente") or "").strip()[:60]
+                            kf = str(fr.get("keywords_busqueda") or "").strip()[:140]
+                            tf = str(fr.get("ticket_estimado") or "").strip()[:60]
+                            af = str(fr.get("angulo_andrea") or "").strip()[:240]
+                            if nf and kf:
+                                frentes_clean.append({
+                                    "nombre_frente": nf,
+                                    "keywords_busqueda": kf,
+                                    "ticket_estimado": tf or "$5,000 - $25,000 MXN",
+                                    "angulo_andrea": af or f"Ofrecer solución en {nf} para su empresa.",
+                                })
+                    if not frentes_clean:
+                        frentes_clean = frentes_fallback
+
                     desc_ia = str(parsed_ia.get("descripcion_idea") or descripcion_fallback).strip()
                     cat_ia = str(parsed_ia.get("catalogo_andrea") or catalogo_fallback).strip()[:2400]
                     tit_ia = str(parsed_ia.get("titular_anuncio") or titular_fallback).strip().upper()[:48]
@@ -1327,6 +1492,7 @@ def extraer_conocimiento_web_ia(raw_url: str) -> tuple[int, dict]:
                         "logo_data_url": logo_data_url,
                         "titular_anuncio": tit_ia,
                         "beneficios_clave": bens_clean,
+                        "frentes_caza": frentes_clean,
                     }
             except Exception:
                 continue
@@ -1343,7 +1509,9 @@ def obtener_nicho_bd(cliente_id: str = "mallas_tlaxcalli") -> dict:
                codigo_scian_inegi, keywords_busqueda, oferta_gancho,
                catalogo_y_reglas, system_prompt, saludos_frio_json,
                municipios_json, protegido, activo, fecha_creacion,
-               COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}')
+               COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}'),
+               COALESCE(zonas_objetivo, 'CDMX y Area Metropolitana'),
+               COALESCE(flujo_continuo_activo, 1)
         FROM perfiles_nicho
         WHERE LOWER(cliente_id) = LOWER(?)
         LIMIT 1
@@ -1355,7 +1523,9 @@ def obtener_nicho_bd(cliente_id: str = "mallas_tlaxcalli") -> dict:
                    codigo_scian_inegi, keywords_busqueda, oferta_gancho,
                    catalogo_y_reglas, system_prompt, saludos_frio_json,
                    municipios_json, protegido, activo, fecha_creacion,
-                   COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}')
+                   COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}'),
+                   COALESCE(zonas_objetivo, 'CDMX y Area Metropolitana'),
+                   COALESCE(flujo_continuo_activo, 1)
             FROM perfiles_nicho
             WHERE cliente_id = 'mallas_tlaxcalli'
             LIMIT 1
@@ -1376,7 +1546,9 @@ def obtener_nicho_bd(cliente_id: str = "mallas_tlaxcalli") -> dict:
             "protegido": True,
             "activo": True,
             "modelo_negocio": "DISTRIBUIDOR_B2B",
-            "diagnostico_ia": {}
+            "diagnostico_ia": {},
+            "zonas_objetivo": "CDMX y Area Metropolitana",
+            "flujo_continuo_activo": 1,
         }
     try:
         munis = json.loads(row[10] or "[]")
@@ -1403,7 +1575,9 @@ def obtener_nicho_bd(cliente_id: str = "mallas_tlaxcalli") -> dict:
         "activo": bool(row[12]),
         "fecha_creacion": row[13] or "",
         "modelo_negocio": "DISTRIBUIDOR_B2B" if es_tlax else normalizar_modelo_negocio(row[14]),
-        "diagnostico_ia": diag_obj
+        "diagnostico_ia": diag_obj,
+        "zonas_objetivo": row[16] if len(row) > 16 and row[16] else "CDMX y Area Metropolitana",
+        "flujo_continuo_activo": int(row[17]) if len(row) > 17 and row[17] is not None else 1,
     }
 
 
@@ -1463,7 +1637,9 @@ def obtener_lista_nichos_con_metricas() -> list:
         SELECT cliente_id, nombre_negocio, nombre_agente, giro_objetivo,
                codigo_scian_inegi, keywords_busqueda, oferta_gancho,
                catalogo_y_reglas, protegido, activo, fecha_creacion,
-               COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}')
+               COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}'),
+               COALESCE(zonas_objetivo, 'CDMX y Area Metropolitana'),
+               COALESCE(flujo_continuo_activo, 1)
         FROM perfiles_nicho
         ORDER BY protegido DESC, fecha_creacion ASC
     """)
@@ -1492,6 +1668,8 @@ def obtener_lista_nichos_con_metricas() -> list:
             "fecha_creacion": r[10] or "",
             "modelo_negocio": "DISTRIBUIDOR_B2B" if es_tlax else normalizar_modelo_negocio(r[11]),
             "diagnostico_ia": diag_obj,
+            "zonas_objetivo": r[13] if len(r) > 13 and r[13] else "CDMX y Area Metropolitana",
+            "flujo_continuo_activo": int(r[14]) if len(r) > 14 and r[14] is not None else 1,
             "total_prospectos": conteo_prosp.get(cid.lower(), 0),
             "enviados_wa": conteo_bit.get(cid.lower(), 0)
         })
@@ -1547,7 +1725,9 @@ def obtener_nicho_por_email(email_raw: str) -> dict | None:
                codigo_scian_inegi, keywords_busqueda, oferta_gancho,
                catalogo_y_reglas, system_prompt, protegido, activo,
                fecha_creacion, COALESCE(owner_email, ''),
-               COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}')
+               COALESCE(modelo_negocio, 'DISTRIBUIDOR_B2B'), COALESCE(diagnostico_ia, '{}'),
+               COALESCE(zonas_objetivo, 'CDMX y Area Metropolitana'),
+               COALESCE(flujo_continuo_activo, 1)
         FROM perfiles_nicho
         WHERE LOWER(TRIM(COALESCE(owner_email, ''))) = ?
           AND LOWER(cliente_id) != 'mallas_tlaxcalli'
@@ -1580,6 +1760,8 @@ def obtener_nicho_por_email(email_raw: str) -> dict | None:
         "owner_email": row[12] or email_norm,
         "modelo_negocio": normalizar_modelo_negocio(row[13]),
         "diagnostico_ia": diag_obj,
+        "zonas_objetivo": row[15] if len(row) > 15 and row[15] else "CDMX y Area Metropolitana",
+        "flujo_continuo_activo": int(row[16]) if len(row) > 16 and row[16] is not None else 1,
         "es_mallas": False,
         "tiene_perfil": True,
         "total_prospectos": m_info.get("total_prospectos", 0),
@@ -1807,6 +1989,8 @@ def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict
 
     system_prompt_custom = str(data.get("system_prompt") or "").strip()[:2500]
     diag_json_str = json.dumps(diag_obj if isinstance(diag_obj, dict) else {}, ensure_ascii=False)
+    zonas_obj = str(data.get("zonas_objetivo") or (existente or {}).get("zonas_objetivo") or "CDMX y Area Metropolitana").strip()[:220]
+    flujo_cont = int(data.get("flujo_continuo_activo") if data.get("flujo_continuo_activo") is not None else ((existente or {}).get("flujo_continuo_activo") if (existente or {}).get("flujo_continuo_activo") is not None else 1))
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -1816,8 +2000,8 @@ def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict
             codigo_scian_inegi, keywords_busqueda, oferta_gancho,
             catalogo_y_reglas, system_prompt, saludos_frio_json,
             municipios_json, protegido, activo, fecha_creacion, owner_email,
-            modelo_negocio, diagnostico_ia
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', 0, 1, datetime('now'), ?, ?, ?)
+            modelo_negocio, diagnostico_ia, zonas_objetivo, flujo_continuo_activo
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', 0, 1, datetime('now'), ?, ?, ?, ?, ?)
         ON CONFLICT(cliente_id) DO UPDATE SET
             nombre_negocio = excluded.nombre_negocio,
             nombre_agente = excluded.nombre_agente,
@@ -1830,14 +2014,50 @@ def guardar_nicho_por_email(owner_email_raw: str, data: dict) -> tuple[int, dict
             owner_email = excluded.owner_email,
             modelo_negocio = excluded.modelo_negocio,
             diagnostico_ia = excluded.diagnostico_ia,
+            zonas_objetivo = excluded.zonas_objetivo,
+            flujo_continuo_activo = excluded.flujo_continuo_activo,
             activo = 1
         WHERE perfiles_nicho.protegido = 0
     """, (
         cid, nombre_negocio, nombre_agente, giro_objetivo,
         codigo_scian, keywords, oferta_gancho,
         catalogo_reglas, system_prompt_custom, email_norm,
-        modelo_negocio, diag_json_str
+        modelo_negocio, diag_json_str, zonas_obj, flujo_cont
     ))
+
+    # Persistir frentes_caza iniciales para tenants != mallas_tlaxcalli
+    frentes_input = data.get("frentes_caza")
+    if not isinstance(frentes_input, list) and isinstance(diag_obj, dict):
+        frentes_input = diag_obj.get("frentes_caza")
+    cur.execute("SELECT COUNT(*) FROM frentes_caza WHERE LOWER(id_cliente_agencia) = LOWER(?)", (cid,))
+    cnt_frentes = cur.fetchone()[0]
+    if isinstance(frentes_input, list) and len(frentes_input) > 0:
+        if cnt_frentes == 0 or bool(data.get("reemplazar_frentes")):
+            if bool(data.get("reemplazar_frentes")):
+                cur.execute("DELETE FROM frentes_caza WHERE LOWER(id_cliente_agencia) = LOWER(?)", (cid,))
+            for fr in frentes_input[:6]:
+                if not isinstance(fr, dict):
+                    continue
+                nf = str(fr.get("nombre_frente") or "").strip()[:80]
+                kf = str(fr.get("keywords_busqueda") or keywords).strip()[:160]
+                tf = str(fr.get("ticket_estimado") or "").strip()[:60]
+                af = str(fr.get("angulo_andrea") or "").strip()[:260]
+                if nf:
+                    cur.execute(
+                        "INSERT INTO frentes_caza (id_cliente_agencia, nombre_frente, keywords_busqueda, ticket_estimado, angulo_andrea, activo) VALUES (?, ?, ?, ?, ?, 1)",
+                        (cid, nf, kf, tf, af),
+                    )
+    elif cnt_frentes == 0 and modelo_negocio in ("DISTRIBUIDOR_B2B", "SERVICIOS_B2B"):
+        for nf_def, kf_def in [
+            (f"Empresas y Oficinas ({giro_objetivo[:30]})", keywords or giro_objetivo),
+            (f"Comercios y Pymes Locales", f"comercios, negocios, {keywords or giro_objetivo}"),
+            (f"Proyectos / Instalaciones ({nombre_negocio[:24]})", f"oficinas, empresas, {giro_objetivo}"),
+        ]:
+            cur.execute(
+                "INSERT INTO frentes_caza (id_cliente_agencia, nombre_frente, keywords_busqueda, ticket_estimado, angulo_andrea, activo) VALUES (?, ?, ?, ?, ?, 1)",
+                (cid, nf_def[:75], kf_def[:140], "Cotización por alcance", f"Presentar {nf_def} de {nombre_negocio} y ofrecer diagnóstico sin costo."),
+            )
+
     conn.commit()
     conn.close()
 
@@ -2330,7 +2550,34 @@ def transcribir_audio_gemini(audio_b64: str, mimetype: str = "audio/ogg") -> str
     return ""
 
 
-def construir_system_prompt_nicho(nicho: dict, historial: list) -> str:
+def _buscar_contexto_frente_prospecto(session_id: str, cid: str) -> tuple[str, str]:
+    """Devuelve (frente_nombre, angulo_contacto) si el prospecto tiene frente asignado y cid != mallas_tlaxcalli."""
+    if not cid or cid == "mallas_tlaxcalli":
+        return "", ""
+    digs = re.sub(r"\D", "", str(session_id or ""))
+    if len(digs) < 10:
+        return "", ""
+    ult10 = digs[-10:]
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COALESCE(frente_nombre, ''), COALESCE(angulo_contacto, '')
+            FROM prospectos_cazador
+            WHERE LOWER(COALESCE(id_cliente_agencia, '')) = LOWER(?)
+              AND telefono LIKE ?
+            ORDER BY id DESC LIMIT 1
+        """, (cid, f"%{ult10}"))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            return str(row[0] or "").strip(), str(row[1] or "").strip()
+    except Exception:
+        pass
+    return "", ""
+
+
+def construir_system_prompt_nicho(nicho: dict, historial: list, frente_nombre: str = "", angulo_contacto: str = "") -> str:
     cid = motor_m1.normalizar_cliente_id(nicho.get("cliente_id", "mallas_tlaxcalli"))
     if cid == "mallas_tlaxcalli":
         return cargar_system_prompt() + analizar_memoria_verificada_cliente(historial)
@@ -2343,6 +2590,10 @@ def construir_system_prompt_nicho(nicho: dict, historial: list) -> str:
     # Truncado seguro a máximo 2,500 caracteres para latencia óptima
     catalogo_truncado = str(nicho.get("catalogo_y_reglas") or "")[:2500]
     prompt_custom = str(nicho.get("system_prompt") or "").strip()
+    bloque_frente = ""
+    if angulo_contacto:
+        frente_lbl = f" ({frente_nombre})" if frente_nombre else ""
+        bloque_frente = f"\n\n## ÁNGULO DE CONTACTO DEL PROSPECTO{frente_lbl}\n{angulo_contacto}\n"
 
     if modelo_neg == "SERVICIOS_B2B":
         regla_cierre = (
@@ -2377,7 +2628,10 @@ def construir_system_prompt_nicho(nicho: dict, historial: list) -> str:
         f"3. Suelta un beneficio o precio a la vez (Escalera del Sí).\n"
         f"4. CAPACIDAD DE VOZ ACTIVA: Nunca digas que eres IA ni que no puedes mandar audios.\n"
         f"{regla_cierre}"
+        f"{bloque_frente}"
     )
+    if prompt_custom and bloque_frente:
+        return base + bloque_frente
     return base
 
 
@@ -2391,7 +2645,11 @@ def llamar_pool_ia_real(session_id: str, mensaje_usuario: str, incluir_voz: bool
     historial = SESIONES_CHAT[session_id]
     historial.append({"role": "user", "content": mensaje_usuario})
 
-    sys_prompt_completo = construir_system_prompt_nicho(nicho, historial)
+    if cid == "mallas_tlaxcalli":
+        sys_prompt_completo = construir_system_prompt_nicho(nicho, historial)
+    else:
+        f_nom, f_ang = _buscar_contexto_frente_prospecto(session_id, cid)
+        sys_prompt_completo = construir_system_prompt_nicho(nicho, historial, frente_nombre=f_nom, angulo_contacto=f_ang)
     llaves = obtener_llaves_ia_backend()
 
     contents = []
@@ -2688,7 +2946,7 @@ Devuelve contenido comercial atractivo, persuasivo y natural dividido con estos 
 COLA_MENSAJES_PAOLA = []
 
 
-def _mensaje_saliente_prospecto(pid: int, nombre: str, municipio: str, cliente_id: str = "mallas_tlaxcalli") -> str:
+def _mensaje_saliente_prospecto(pid: int, nombre: str, municipio: str, cliente_id: str = "mallas_tlaxcalli", angulo_contacto: str = "", frente_nombre: str = "") -> str:
     # Saludo dinámico según hora real en CDMX (UTC-6) + 6 variantes naturales anti-huella
     ahora_mx = datetime.now(timezone.utc) - timedelta(hours=6)
     hora_mx = ahora_mx.hour
@@ -2723,13 +2981,13 @@ def _mensaje_saliente_prospecto(pid: int, nombre: str, municipio: str, cliente_i
     nicho = obtener_nicho_bd(cid)
     nom_emp = nicho.get("nombre_negocio") or cid
     agente = nicho.get("nombre_agente") or "Andrea"
-    oferta = nicho.get("oferta_gancho") or "nuestra promoción especial"
+    oferta = str(angulo_contacto or "").strip() or (f"{frente_nombre}: {nicho.get('oferta_gancho') or ''}".strip(": ") if frente_nombre else (nicho.get("oferta_gancho") or "nuestra promoción especial"))
     mod_neg = normalizar_modelo_negocio(nicho.get("modelo_negocio", "DISTRIBUIDOR_B2B"))
     if mod_neg == "SERVICIOS_B2B":
         saludos_serv = [
-            f"{saludo_hora}, disculpe la molestia 👋 Le saluda {agente} de *{nom_emp}*. Nos especializamos en servicios e instalaciones técnicas para empresas en *{mun}* y queríamos ponernos a las órdenes de {ref_negocio} con {oferta}. ¿Les gustaría agendar una revisión o cotización sin compromiso?",
+            f"{saludo_hora}, disculpe la molestia 👋 Le saluda {agente} de *{nom_emp}*. Nos especializamos en servicios e instalaciones técnicas para empresas en *{mun}* y queríamos ponernos a las órdenes de {ref_negocio}: {oferta}. ¿Les gustaría agendar una revisión o cotización sin compromiso?",
             f"Qué tal, muy {saludo_hora.lower()} 👋 Le escribe {agente} del área de proyectos de *{nom_emp}*. Andamos atendiendo empresas y comercios en *{mun}* y dejamos nuestro contacto para {ref_negocio} por si requieren apoyo en {oferta}. Si gusta le comparto nuestra ficha técnica por aquí.",
-            f"{saludo_hora}, un gusto saludarle hasta *{mun}* 👋 Soy {agente} de *{nom_emp}*. Apoyamos a organizaciones como {ref_negocio} con soluciones profesionales en {oferta}. ¿Tienen algún requerimiento o proyecto próximo que podamos cotizarles sin costo?",
+            f"{saludo_hora}, un gusto saludarle hasta *{mun}* 👋 Soy {agente} de *{nom_emp}*. Apoyamos a organizaciones como {ref_negocio} con soluciones profesionales ({oferta}). ¿Tienen algún requerimiento o proyecto próximo que podamos cotizarles sin costo?",
             f"Hola, {saludo_hora.lower()} 👋 Le saluda {agente} de *{nom_emp}*. Esta semana nuestro equipo técnico tiene agenda abierta en *{mun}* para visitas y diagnósticos en {ref_negocio} ({oferta}). ¿Le paso los detalles brevemente por este medio?"
         ]
         return saludos_serv[pid % len(saludos_serv)]
@@ -2806,13 +3064,15 @@ def obtener_candidato_envio_50(cliente_id: str = "mallas_tlaxcalli", forzar: boo
         }
 
     cur.execute("""
-        SELECT id, nombre, telefono, municipio, direccion, google_maps_url, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')
+        SELECT id, nombre, telefono, municipio, direccion, google_maps_url,
+               COALESCE(id_cliente_agencia, 'mallas_tlaxcalli'),
+               COALESCE(frente_nombre, ''), COALESCE(angulo_contacto, '')
         FROM prospectos_cazador
         WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)
-          AND (estatus_contacto_wa IS NULL OR estatus_contacto_wa IN ('PENDIENTE', 'PENDIENTE_ENVIO', 'VERIFICADO_WA', ''))
+          AND (estatus_contacto_wa IS NULL OR estatus_contacto_wa IN ('PENDIENTE', 'PENDIENTE_ENVIO', 'VERIFICADO_WA', 'WHATSAPP_CONFIRMADO', ''))
           AND (estatus_clasificacion LIKE 'APROBADO%')
           AND (estatus_maps IS NULL OR estatus_maps != 'CERRADA_DESCARTADA')
-        ORDER BY CASE WHEN estatus_contacto_wa = 'VERIFICADO_WA' THEN 0 ELSE 1 END, id ASC
+        ORDER BY CASE WHEN estatus_contacto_wa IN ('VERIFICADO_WA', 'WHATSAPP_CONFIRMADO') THEN 0 ELSE 1 END, id ASC
         LIMIT 1
     """, (cid_filtro,))
     row = cur.fetchone()
@@ -2827,9 +3087,15 @@ def obtener_candidato_envio_50(cliente_id: str = "mallas_tlaxcalli", forzar: boo
             "id_cliente_agencia": cid_filtro
         }
 
-    pid, nombre, telefono, municipio, direccion, maps_url, cid_raw = row
+    pid, nombre, telefono, municipio, direccion, maps_url, cid_raw, frente_nom, angulo_c = row
     cid = motor_m1.normalizar_cliente_id(cid_raw or cid_filtro)
-    mensaje_wa = _mensaje_saliente_prospecto(pid, nombre, municipio, cliente_id=cid)
+    # Fast-Path Legacy estricto para mallas_tlaxcalli
+    if cid == "mallas_tlaxcalli":
+        mensaje_wa = _mensaje_saliente_prospecto(pid, nombre, municipio, cliente_id="mallas_tlaxcalli")
+    else:
+        mensaje_wa = _mensaje_saliente_prospecto(
+            pid, nombre, municipio, cliente_id=cid, angulo_contacto=angulo_c, frente_nombre=frente_nom
+        )
     return {
         "ok": True,
         "id": pid,
@@ -4001,6 +4267,226 @@ def obtener_datos_completos_bd(id_cliente: str) -> dict:
     }
 
 
+def _limpiar_cache_frentes_estado(cid: str) -> dict:
+    cid_norm = motor_m1.normalizar_cliente_id(cid)
+    if cid_norm == "mallas_tlaxcalli":
+        return {
+            "ok": True,
+            "es_mallas": True,
+            "cliente_id": "mallas_tlaxcalli",
+            "flujo_continuo_activo": 0,
+            "zonas_objetivo": "",
+            "frentes": [],
+            "progreso": [],
+            "metricas": {"total": 0, "pendientes_y_confirmados": 0, "wa_confirmados": 0, "sin_wa": 0},
+        }
+    nicho = obtener_nicho_bd(cid_norm)
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, nombre_frente, keywords_busqueda, ticket_estimado, angulo_andrea, activo, creado_en
+        FROM frentes_caza
+        WHERE LOWER(id_cliente_agencia) = LOWER(?)
+        ORDER BY id ASC
+    """, (cid_norm,))
+    frentes = [
+        {
+            "id": r[0],
+            "nombre_frente": r[1],
+            "keywords_busqueda": r[2] or "",
+            "ticket_estimado": r[3] or "",
+            "angulo_andrea": r[4] or "",
+            "activo": int(r[5]) if r[5] is not None else 1,
+            "creado_en": r[6] or "",
+        }
+        for r in cur.fetchall()
+    ]
+    cur.execute("""
+        SELECT frente_id, zona, fuente, ultimo_offset, actualizado_en
+        FROM progreso_extraccion
+        WHERE LOWER(id_cliente_agencia) = LOWER(?)
+        ORDER BY actualizado_en DESC LIMIT 20
+    """, (cid_norm,))
+    progreso = [
+        {
+            "frente_id": r[0],
+            "zona": r[1],
+            "fuente": r[2],
+            "ultimo_offset": r[3],
+            "actualizado_en": r[4] or "",
+        }
+        for r in cur.fetchall()
+    ]
+    cur.execute("""
+        SELECT COUNT(*),
+               SUM(CASE WHEN estatus_contacto_wa IS NULL OR estatus_contacto_wa IN ('', 'PENDIENTE', 'PENDIENTE_ENVIO', 'VERIFICADO_WA', 'WHATSAPP_CONFIRMADO') THEN 1 ELSE 0 END),
+               SUM(CASE WHEN estatus_contacto_wa IN ('VERIFICADO_WA', 'WHATSAPP_CONFIRMADO', 'CONTACTADO_WA') THEN 1 ELSE 0 END),
+               SUM(CASE WHEN estatus_contacto_wa = 'SIN_WHATSAPP' THEN 1 ELSE 0 END)
+        FROM prospectos_cazador
+        WHERE LOWER(COALESCE(id_cliente_agencia, '')) = LOWER(?)
+          AND estatus_clasificacion LIKE 'APROBADO%'
+    """, (cid_norm,))
+    m_row = cur.fetchone()
+    conn.close()
+    return {
+        "ok": True,
+        "es_mallas": False,
+        "cliente_id": cid_norm,
+        "flujo_continuo_activo": int(nicho.get("flujo_continuo_activo", 1)),
+        "zonas_objetivo": nicho.get("zonas_objetivo") or "CDMX y Area Metropolitana",
+        "frentes": frentes,
+        "progreso": progreso,
+        "metricas": {
+            "total": int(m_row[0] or 0) if m_row else 0,
+            "pendientes_y_confirmados": int(m_row[1] or 0) if m_row else 0,
+            "wa_confirmados": int(m_row[2] or 0) if m_row else 0,
+            "sin_wa": int(m_row[3] or 0) if m_row else 0,
+        },
+    }
+
+
+def _obtener_y_avanzar_offset(cid: str, frente_id: int, zona: str, fuente: str, paso: int = 10) -> int:
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT ultimo_offset FROM progreso_extraccion
+        WHERE LOWER(id_cliente_agencia) = LOWER(?) AND frente_id = ? AND LOWER(zona) = LOWER(?) AND UPPER(fuente) = UPPER(?)
+        LIMIT 1
+    """, (cid, int(frente_id or 0), zona.strip(), fuente.strip()))
+    row = cur.fetchone()
+    offset_actual = int(row[0]) if row and row[0] is not None else 0
+    nuevo_offset = offset_actual + paso
+    cur.execute("""
+        INSERT INTO progreso_extraccion (id_cliente_agencia, frente_id, zona, fuente, ultimo_offset, actualizado_en)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id_cliente_agencia, frente_id, zona, fuente) DO UPDATE SET
+            ultimo_offset = excluded.ultimo_offset,
+            actualizado_en = datetime('now')
+    """, (cid, int(frente_id or 0), zona.strip(), fuente.upper(), nuevo_offset))
+    conn.commit()
+    conn.close()
+    return offset_actual
+
+
+def _disparar_validacion_wa_batch_async(cid: str, min_id_antes: int):
+    def _run_val():
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT id, telefono FROM prospectos_cazador
+                WHERE LOWER(COALESCE(id_cliente_agencia, '')) = LOWER(?)
+                  AND id > ?
+                  AND (estatus_contacto_wa IS NULL OR estatus_contacto_wa IN ('', 'PENDIENTE', 'PENDIENTE_ENVIO'))
+                ORDER BY id DESC LIMIT 25
+            """, (cid, min_id_antes))
+            rows = [{"id": r[0], "telefono": r[1]} for r in cur.fetchall() if r[1]]
+            conn.close()
+            if not rows:
+                return
+            _llamar_bridge_wa("/verificar_lote_wa", {"cliente_id": cid, "prospectos": rows}, timeout=25)
+        except Exception:
+            pass
+    threading.Thread(target=_run_val, daemon=True).start()
+
+
+def auto_abastecer_cliente(cid_raw: str, forzar: bool = False, frente_id_req: int | None = None, zona_override: str = "", fuente_preferida: str = "APIFY") -> dict:
+    cid = motor_m1.normalizar_cliente_id(cid_raw or "")
+    # CANDADO ESTRICTO FAST-PATH LEGACY: nunca tocar mallas_tlaxcalli
+    if not cid or cid == "mallas_tlaxcalli":
+        return {
+            "ok": True,
+            "fast_path_legacy": True,
+            "omitido": True,
+            "cliente_id": "mallas_tlaxcalli",
+            "motivo": "mallas_tlaxcalli usa Fast-Path Legacy protegido",
+        }
+
+    nicho = obtener_nicho_bd(cid)
+    modelo = normalizar_modelo_negocio(nicho.get("modelo_negocio", "DISTRIBUIDOR_B2B"))
+    if modelo not in ("DISTRIBUIDOR_B2B", "SERVICIOS_B2B"):
+        return {"ok": True, "omitido": True, "cliente_id": cid, "motivo": "MODO_B2C_INBOUND_ONLY"}
+
+    flujo_activo = int(nicho.get("flujo_continuo_activo", 1))
+    if flujo_activo == 0 and not forzar:
+        return {"ok": True, "omitido": True, "cliente_id": cid, "motivo": "FLUJO_CONTINUO_PAUSADO"}
+
+    estado = _limpiar_cache_frentes_estado(cid)
+    pendientes_actuales = estado["metricas"]["pendientes_y_confirmados"]
+    if pendientes_actuales >= 30 and not forzar:
+        return {
+            "ok": True,
+            "omitido": True,
+            "cliente_id": cid,
+            "motivo": "BUFFER_SUFICIENTE",
+            "pendientes_actuales": pendientes_actuales,
+        }
+
+    frentes_activos = [f for f in estado["frentes"] if int(f.get("activo", 1)) == 1]
+    frente_sel = None
+    if frente_id_req is not None:
+        frente_sel = next((f for f in estado["frentes"] if int(f["id"]) == int(frente_id_req)), None)
+    if not frente_sel and frentes_activos:
+        idx_rot = int(time.time() // 60) % len(frentes_activos)
+        frente_sel = frentes_activos[idx_rot]
+
+    frente_id = int(frente_sel["id"]) if frente_sel else 0
+    frente_nombre = frente_sel["nombre_frente"] if frente_sel else (nicho.get("giro_objetivo") or "Prospección General")
+    angulo_contacto = frente_sel.get("angulo_andrea") if frente_sel else ""
+    kws_src = (frente_sel.get("keywords_busqueda") if frente_sel else "") or nicho.get("keywords_busqueda") or nicho.get("giro_objetivo") or "empresas"
+    kw_list = [k.strip() for k in re.split(r"[,;\n]+", kws_src) if k.strip()]
+    kw_principal = kw_list[0] if kw_list else "empresas"
+
+    zonas_raw = [z.strip() for z in re.split(r"[,\n;]+", str(zona_override or nicho.get("zonas_objetivo") or "CDMX")) if z.strip()]
+    zona_sel = zonas_raw[int(time.time() // 120) % len(zonas_raw)] if zonas_raw else "CDMX"
+
+    perfil = construir_perfil_motor_desde_nicho(cid)
+    perfil["cobertura_logistica"] = {"municipios_edomex_autorizados": [], "alcaldias_cdmx_autorizadas": [], "colonias_zonas_rojas": []}
+    env = motor_m1.cargar_env()
+
+    conn = sqlite3.connect(DB_PATH)
+    max_id_antes = conn.execute("SELECT COALESCE(MAX(id), 0) FROM prospectos_cazador").fetchone()[0]
+    conn.close()
+
+    fuente_usada = str(fuente_preferida or "APIFY").upper()
+    offset_actual = _obtener_offset_progreso(cid, frente_id, zona_sel, fuente_usada, paso=10)
+    nuevos = []
+    if fuente_usada == "APIFY" and env.get("APIFY_API_TOKEN"):
+        q_maps = f"{kw_principal} en {zona_sel}, Mexico"
+        nuevos = motor_m1.extraer_apify_google_maps(q_maps, 10, env.get("APIFY_API_TOKEN", ""), perfil=perfil)
+
+    if not nuevos and env.get("INEGI_DENUE_TOKEN"):
+        fuente_usada = "INEGI"
+        offset_inegi = _obtener_offset_progreso(cid, frente_id, zona_sel, "INEGI", paso=10)
+        nuevos = motor_m1.extraer_inegi_por_zona_dinamica(
+            kw_principal, zona_sel, 10, env.get("INEGI_DENUE_TOKEN", ""), reg_ini=max(1, offset_inegi + 1), perfil=perfil
+        )
+
+    for r in nuevos:
+        r["frente_nombre"] = frente_nombre
+        r["angulo_contacto"] = angulo_contacto
+        if not r.get("municipio"):
+            r["municipio"] = zona_sel
+
+    clasificados = [motor_m1.clasificar_negocio(r, perfil) for r in nuevos]
+    motor_m1.guardar_y_exportar(clasificados, cid)
+    _disparar_validacion_wa_batch_async(cid, max_id_antes)
+
+    bd_info = obtener_datos_completos_bd(cid)
+    return {
+        "ok": True,
+        "omitido": False,
+        "cliente_id": cid,
+        "frente_id": frente_id,
+        "frente_nombre": frente_nombre,
+        "zona": zona_sel,
+        "fuente": fuente_usada,
+        "offset": offset_actual,
+        "lote_extraido": len(nuevos),
+        "total_acumulado": len(bd_info["prospectos"]),
+    }
+
+
 # ==============================================================================
 # 5. SERVIDOR HTTP PÚBLICO BLINDADO (5 MÓDULOS COMPLETOS)
 # ==============================================================================
@@ -4302,6 +4788,17 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 "nicho_default": leer_config("nicho_activo_default", "mallas_tlaxcalli"),
                 "nichos": nichos
             })
+            return
+
+        if parsed.path == "/api/cazador/frentes":
+            qs = urllib.parse.parse_qs(parsed.query)
+            email_q = (qs.get("email", [""])[0] or "").strip().lower()
+            cid_q = (qs.get("cliente_id", [""])[0] or "").strip()
+            cid_target, nicho_ctx, es_mallas = resolver_contexto_tenant_request(email_q, cid_q)
+            if not cid_target or not nicho_ctx:
+                self._send_json({"ok": False, "error": "Primero configura tu negocio en 01 • IDEA."}, status=400)
+                return
+            self._send_json(_limpiar_cache_frentes_estado(cid_target))
             return
 
         if parsed.path == "/api/datos_seguros":
@@ -5107,8 +5604,99 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "texto": texto})
             return
 
+        if clean_path == "/api/cazador/frentes":
+            email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            cid_req = str(data.get("cliente_id") or "").strip()
+            cid, nicho_ctx, es_mallas = resolver_contexto_tenant_request(email_req, cid_req)
+            if not cid or not nicho_ctx:
+                self._send_json({"ok": False, "error": "Primero configura tu negocio en 01 • IDEA."}, status=400)
+                return
+            if es_mallas or cid == "mallas_tlaxcalli":
+                self._send_json({"ok": False, "error": "mallas_tlaxcalli está protegido en Fast-Path Legacy."}, status=403)
+                return
+
+            accion = str(data.get("accion") or "crear").strip().lower()
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+
+            if accion == "config":
+                zonas_n = str(data.get("zonas_objetivo") or nicho_ctx.get("zonas_objetivo") or "CDMX y Area Metropolitana").strip()[:220]
+                flujo_n = 1 if bool(data.get("flujo_continuo_activo", True)) else 0
+                cur.execute(
+                    "UPDATE perfiles_nicho SET zonas_objetivo = ?, flujo_continuo_activo = ? WHERE LOWER(cliente_id) = LOWER(?) AND protegido = 0",
+                    (zonas_n, flujo_n, cid),
+                )
+            elif accion == "toggle_frente":
+                fid = int(data.get("id") or 0)
+                act = 1 if bool(data.get("activo", True)) else 0
+                cur.execute(
+                    "UPDATE frentes_caza SET activo = ? WHERE id = ? AND LOWER(id_cliente_agencia) = LOWER(?)",
+                    (act, fid, cid),
+                )
+            elif accion == "eliminar":
+                fid = int(data.get("id") or 0)
+                cur.execute(
+                    "DELETE FROM frentes_caza WHERE id = ? AND LOWER(id_cliente_agencia) = LOWER(?)",
+                    (fid, cid),
+                )
+            else:
+                fid = data.get("id")
+                nf = str(data.get("nombre_frente") or "").strip()[:80]
+                kf = str(data.get("keywords_busqueda") or nicho_ctx.get("keywords_busqueda") or "").strip()[:160]
+                tf = str(data.get("ticket_estimado") or "").strip()[:60]
+                af = str(data.get("angulo_andrea") or "").strip()[:260]
+                if not nf:
+                    conn.close()
+                    self._send_json({"ok": False, "error": "El nombre del frente es obligatorio."}, status=400)
+                    return
+                if fid:
+                    cur.execute("""
+                        UPDATE frentes_caza SET nombre_frente = ?, keywords_busqueda = ?, ticket_estimado = ?, angulo_andrea = ?
+                        WHERE id = ? AND LOWER(id_cliente_agencia) = LOWER(?)
+                    """, (nf, kf, tf, af, int(fid), cid))
+                else:
+                    cur.execute("""
+                        INSERT INTO frentes_caza (id_cliente_agencia, nombre_frente, keywords_busqueda, ticket_estimado, angulo_andrea, activo)
+                        VALUES (?, ?, ?, ?, ?, 1)
+                    """, (cid, nf, kf, tf, af))
+
+            conn.commit()
+            conn.close()
+            self._send_json(_limpiar_cache_frentes_estado(cid))
+            return
+
+        if clean_path == "/api/cazar/auto-abastecer" or clean_path == "/api/cazador/auto-abastecer":
+            email_req = str(data.get("owner_email") or data.get("email") or "").strip().lower()
+            cid_req = str(data.get("cliente_id") or "").strip()
+            cid, nicho_ctx, es_mallas = resolver_contexto_tenant_request(email_req, cid_req)
+            if not cid or not nicho_ctx:
+                self._send_json({"ok": False, "error": "Primero configura tu negocio en 01 • IDEA."}, status=400)
+                return
+            if es_mallas or cid == "mallas_tlaxcalli":
+                self._send_json({
+                    "ok": True,
+                    "fast_path_legacy": True,
+                    "omitido": True,
+                    "cliente_id": "mallas_tlaxcalli",
+                    "motivo": "mallas_tlaxcalli usa flujo legacy protegido",
+                })
+                return
+            forzar_auto = bool(data.get("forzar", True))
+            fid_req = data.get("frente_id")
+            zona_ov = str(data.get("zona") or "").strip()
+            fuente_ov = str(data.get("fuente") or "APIFY").strip().upper()
+            res_auto = auto_abastecer_cliente(
+                cid,
+                forzar=forzar_auto,
+                frente_id_req=int(fid_req) if fid_req else None,
+                zona_override=zona_ov,
+                fuente_preferida=fuente_ov,
+            )
+            self._send_json(res_auto)
+            return
+
         if self.path == "/api/cazar_lote_10":
-            muni = data.get("municipio", "Ecatepec")
+            muni = str(data.get("municipio") or data.get("zona") or "Ecatepec").strip()
             if muni == "TODOS":
                 muni = "Ecatepec"
             fuente = data.get("fuente", "INEGI")
@@ -5122,18 +5710,94 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 }, status=400)
                 return
 
-            if not es_tlaxcalli and normalizar_modelo_negocio(nicho.get("modelo_negocio", "DISTRIBUIDOR_B2B")) == "EMPRENDEDOR_B2C":
+            # ================= FAST-PATH LEGACY OBLIGATORIO: MALLAS TLAXCALLI =================
+            if es_tlaxcalli or cid == "mallas_tlaxcalli":
+                perfil = construir_perfil_motor_desde_nicho("mallas_tlaxcalli")
+                env = motor_m1.cargar_env()
+                if fuente == "FACEBOOK":
+                    try:
+                        import modulo_1b_cazador_facebook as motor_fb
+                    except ImportError:
+                        from scripts import modulo_1b_cazador_facebook as motor_fb
+                    modo = str(data.get("modo", "KEYWORD") or "KEYWORD").upper()
+                    target_custom = str(data.get("target", "") or "").strip()
+                    target_query = target_custom if target_custom else f"tortilleria maquinaria refacciones {muni}"
+
+                    def _tarea_caza_fb_tlx():
+                        try:
+                            motor_fb.ejecutar_caza_facebook(
+                                target_query,
+                                municipio_default=muni,
+                                max_posts=20,
+                                cliente_id="mallas_tlaxcalli",
+                                perfil_nicho=nicho
+                            )
+                        except Exception as err_fb:
+                            print(f"   [!] Error en hilo asíncrono Facebook (mallas_tlaxcalli): {err_fb}")
+
+                    threading.Thread(target=_tarea_caza_fb_tlx, daemon=True).start()
+                    bd_info = obtener_datos_completos_bd("mallas_tlaxcalli")
+                    self._send_json({
+                        "ok": True,
+                        "async": True,
+                        "cliente_id": "mallas_tlaxcalli",
+                        "fuente": "FACEBOOK",
+                        "mensaje": f"Cazando en Facebook ({target_query}) para {nicho['nombre_negocio']}...",
+                        "total_acumulado": len(bd_info["prospectos"]),
+                        "prospectos": bd_info["prospectos"]
+                    })
+                    return
+
+                if fuente == "APIFY":
+                    estado_q = "Ciudad de Mexico" if "CDMX" in muni.upper() else "Estado de Mexico"
+                    query_maps = f"Tortilleria en {muni}, {estado_q}, Mexico"
+                    nuevos = motor_m1.extraer_apify_google_maps(query_maps, 10, env.get("APIFY_API_TOKEN", ""), perfil=perfil)
+                else:
+                    clave_ent = "09" if "CDMX" in muni.upper() else "15"
+                    termino = "tortilleria cdmx" if clave_ent == "09" else f"tortilleria {muni.lower()}"
+                    ini = OFFSET_EXTRACCION_INEGI["actual"]
+                    OFFSET_EXTRACCION_INEGI["actual"] += 10
+                    nuevos = motor_m1.extraer_inegi_por_municipio(termino, clave_ent, 10, env.get("INEGI_DENUE_TOKEN", ""), reg_ini=ini, perfil=perfil)
+
+                clasificados = [motor_m1.clasificar_negocio(r, perfil) for r in nuevos]
+                motor_m1.guardar_y_exportar(clasificados, "mallas_tlaxcalli")
+                bd_info = obtener_datos_completos_bd("mallas_tlaxcalli")
+                self._send_json({
+                    "ok": True,
+                    "cliente_id": "mallas_tlaxcalli",
+                    "lote_extraido": len(nuevos[:10]),
+                    "total_acumulado": len(bd_info["prospectos"]),
+                    "prospectos": bd_info["prospectos"]
+                })
+                return
+
+            # ================= FLUJO MULTI-FRENTE Y COBERTURA DINÁMICA (CLIENTES NUEVOS) =================
+            if normalizar_modelo_negocio(nicho.get("modelo_negocio", "DISTRIBUIDOR_B2B")) == "EMPRENDEDOR_B2C":
                 self._send_json({
                     "ok": False,
-                    "error": "Modo Particular B2C activo: la prospección en frío está desactivada para proteger tu línea contra bloqueos. Atrae clientes con tus creativos de 03 • ESTUDIO y Andrea los atenderá 24/7."
+                    "error": "Modo Particular B2C activo: la prospección en frío está desactivada para proteger tu línea contra bloqueos. Atrae clientes con tus creativos de 02 • ESTUDIO y Andrea los atenderá 24/7."
                 }, status=400)
                 return
 
             perfil = construir_perfil_motor_desde_nicho(cid)
+            perfil["cobertura_logistica"] = {"municipios_edomex_autorizados": [], "alcaldias_cdmx_autorizadas": [], "colonias_zonas_rojas": []}
             env = motor_m1.cargar_env()
 
-            kws_nicho = (perfil.get("busqueda", {}) or {}).get("palabras_clave_maps") or []
-            kw_principal = "tortilleria" if es_tlaxcalli else (kws_nicho[0] if kws_nicho else (nicho.get("giro_objetivo") or "negocio"))
+            frente_id = int(data.get("frente_id") or 0)
+            frente_nombre = str(data.get("frente_nombre") or "").strip()
+            angulo_contacto = str(data.get("angulo_contacto") or "").strip()
+            kws_frente = str(data.get("keywords_frente") or "").strip()
+            if frente_id and not (frente_nombre and kws_frente):
+                estado_fr = _limpiar_cache_frentes_estado(cid)
+                match_fr = next((f for f in estado_fr["frentes"] if int(f["id"]) == frente_id), None)
+                if match_fr:
+                    frente_nombre = frente_nombre or match_fr["nombre_frente"]
+                    angulo_contacto = angulo_contacto or match_fr["angulo_andrea"]
+                    kws_frente = kws_frente or match_fr["keywords_busqueda"]
+
+            kws_src = kws_frente or nicho.get("keywords_busqueda") or nicho.get("giro_objetivo") or "negocio"
+            kws_nicho = [k.strip() for k in re.split(r"[,;\n]+", kws_src) if k.strip()]
+            kw_principal = kws_nicho[0] if kws_nicho else "negocio"
 
             if fuente == "FACEBOOK":
                 try:
@@ -5143,14 +5807,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
 
                 modo = str(data.get("modo", "KEYWORD") or "KEYWORD").upper()
                 target_custom = str(data.get("target", "") or "").strip()
-                if modo == "GROUP" and target_custom:
-                    target_query = target_custom
-                elif target_custom:
-                    target_query = target_custom
-                elif es_tlaxcalli:
-                    target_query = f"tortilleria maquinaria refacciones {muni}"
-                else:
-                    target_query = f"{kw_principal} {muni}"
+                target_query = target_custom if target_custom else f"{kw_principal} {muni}"
 
                 def _tarea_caza_fb():
                     try:
@@ -5164,9 +5821,7 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                     except Exception as err_fb:
                         print(f"   [!] Error en hilo asíncrono Facebook ({cid}): {err_fb}")
 
-                t = threading.Thread(target=_tarea_caza_fb, daemon=True)
-                t.start()
-
+                threading.Thread(target=_tarea_caza_fb, daemon=True).start()
                 bd_info = obtener_datos_completos_bd(cid)
                 self._send_json({
                     "ok": True,
@@ -5179,9 +5834,13 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                 })
                 return
 
+            conn = sqlite3.connect(DB_PATH)
+            max_id_antes = conn.execute("SELECT COALESCE(MAX(id), 0) FROM prospectos_cazador").fetchone()[0]
+            conn.close()
+
             if fuente == "APIFY":
-                estado_q = "Ciudad de Mexico" if "CDMX" in muni.upper() else "Estado de Mexico"
-                query_maps = f"Tortilleria en {muni}, {estado_q}, Mexico" if es_tlaxcalli else f"{kw_principal} en {muni}, {estado_q}, Mexico"
+                _obtener_offset_progreso(cid, frente_id, muni, "APIFY", paso=10)
+                query_maps = f"{kw_principal} en {muni}, Mexico"
                 nuevos = motor_m1.extraer_apify_google_maps(
                     query_maps,
                     10,
@@ -5189,28 +5848,33 @@ class PublicSafeHandler(BaseHTTPRequestHandler):
                     perfil=perfil
                 )
             else:
-                clave_ent = "09" if "CDMX" in muni.upper() else "15"
-                if es_tlaxcalli:
-                    termino = "tortilleria cdmx" if clave_ent == "09" else f"tortilleria {muni.lower()}"
-                else:
-                    termino = f"{kw_principal} cdmx" if clave_ent == "09" else f"{kw_principal} {muni.lower()}"
-                ini = OFFSET_EXTRACCION_INEGI["actual"]
-                OFFSET_EXTRACCION_INEGI["actual"] += 10
-                nuevos = motor_m1.extraer_inegi_por_municipio(
-                    termino,
-                    clave_ent,
+                offset_inegi = _obtener_offset_progreso(cid, frente_id, muni, "INEGI", paso=10)
+                nuevos = motor_m1.extraer_inegi_por_zona_dinamica(
+                    kw_principal,
+                    muni,
                     10,
                     env.get("INEGI_DENUE_TOKEN", ""),
-                    reg_ini=ini,
+                    reg_ini=max(1, offset_inegi + 1),
                     perfil=perfil
                 )
 
+            for r in nuevos:
+                if frente_nombre:
+                    r["frente_nombre"] = frente_nombre
+                if angulo_contacto:
+                    r["angulo_contacto"] = angulo_contacto
+                if not r.get("municipio"):
+                    r["municipio"] = muni
+
             clasificados = [motor_m1.clasificar_negocio(r, perfil) for r in nuevos]
             motor_m1.guardar_y_exportar(clasificados, cid)
+            _disparar_validacion_wa_batch_async(cid, max_id_antes)
             bd_info = obtener_datos_completos_bd(cid)
             self._send_json({
                 "ok": True,
                 "cliente_id": cid,
+                "frente_nombre": frente_nombre,
+                "zona": muni,
                 "lote_extraido": len(nuevos[:10]),
                 "total_acumulado": len(bd_info["prospectos"]),
                 "prospectos": bd_info["prospectos"]
@@ -6149,6 +6813,19 @@ def _ejecutar_ciclo_cazador_24_7(ciclo_idx: int) -> None:
     cid = motor_m1.normalizar_cliente_id(nicho_actual.get("cliente_id", "mallas_tlaxcalli"))
     nombre_negocio = nicho_actual.get("nombre_negocio") or "Mallas Tlaxcalli"
     es_tlaxcalli = (cid == "mallas_tlaxcalli")
+
+    # FAST-PATH LEGACY: mallas_tlaxcalli ejecuta exactamente su ciclo original sin frentes_caza ni geocoding dinámico
+    if not es_tlaxcalli:
+        res_auto = auto_abastecer_cliente(cid, forzar=False)
+        ahora_mx = datetime.now(timezone.utc) - timedelta(hours=6)
+        ESTADO_CAZADOR_24_7["ciclos_completados"] += 1
+        ESTADO_CAZADOR_24_7["ultimo_ciclo"] = ahora_mx.strftime("%Y-%m-%d %H:%M:%S CDMX")
+        ESTADO_CAZADOR_24_7["ultimo_nicho"] = cid
+        ESTADO_CAZADOR_24_7["ultima_fuente"] = res_auto.get("fuente") or "APIFY"
+        ESTADO_CAZADOR_24_7["ultimo_municipio"] = res_auto.get("zona") or "Dinámica"
+        ESTADO_CAZADOR_24_7["ultimos_nuevos"] = int(res_auto.get("lote_extraido") or 0)
+        ESTADO_CAZADOR_24_7["ultimo_error"] = None
+        return
 
     fuentes = ["INEGI", "APIFY", "FACEBOOK"]
     fuente = fuentes[ciclo_idx % len(fuentes)]

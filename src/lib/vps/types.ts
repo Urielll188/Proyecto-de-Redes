@@ -10,6 +10,17 @@ export interface ProspectoVps {
   segmento_cliente: string
   oferta_recomendada?: string
   estatus_contacto_wa?: string
+  frente_nombre?: string | null
+  angulo_contacto?: string | null
+}
+
+export interface FrenteCazaVps {
+  id?: number
+  nombre_frente: string
+  keywords_busqueda: string
+  ticket_estimado?: string
+  angulo_andrea?: string
+  activo?: number
 }
 
 export type ModeloNegocioType = 'DISTRIBUIDOR_B2B' | 'SERVICIOS_B2B' | 'EMPRENDEDOR_B2C'
@@ -36,6 +47,7 @@ export interface DiagnosticoModeloIA {
   logo_data_url?: string | null
   titular_anuncio?: string
   beneficios_clave?: string[]
+  frentes_caza?: FrenteCazaVps[]
 }
 
 export interface NichoVps {
@@ -71,6 +83,7 @@ export interface WebsiteExtractedKnowledge {
   logo_data_url?: string | null
   titular_anuncio?: string
   beneficios_clave?: string[]
+  frentes_caza?: FrenteCazaVps[]
 }
 
 export interface PedidoVps {

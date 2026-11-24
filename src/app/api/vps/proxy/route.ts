@@ -14,10 +14,14 @@ const ALLOWED_GET_ENDPOINTS = [
   '/estatus_wa',
   '/api/imagen_pau',
   '/excel_mallas_tlaxcalli.csv',
+  '/api/cazador/frentes',
 ]
 
 const ALLOWED_POST_ENDPOINTS = [
   '/api/cazar_lote_10',
+  '/api/cazador/frentes',
+  '/api/cazador/auto-abastecer',
+  '/api/cazar/auto-abastecer',
   '/api/nichos',
   '/api/nichos/toggle',
   '/api/mi-nicho',

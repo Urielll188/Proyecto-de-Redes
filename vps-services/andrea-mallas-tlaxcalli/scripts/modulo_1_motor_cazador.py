@@ -22,6 +22,7 @@ import os
 import re
 import sqlite3
 import ssl
+import time
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -35,6 +36,23 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 DB_PATH = os.path.join(DATA_DIR, "cazador_agencia.db")
 SSL_CTX = ssl._create_unverified_context()
+
+CACHE_GEOCODING_HUNTER = {}
+
+CODIGOS_ENTIDAD_INEGI = {
+    "aguascalientes": "01", "baja california": "02", "baja california sur": "03",
+    "campeche": "04", "coahuila": "05", "colima": "06", "chiapas": "07",
+    "chihuahua": "08", "cdmx": "09", "ciudad de mexico": "09", "durango": "10",
+    "guanajuato": "11", "guerrero": "12", "hidalgo": "13", "jalisco": "14",
+    "guadalajara": "14", "zapopan": "14", "edomex": "15", "estado de mexico": "15",
+    "toluca": "15", "michoacan": "16", "morelia": "16", "morelos": "17",
+    "cuernavaca": "17", "nayarit": "18", "nuevo leon": "19", "monterrey": "19",
+    "san pedro": "19", "oaxaca": "20", "puebla": "21", "queretaro": "22",
+    "quintana roo": "23", "cancun": "23", "playa del carmen": "23",
+    "san luis potosi": "24", "sinaloa": "25", "culiacan": "25", "sonora": "26",
+    "hermosillo": "26", "tabasco": "27", "tamaulipas": "28", "tlaxcala": "29",
+    "veracruz": "30", "yucatan": "31", "merida": "31", "zacatecas": "32"
+}
 
 # Puntos centrales reales por municipio autorizado (Edomex + CDMX) para consultas DENUE por radio exacto
 CENTROS_MUNICIPIOS = {
@@ -76,6 +94,49 @@ def quitar_acentos(texto: str) -> str:
         return ""
     nfkd = unicodedata.normalize("NFKD", str(texto))
     return "".join([c for c in nfkd if not unicodedata.combining(c)]).lower().strip()
+
+
+def inferir_entidad_inegi(zona: str) -> str:
+    z_norm = quitar_acentos(zona)
+    for k, cod in CODIGOS_ENTIDAD_INEGI.items():
+        if k in z_norm:
+            return cod
+    return "09"
+
+
+def geocodificar_zona_dinamica(zona: str) -> tuple:
+    """
+    Geocodifica dinámicamente cualquier ciudad o estado de México con caché en memoria.
+    Solo para tenants != 'mallas_tlaxcalli'. Devuelve (lat, lon, nombre_zona, entidad_inegi) o None.
+    """
+    zona_clean = re.sub(r"\s+", " ", str(zona or "")).strip()
+    if not zona_clean:
+        return ("19.4326", "-99.1332", "Ciudad de México", "09")
+
+    zona_norm = quitar_acentos(zona_clean)
+    for clave_m, coords in CENTROS_MUNICIPIOS.items():
+        if clave_m in zona_norm or zona_norm in clave_m:
+            return coords
+
+    if zona_norm in CACHE_GEOCODING_HUNTER:
+        return CACHE_GEOCODING_HUNTER[zona_norm]
+
+    q_geo = zona_clean if "mexico" in zona_norm else f"{zona_clean}, Mexico"
+    url = f"https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=mx&q={urllib.parse.quote(q_geo)}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "BlitzrHunter/1.0"})
+        with urllib.request.urlopen(req, context=SSL_CTX, timeout=8) as resp:
+            arr = json.loads(resp.read().decode("utf-8"))
+            if isinstance(arr, list) and len(arr) > 0:
+                lat_s = f"{float(arr[0]['lat']):.5f}"
+                lon_s = f"{float(arr[0]['lon']):.5f}"
+                res = (lat_s, lon_s, zona_clean, inferir_entidad_inegi(zona_clean))
+                CACHE_GEOCODING_HUNTER[zona_norm] = res
+                return res
+    except Exception as e_geo:
+        print(f"   [!] Aviso geocodificando zona '{zona_clean}': {e_geo}")
+
+    return None
 
 
 def _coord_valida(val: str) -> str:
@@ -333,6 +394,28 @@ def extraer_inegi_por_municipio(termino: str, clave_entidad: str, cant: int, tok
     except Exception as e:
         print(f"   [!] Aviso consulta INEGI ({termino}): {e}")
         return []
+
+
+def extraer_inegi_por_zona_dinamica(kw_base: str, zona: str, cant: int, token: str, reg_ini: int = 1, perfil: dict = None) -> list:
+    """
+    Consulta INEGI DENUE usando cobertura geográfica dinámica (Nominatim + caché) para clientes != mallas_tlaxcalli.
+    """
+    if not token:
+        return []
+    coords = geocodificar_zona_dinamica(zona)
+    if coords:
+        lat, lon, nombre_z, _ = coords
+        res = extraer_inegi_por_coordenadas(
+            kw_base, lat, lon, 8000, cant, token, reg_ini=reg_ini, municipio_filtro="", perfil=perfil
+        )
+        for item in res:
+            if not item.get("municipio"):
+                item["municipio"] = nombre_z
+        if res:
+            return res
+
+    ent = inferir_entidad_inegi(zona)
+    return extraer_inegi_por_municipio(f"{kw_base} {zona}".strip(), ent, cant, token, reg_ini=reg_ini, perfil=perfil)
 
 
 def extraer_apify_google_maps(busqueda: str, max_items: int, apify_token: str, perfil: dict = None) -> list:
@@ -617,7 +700,9 @@ def clasificar_negocio(registro: dict, perfil: dict) -> dict:
         "score_prioridad": min(score, 100),
         "fuente": registro.get("fuente", "INEGI_DENUE_OFICIAL"),
         "estatus_contacto_wa": "PENDIENTE_ENVIO" if (tel_valido and en_cobertura) else "DESCARTADO",
-        "fecha_registro": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "fecha_registro": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "frente_nombre": registro.get("frente_nombre"),
+        "angulo_contacto": registro.get("angulo_contacto"),
     }
 
 
@@ -661,6 +746,35 @@ def inicializar_bd_sqlite():
         cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN latitud TEXT DEFAULT ''")
     if "longitud" not in cols:
         cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN longitud TEXT DEFAULT ''")
+    if "frente_nombre" not in cols:
+        cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN frente_nombre TEXT DEFAULT NULL")
+    if "angulo_contacto" not in cols:
+        cur.execute("ALTER TABLE prospectos_cazador ADD COLUMN angulo_contacto TEXT DEFAULT NULL")
+
+    # Tablas aditivas para Motor de Caza Multi-Frente (no alteran mallas_tlaxcalli)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS frentes_caza (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_cliente_agencia TEXT NOT NULL,
+            nombre_frente TEXT NOT NULL,
+            keywords_busqueda TEXT DEFAULT '',
+            ticket_estimado TEXT DEFAULT '',
+            angulo_andrea TEXT DEFAULT '',
+            activo INTEGER DEFAULT 1,
+            creado_en TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS progreso_extraccion (
+            id_cliente_agencia TEXT NOT NULL,
+            frente_id INTEGER NOT NULL DEFAULT 0,
+            zona TEXT NOT NULL,
+            fuente TEXT NOT NULL,
+            ultimo_offset INTEGER DEFAULT 0,
+            actualizado_en TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (id_cliente_agencia, frente_id, zona, fuente)
+        )
+    """)
 
     # Normalizar todos los registros existentes de Mallas Tlaxcalli al tenant canónico protegido 'mallas_tlaxcalli'
     cur.execute("""
@@ -723,13 +837,15 @@ def guardar_y_exportar(clasificados: list, id_cliente: str):
                         id_cliente_agencia, nombre, telefono, direccion, colonia,
                         municipio, segmento_cliente, oferta_recomendada, modalidad_entrega,
                         estatus_clasificacion, score_prioridad, fuente, estatus_contacto_wa,
-                        fecha_registro, google_maps_url, latitud, longitud
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        fecha_registro, google_maps_url, latitud, longitud,
+                        frente_nombre, angulo_contacto
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     cid_item, c["nombre"], c["telefono"], c["direccion"], c["colonia"],
                     c["municipio"], c["segmento_cliente"], c["oferta_recomendada"], c["modalidad_entrega"],
                     c["estatus_clasificacion"], c["score_prioridad"], c["fuente"], c["estatus_contacto_wa"],
-                    c["fecha_registro"], c.get("google_maps_url", ""), c.get("latitud", ""), c.get("longitud", "")
+                    c["fecha_registro"], c.get("google_maps_url", ""), c.get("latitud", ""), c.get("longitud", ""),
+                    c.get("frente_nombre"), c.get("angulo_contacto")
                 ))
 
     conn.commit()
@@ -739,7 +855,8 @@ def guardar_y_exportar(clasificados: list, id_cliente: str):
             SELECT nombre, telefono, direccion, colonia, municipio, segmento_cliente,
                    oferta_recomendada, modalidad_entrega, estatus_clasificacion,
                    score_prioridad, fuente, estatus_contacto_wa, fecha_registro,
-                   google_maps_url, latitud, longitud, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')
+                   google_maps_url, latitud, longitud, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli'),
+                   id, frente_nombre, angulo_contacto
             FROM prospectos_cazador
             WHERE estatus_clasificacion LIKE 'APROBADO%'
             ORDER BY score_prioridad DESC, id DESC
@@ -749,7 +866,8 @@ def guardar_y_exportar(clasificados: list, id_cliente: str):
             SELECT nombre, telefono, direccion, colonia, municipio, segmento_cliente,
                    oferta_recomendada, modalidad_entrega, estatus_clasificacion,
                    score_prioridad, fuente, estatus_contacto_wa, fecha_registro,
-                   google_maps_url, latitud, longitud, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')
+                   google_maps_url, latitud, longitud, COALESCE(id_cliente_agencia, 'mallas_tlaxcalli'),
+                   id, frente_nombre, angulo_contacto
             FROM prospectos_cazador
             WHERE LOWER(COALESCE(id_cliente_agencia, 'mallas_tlaxcalli')) = LOWER(?)
               AND estatus_clasificacion LIKE 'APROBADO%'
@@ -766,8 +884,12 @@ def guardar_y_exportar(clasificados: list, id_cliente: str):
         lat_f = f[14] if len(f) > 14 else ""
         lon_f = f[15] if len(f) > 15 else ""
         cid_f = normalizar_cliente_id(f[16] if len(f) > 16 else id_cliente_norm)
+        id_f = f[17] if len(f) > 17 else None
+        frente_f = f[18] if len(f) > 18 else None
+        angulo_f = f[19] if len(f) > 19 else None
         maps_link = f[13] if (len(f) > 13 and f[13] and "&center=" not in f[13]) else construir_link_google_maps(nombre_f, dir_f, muni_f, lat_f, lon_f)
         aprobados_db.append({
+            "id": id_f,
             "id_cliente_agencia": cid_f,
             "nombre": nombre_f,
             "telefono": f[1],
@@ -784,7 +906,9 @@ def guardar_y_exportar(clasificados: list, id_cliente: str):
             "fecha_registro": f[12],
             "google_maps_url": maps_link,
             "latitud": lat_f,
-            "longitud": lon_f
+            "longitud": lon_f,
+            "frente_nombre": frente_f,
+            "angulo_contacto": angulo_f
         })
 
     rechazados = [c for c in clasificados if not c["estatus_clasificacion"].startswith("APROBADO")]

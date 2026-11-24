@@ -142,6 +142,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
   const [webLogoDataUrl, setWebLogoDataUrl] = useState<string | null>(null)
   const [useLogoOverlay, setUseLogoOverlay] = useState<boolean>(true)
   const [beneficiosClave, setBeneficiosClave] = useState<string[]>([])
+  const [webFrentesCaza, setWebFrentesCaza] = useState<any[]>([])
   const hydratedWebAssetsRef = useRef<boolean>(false)
 
   // Estado de conexión WhatsApp del tenant activo para enlaces wa.me en 03 • ESTUDIO
@@ -489,6 +490,9 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
     if (Array.isArray(extracted.beneficios_clave) && extracted.beneficios_clave.length > 0) {
       setBeneficiosClave(extracted.beneficios_clave.slice(0, 3))
     }
+    if (Array.isArray(extracted.frentes_caza) && extracted.frentes_caza.length > 0) {
+      setWebFrentesCaza(extracted.frentes_caza.slice(0, 4))
+    }
     if (extracted.titular_anuncio) {
       setHeadline(extracted.titular_anuncio.toUpperCase().slice(0, 48))
     }
@@ -564,6 +568,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
       ...(webLogoUrl ? { logo_url: webLogoUrl } : {}),
       ...(webLogoDataUrl ? { logo_data_url: webLogoDataUrl } : {}),
       ...(beneficiosClave.length > 0 ? { beneficios_clave: beneficiosClave } : {}),
+      ...(webFrentesCaza.length > 0 ? { frentes_caza: webFrentesCaza } : {}),
     }
 
     // Guardar de inmediato el modelo y perfil en SQLite para usuarios nuevos
@@ -584,6 +589,7 @@ export function EmpresaStepper({ userId, initialData }: EmpresaStepperProps) {
         logo_data_url: webLogoDataUrl || undefined,
         url_sitio_web: webUrlSitio || undefined,
         beneficios_clave: beneficiosClave.length > 0 ? beneficiosClave : undefined,
+        frentes_caza: webFrentesCaza.length > 0 ? webFrentesCaza : undefined,
         titular_anuncio: headline || undefined,
         modelo_negocio: chosenModel,
         cliente_objetivo_tipo: clienteObjetivoTipo,

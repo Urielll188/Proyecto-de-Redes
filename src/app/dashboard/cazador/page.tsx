@@ -23,7 +23,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fetchVpsGet, fetchVpsPost, ProspectoVps } from '@/lib/vps/types';
+import { fetchVpsGet, fetchVpsPost, FrenteCazaVps, ProspectoVps } from '@/lib/vps/types';
 import { useNicho } from '@/context/NichoContext';
 
 const MUNICIPIOS = [
@@ -37,6 +37,22 @@ const MUNICIPIOS = [
   'Atizapán',
   'Cuautitlán',
   'Tepotzotlán',
+];
+
+const CIUDADES_DINAMICAS_MX = [
+  'CDMX y Area Metropolitana',
+  'Ciudad de México',
+  'Ecatepec, Edomex',
+  'Tlalnepantla, Edomex',
+  'Naucalpan, Edomex',
+  'Monterrey, Nuevo León',
+  'Guadalajara, Jalisco',
+  'Puebla, Puebla',
+  'Querétaro, Querétaro',
+  'Toluca, Edomex',
+  'Tlaxcala, Tlaxcala',
+  'León, Guanajuato',
+  'Mérida, Yucatán',
 ];
 
 const PAGE_SIZE = 10;
@@ -62,6 +78,19 @@ export default function CazadorPage() {
   const [cazaAsyncActiva, setCazaAsyncActiva] = useState<boolean>(false);
   const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Estado Multi-Frente & Cobertura Dinámica (solo para clientes != mallas_tlaxcalli)
+  const [frentes, setFrentes] = useState<FrenteCazaVps[]>([]);
+  const [frenteActivoId, setFrenteActivoId] = useState<number | null>(null);
+  const [zonaDinamica, setZonaDinamica] = useState<string>('Ciudad de México');
+  const [zonasObjetivo, setZonasObjetivo] = useState<string>('CDMX y Area Metropolitana');
+  const [flujoContinuoActivo, setFlujoContinuoActivo] = useState<boolean>(true);
+  const [autoAbasteciendo, setAutoAbasteciendo] = useState<boolean>(false);
+  const [mostrarNuevoFrente, setMostrarNuevoFrente] = useState<boolean>(false);
+  const [nuevoFrenteNombre, setNuevoFrenteNombre] = useState<string>('');
+  const [nuevoFrenteKws, setNuevoFrenteKws] = useState<string>('');
+  const [nuevoFrenteAngulo, setNuevoFrenteAngulo] = useState<string>('');
+  const [waConfirmadosTotal, setWaConfirmadosTotal] = useState<number>(0);
+
   const cargarDatos = useCallback(async () => {
     if (!ownerEmail) return;
     if (!isMallasOwner && !tienePerfil) {
@@ -75,10 +104,18 @@ export default function CazadorPage() {
     setLoading(true);
     setErrorMsg(null);
 
-    const data = await fetchVpsGet('/api/datos_seguros', {
-      email: ownerEmail,
-      ...(nicho?.cliente_id ? { cliente_id: nicho.cliente_id } : {}),
-    });
+    const [data, frentesRes] = await Promise.all([
+      fetchVpsGet('/api/datos_seguros', {
+        email: ownerEmail,
+        ...(nicho?.cliente_id ? { cliente_id: nicho.cliente_id } : {}),
+      }),
+      !isMallasOwner && nicho?.cliente_id
+        ? fetchVpsGet('/api/cazador/frentes', {
+            email: ownerEmail,
+            cliente_id: nicho.cliente_id,
+          })
+        : Promise.resolve(null),
+    ]);
 
     if (data.vpsOffline || data.ok === false) {
       setVpsOffline(true);
@@ -94,6 +131,21 @@ export default function CazadorPage() {
     }
     setBitacoraTotal(typeof data.bitacora_total === 'number' ? data.bitacora_total : 0);
     setBitacoraHoy(typeof data.bitacora_hoy === 'number' ? data.bitacora_hoy : 0);
+
+    if (frentesRes && frentesRes.ok && !frentesRes.es_mallas) {
+      const listaFr = Array.isArray(frentesRes.frentes) ? (frentesRes.frentes as FrenteCazaVps[]) : [];
+      setFrentes(listaFr);
+      setFrenteActivoId((prev) => prev ?? (listaFr[0]?.id ?? null));
+      if (typeof frentesRes.zonas_objetivo === 'string' && frentesRes.zonas_objetivo.trim()) {
+        setZonasObjetivo(frentesRes.zonas_objetivo);
+        const primeraZona = frentesRes.zonas_objetivo.split(',')[0]?.trim();
+        if (primeraZona) {
+          setZonaDinamica((prev) => (prev === 'Ciudad de México' ? primeraZona : prev));
+        }
+      }
+      setFlujoContinuoActivo(Boolean(frentesRes.flujo_continuo_activo));
+      setWaConfirmadosTotal(Number(frentesRes.metricas?.wa_confirmados || 0));
+    }
     setLoading(false);
   }, [ownerEmail, isMallasOwner, tienePerfil, nicho?.cliente_id]);
 
@@ -151,12 +203,25 @@ export default function CazadorPage() {
       return;
     }
 
+    const frenteSeleccionado = !isMallasOwner
+      ? frentes.find((f) => f.id === frenteActivoId) || null
+      : null;
+
     setCazando(fuente);
     const body: Record<string, any> = {
-      municipio,
+      municipio: isMallasOwner ? municipio : zonaDinamica || 'Ciudad de México',
+      zona: isMallasOwner ? municipio : zonaDinamica || 'Ciudad de México',
       fuente,
       owner_email: ownerEmail,
       cliente_id: nicho?.cliente_id || 'mallas_tlaxcalli',
+      ...(frenteSeleccionado
+        ? {
+            frente_id: frenteSeleccionado.id,
+            frente_nombre: frenteSeleccionado.nombre_frente,
+            keywords_frente: frenteSeleccionado.keywords_busqueda,
+            angulo_contacto: frenteSeleccionado.angulo_andrea,
+          }
+        : {}),
     };
     if (fuente === 'FACEBOOK') {
       body.modo = modoFb;
@@ -185,6 +250,78 @@ export default function CazadorPage() {
     );
     await cargarDatos();
     await refreshNicho();
+  };
+
+  const handleToggleFlujoContinuo = async () => {
+    if (isMallasOwner || !nicho) return;
+    const nuevo = !flujoContinuoActivo;
+    setFlujoContinuoActivo(nuevo);
+    const res = await fetchVpsPost('/api/cazador/frentes', {
+      accion: 'config',
+      cliente_id: nicho.cliente_id,
+      zonas_objetivo: zonasObjetivo,
+      flujo_continuo_activo: nuevo,
+    });
+    if (!res?.ok) {
+      setFlujoContinuoActivo(!nuevo);
+      toast.error(res?.error || 'No se pudo actualizar el Flujo Continuo 24/7.');
+      return;
+    }
+    toast.success(nuevo ? 'Flujo Continuo 24/7 activado.' : 'Flujo Continuo 24/7 en pausa.');
+  };
+
+  const handleGuardarZonaObjetivo = async (nuevaZona: string) => {
+    setZonaDinamica(nuevaZona);
+    setZonasObjetivo(nuevaZona);
+    if (isMallasOwner || !nicho) return;
+    await fetchVpsPost('/api/cazador/frentes', {
+      accion: 'config',
+      cliente_id: nicho.cliente_id,
+      zonas_objetivo: nuevaZona,
+      flujo_continuo_activo: flujoContinuoActivo,
+    });
+  };
+
+  const handleCrearFrente = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nuevoFrenteNombre.trim() || !nicho) return;
+    const res = await fetchVpsPost('/api/cazador/frentes', {
+      accion: 'crear',
+      cliente_id: nicho.cliente_id,
+      nombre_frente: nuevoFrenteNombre.trim(),
+      keywords_busqueda: nuevoFrenteKws.trim() || nicho.keywords_busqueda,
+      angulo_andrea: nuevoFrenteAngulo.trim(),
+    });
+    if (res?.ok) {
+      setFrentes(res.frentes || []);
+      setNuevoFrenteNombre('');
+      setNuevoFrenteKws('');
+      setNuevoFrenteAngulo('');
+      setMostrarNuevoFrente(false);
+      toast.success('Frente de caza agregado.');
+    } else {
+      toast.error(res?.error || 'No se pudo agregar el frente.');
+    }
+  };
+
+  const handleAutoAbastecer = async () => {
+    if (isMallasOwner || !nicho) return;
+    setAutoAbasteciendo(true);
+    const res = await fetchVpsPost('/api/cazador/auto-abastecer', {
+      cliente_id: nicho.cliente_id,
+      forzar: true,
+      frente_id: frenteActivoId,
+      zona: zonaDinamica,
+    });
+    setAutoAbasteciendo(false);
+    if (res?.ok && !res.omitido) {
+      toast.success(
+        `Auto-abastecido: ${res.lote_extraido || 0} leads en "${res.frente_nombre}" (${res.zona}).`
+      );
+      await cargarDatos();
+    } else {
+      toast.info(res?.motivo || res?.error || 'Sin cambios en la cola actual.');
+    }
   };
 
   const handleToggleNichoWorker = async () => {
@@ -570,26 +707,157 @@ export default function CazadorPage() {
         </div>
       )}
 
+      {/* Panel Multi-Frente & Flujo Continuo (solo para clientes != Mallas Tlaxcalli y no B2C) */}
+      {!isMallasOwner && !isB2C && (
+        <div className="p-4 rounded-xl bg-zinc-900/70 border border-cyan-500/30 space-y-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+                🎯 Frentes de Caza Activos ({frentes.length}) • Cobertura Dinámica
+              </div>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                WhatsApp Confirmados/Contactados: <strong className="text-emerald-400">{waConfirmadosTotal}</strong> • Rotación automática por frente y zona.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleToggleFlujoContinuo}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                  flujoContinuoActivo
+                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                    : 'bg-zinc-950 border-zinc-700 text-zinc-400'
+                }`}
+              >
+                <Power className="w-3.5 h-3.5" />
+                {flujoContinuoActivo ? 'Flujo Continuo 24/7: ON' : 'Flujo Continuo 24/7: OFF'}
+              </button>
+              <button
+                type="button"
+                onClick={handleAutoAbastecer}
+                disabled={autoAbasteciendo}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-zinc-950 text-xs font-extrabold transition cursor-pointer disabled:opacity-50"
+              >
+                <Zap className={`w-3.5 h-3.5 ${autoAbasteciendo ? 'animate-spin' : ''}`} />
+                {autoAbasteciendo ? 'Abasteciendo...' : 'Auto-Abastecer Ahora'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setMostrarNuevoFrente((v) => !v)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-zinc-700 cursor-pointer"
+              >
+                + Frente
+              </button>
+            </div>
+          </div>
+
+          {frentes.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {frentes.map((fr) => {
+                const selected = frenteActivoId === fr.id;
+                return (
+                  <button
+                    key={fr.id ?? fr.nombre_frente}
+                    type="button"
+                    onClick={() => setFrenteActivoId(fr.id ?? null)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition text-left cursor-pointer ${
+                      selected
+                        ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
+                        : 'bg-zinc-950/70 border-zinc-800 text-zinc-300 hover:border-zinc-700'
+                    }`}
+                  >
+                    <span>{fr.nombre_frente}</span>
+                    {fr.ticket_estimado && (
+                      <span className="ml-1.5 text-[10px] text-emerald-300/90">
+                        ({fr.ticket_estimado})
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {mostrarNuevoFrente && (
+            <form
+              onSubmit={handleCrearFrente}
+              className="grid grid-cols-1 md:grid-cols-4 gap-2 pt-2 border-t border-white/10"
+            >
+              <input
+                type="text"
+                required
+                value={nuevoFrenteNombre}
+                onChange={(e) => setNuevoFrenteNombre(e.target.value)}
+                placeholder="Nombre del frente (ej. Redes y CCTV)"
+                className="px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white"
+              />
+              <input
+                type="text"
+                value={nuevoFrenteKws}
+                onChange={(e) => setNuevoFrenteKws(e.target.value)}
+                placeholder="Palabras clave (ej. oficinas, clinicas)"
+                className="px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white"
+              />
+              <input
+                type="text"
+                value={nuevoFrenteAngulo}
+                onChange={(e) => setNuevoFrenteAngulo(e.target.value)}
+                placeholder="Ángulo de apertura para Andrea"
+                className="px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white"
+              />
+              <button
+                type="submit"
+                className="px-3 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-bold cursor-pointer"
+              >
+                Guardar Frente
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+
       {/* Filtros y Teléfono de Prueba */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 bg-zinc-900/60 border border-zinc-800 rounded-xl p-4">
         <div>
           <label className="block text-xs font-medium text-zinc-400 mb-1.5">
-            Municipio Objetivo
+            {isMallasOwner ? 'Municipio Objetivo' : 'Ciudad / Estado Dinámico'}
           </label>
-          <select
-            value={municipio}
-            onChange={(e) => {
-              setMunicipio(e.target.value);
-              setPaginaLote(0);
-            }}
-            className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-100 text-sm focus:outline-none focus:border-blue-500"
-          >
-            {MUNICIPIOS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
+          {isMallasOwner ? (
+            <select
+              value={municipio}
+              onChange={(e) => {
+                setMunicipio(e.target.value);
+                setPaginaLote(0);
+              }}
+              className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-100 text-sm focus:outline-none focus:border-blue-500"
+            >
+              {MUNICIPIOS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="space-y-1.5">
+              <input
+                type="text"
+                list="ciudades-dinamicas-mx"
+                value={zonaDinamica}
+                onChange={(e) => {
+                  setZonaDinamica(e.target.value);
+                  setPaginaLote(0);
+                }}
+                onBlur={(e) => handleGuardarZonaObjetivo(e.target.value)}
+                placeholder="Ej. Monterrey, Nuevo León / Puebla / CDMX"
+                className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-100 text-sm focus:outline-none focus:border-cyan-500"
+              />
+              <datalist id="ciudades-dinamicas-mx">
+                {CIUDADES_DINAMICAS_MX.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            </div>
+          )}
         </div>
 
         <div>
@@ -685,6 +953,25 @@ export default function CazadorPage() {
                           >
                             {p.fuente || 'DENUE'}
                           </span>
+                          {!isMallasOwner && p.frente_nombre && (
+                            <span className="text-[11px] px-2 py-0.5 rounded font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                              Frente: {p.frente_nombre}
+                            </span>
+                          )}
+                          {!isMallasOwner &&
+                            ['VERIFICADO_WA', 'WHATSAPP_CONFIRMADO', 'CONTACTADO_WA'].includes(
+                              (p.estatus_contacto_wa || '').toUpperCase()
+                            ) && (
+                              <span className="text-[11px] px-2 py-0.5 rounded font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                ✓ WhatsApp Confirmado
+                              </span>
+                            )}
+                          {!isMallasOwner &&
+                            (p.estatus_contacto_wa || '').toUpperCase() === 'SIN_WHATSAPP' && (
+                              <span className="text-[11px] px-2 py-0.5 rounded font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                                Fijo / Sin WA
+                              </span>
+                            )}
                           {p.segmento_cliente && (
                             <span className="text-[11px] text-zinc-500">{p.segmento_cliente}</span>
                           )}
